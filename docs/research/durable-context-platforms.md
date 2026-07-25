@@ -112,21 +112,70 @@
 
 ## 3. Codex (OpenAI)
 
-**Source**: https://platform.openai.com/docs/guides/codex (returns 404 — documentation removed), https://opencode.ai/zen (successor product)
+**Source**: https://learn.chatgpt.com/codex (official Codex documentation)
 
-### Status
+### Files and Mechanisms
 
-OpenAI's standalone Codex CLI tool was **sunset/discontinued**. The `codex` documentation endpoint returns HTTP 404. As of mid-2026, the Codex brand lives on through **OpenCode Zen**, an integration where OpenCode provides a curated list of verified models and Codex model naming. Simon Willison has documented using "Codex Desktop" (https://simonwillison.net/tags/ai-assisted-programming/) — this appears to be a separate OpenAI desktop agent product.
+| Mechanism | Location | Scope |
+|-----------|----------|-------|
+| **AGENTS.md** (project) | `./AGENTS.md` at repo root or nested directories | Project-level, team-shared, version-controlled |
+| **AGENTS.override.md** | Any directory alongside AGENTS.md | Temporary override without deleting base file |
+| **AGENTS.md** (global) | `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`) | Personal, all projects |
+| **config.toml** (user) | `~/.codex/config.toml` | Personal defaults (model, approval, sandbox, etc.) |
+| **config.toml** (project) | `.codex/config.toml` | Project-level config (trusted projects only) |
+| **config.toml** (system) | `/etc/codex/config.toml` | System-wide, all users |
+| **Memories** | `~/.codex/memories/` | Per-machine, auto-generated from prior chats |
+| **Chronicle memories** (research preview) | `~/.codex/memories_extensions/chronicle/` | Screen-context-augmented memories, macOS-only |
+| **Skills** | `.agents/skills/<name>/SKILL.md`, `~/.agents/skills/<name>/SKILL.md` | Reusable workflows with scripts, references, assets |
+| **Subagents** | Configured in Codex | Specialized agents with different roles/tools |
+| **MCP** | Configured in `config.toml` or via plugins | External tools and context providers |
+| **Hooks** | `~/.codex/hooks.json`, `.codex/hooks.json`, inline in `config.toml` | Lifecycle-triggered scripts (SessionStart, PreToolUse, PostToolUse, Stop, etc.) |
+| **Rules** | `~/.codex/rules/default.rules`, `<repo>/.codex/rules/` | Command execution rules (Starlark-based), control which commands run outside sandbox |
+| **Record & Replay** | Built-in | Record session to YAML for replay/debugging |
+| **Markdown session export** | Desktop app UI | Export entire session as Markdown transcript |
 
-### Known Mechanisms (from community references)
+### Discovery and Loading
 
-- Codex Desktop uses **Markdown session transcript exports** as its primary durable context mechanism.
-- Simon Willison described it as having "the Markdown session transcript export feature I've always wanted" (https://simonwillison.net, May 2026).
-- The model family (GPT-5.5, GPT-5.6 Sol) is used through Codex Desktop for agentic engineering.
+- **AGENTS.md**: Loaded at session start (once per run, once per TUI session). Discovery walks from git root to CWD: checks each directory for `AGENTS.override.md` then `AGENTS.md` then fallback filenames. At global scope (`~/.codex/`), reads `AGENTS.override.md` if present, else `AGENTS.md`. All files concatenated from root down with blank lines — later files near CWD override earlier. Max 32 KiB combined (`project_doc_max_bytes`). Configurable fallback filenames (`project_doc_fallback_filenames`). Customizable with `CODEX_HOME` env var.
+- **config.toml**: Precedence: CLI flags > project `.codex/config.toml` (closest to CWD) > profile files > `~/.codex/config.toml` > `/etc/codex/config.toml` > built-in defaults. Project `.codex/` layers load only for trusted projects. Managed config also enforced via `requirements.toml`.
+- **Memories**: Off by default (experimental, `memories = true` feature flag). Codex turns useful context from eligible prior chats into local memory files. Background processing — skips active/short-lived sessions, waits for idle period, redacts secrets. Per-chat control via `/memories` command. Generation skips when rate-limit remaining below configured threshold (`memories.min_rate_limit_remaining_percent`). Configurable extraction and consolidation models.
+- **Chronicle**: Opt-in research preview (Pro subscribers, macOS only). Captures screen context periodically, runs sandboxed background agents to generate memories. Screen captures are ephemeral (deleted after 6 hours). Uses `consolidation_model` from config.
+- **Skills**: Progressive disclosure — metadata (`name`, `description`) always in context; full `SKILL.md` loaded only when chosen. Supports `scripts/`, `references/`, `assets/` subdirectories. Codex can discover and choose skills implicitly when task matches description. Repo skills in `.agents/skills`; global in `~/.agents/skills`.
+- **Hooks**: Discovered next to active config layers (user, project, system, plugin). Loaded from `hooks.json` or inline `[hooks]` in `config.toml`. Non-managed command hooks must be reviewed and trusted per-hash before first run. Managed hooks (from `requirements.toml`) are pre-trusted and cannot be disabled. Lifecycle events include SessionStart, PreToolUse, PermissionRequest, PostToolUse, PreCompact, PostCompact, UserPromptSubmit, SubagentStart, SubagentStop, Stop, SessionEnd.
+- **Import**: Dedicated import flow from Claude Code, Claude Cowork — imports instruction files, settings, skills, plugins, MCP config, hooks, subagents, project folders, and recent chats (last 30 days). Maps `settings.json` to `config.toml`, instructions to `AGENTS.md`, slash commands to skills.
 
-### Assessment
+### Lifecycle Management
 
-Codex represents a **session-transcript-based** approach to durable context rather than a declarative file approach. Due to its discontinuation as a CLI tool and migration toward a desktop product, its model is less relevant to the file-based durable context pattern examined here.
+- **AGENTS.md freshness**: Rebuilt on every run — "no cache to clear manually." Verify with `codex --ask-for-approval never "Summarize the current instructions."`. Nested AGENTS.md files provide scoped overrides; closest to CWD takes precedence.
+- **Staleness awareness**: Scheduled tasks (`/codex/automations`) can run recurring drift checks to identify guidance gaps. Docs recommend treating AGENTS.md as a feedback loop: correct the agent and ask it to update AGENTS.md so the fix persists.
+- **Memory lifecycle**: Background generation with idle detection. Chronicles' screen captures auto-deleted after 6 hours. Memories are unencrypted Markdown files — users can inspect and manually prune. Configurable rate-limit gating prevents quota exhaustion.
+- **Hook trust management**: Hash-based trust tracking — any change to a hook marks it for re-review. `/hooks` command for inspection, trust, and disable. `--dangerously-bypass-hook-trust` for one-off automation.
+- **Config layer trust**: Project `.codex/` layers (config, hooks, rules) load only for trusted projects. Untrusted projects skip project-scoped layers but still load user/system config.
+- **Session transcripts**: Markdown export from desktop app provides durable session record. Simon Willison publishes these as gists (e.g., https://gist.github.com/simonw/ab8256b81646ad967a601975e206de64).
+
+### Anti-patterns / Warnings
+
+- **Memories as source of truth**: "Keep required team guidance in `AGENTS.md` or checked-in documentation. Treat memories as a helpful recall layer, not as the only source for rules that must always apply." Memories are machine-local, not synced.
+- **Context bloat**: "Keep it small" for AGENTS.md. Codex stops adding files at 32 KiB limit. Suggests splitting large instructions across nested directories.
+- **Prompt injection via Chronicle**: "Using Chronicle increases risk to prompt injection attacks from screen content. For instance, if you browse a site with malicious agent instructions, Codex may follow those instructions."
+- **Not enforcement**: "Pair `AGENTS.md` with infrastructure that enforces those rules: pre-commit hooks, linters, and type checkers catch issues before you see them."
+- **Secrets in memories**: Codex redacts secrets from generated memory fields, but docs still warn to review memory files before sharing. Chronicle screen captures may contain sensitive visible information.
+- **Chronicle rate limits**: Background agents for Chronicle "currently consume rate limits quickly."
+- **Duplicate hooks across layers**: If a single layer has both `hooks.json` and inline `[hooks]`, Codex warns at startup. Also warns about conflicting personality settings.
+- **Fallback filenames confusion**: Multiple AGENTS.md-equivalent files must be explicitly configured in `project_doc_fallback_filenames` — not auto-discovered.
+
+### ADRs, Glossaries, Durable Knowledge
+
+- No dedicated ADR/glossary mechanism.
+- **AGENTS.md** serves as the primary durable knowledge store — build/test commands, repo conventions, directory-specific instructions. Docs frame it as a "feedback loop": codify recurring review feedback, put guidance in the closest directory where it applies.
+- **Skills** are the recommended home for procedural knowledge — repeatable workflows, team-specific expertise, procedures needing examples/references. Skills support richer instructions, scripts, and references.
+- **Memories + Chronicle** form a screen-context layer that captures implicit working knowledge (tools, workflows, recent context) without manual authoring — but docs position this as a complement to explicit AGENTS.md, not a replacement.
+- **Code review rules**: AGENTS.md supports a `## Code Review Rules` section scoped to the closest directory, feeding into Codex's GitHub code review integration. Rules describe behaviors to flag and safe paths.
+- **Managed configuration** for enterprises: `requirements.toml` can enforce agent config, hooks, and rules across the organization.
+
+### Notable Community Use
+
+Simon Willison uses Codex Desktop extensively for agentic engineering and has praised its "Markdown session transcript export feature I've always wanted" (https://simonwillison.net, May 2026). He publishes full session transcripts as GitHub gists (e.g., GPT-5.6 Sol xhigh session building sqlite-utils transforms at https://gist.github.com/simonw/ab8256b81646ad967a601975e206de64). This practice treats session transcripts as a form of durable context — reproducible records of agent reasoning, tool use, and decisions across sessions.
 
 ---
 
@@ -512,7 +561,7 @@ When instructions say one thing and code does another, the model faces ambiguity
 4. Aider docs: https://aider.chat/docs/ (Conventions: /docs/usage/conventions.html, Config: /docs/config.html, Repo Map: /docs/repomap.html, Commands: /docs/usage/commands.html)
 5. Windsurf/Cascade docs: https://docs.windsurf.com/windsurf/cascade/memories (Memories & Rules, Cascade Overview)
 6. Cursor docs: https://docs.cursor.com/context/rules-for-ai
-7. OpenAI Codex: https://platform.openai.com/docs/guides/codex (returns 404 — discontinued)
+7. OpenAI Codex: https://learn.chatgpt.com/codex (official docs — Configuration: /codex/configuration, Customization: /codex/customization/overview, Memories: /codex/customization/memories, Chronicle: /codex/customization/chronicle, AGENTS.md: /codex/agent-configuration/agents-md, Rules: /codex/agent-configuration/rules, Config basics: /codex/config-file/config-basic, Hooks: /codex/hooks, Import: /codex/import)
 8. Agent Skills standard: https://agentskills.io
 9. AGENTS.md spec: https://github.com/agentsmd/agents.md
 10. Simon Willison's blog: https://simonwillison.net/tags/ai-assisted-programming/ (400+ posts, quoted extensively)
