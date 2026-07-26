@@ -1,7 +1,7 @@
 # OpenCode Symlink Resolution for Skill Directories
 
 > **Answer: YES** — OpenCode follows symlinks when scanning skill directories.
-> The `npx skills` delivery model (symlink `.claude/skills/` → `.agents/skills/`) is safe.
+> This establishes scanner behavior for valid directory symlinks. It does not by itself validate every `npx skills` version, selected-agent set, install mode, link layout, or filesystem policy.
 
 ---
 
@@ -145,14 +145,11 @@ OpenCode has **no equivalent `DISABLE_SYMLINKS` env var** and no documentation o
 
 ---
 
-## 3. The `npx skills` Delivery Model — Verified Safe
+## 3. Scanner Compatibility with `npx skills` Layouts
 
-The delivery model works as follows:
-1. `npx skills` installs skill files to `.agents/skills/<name>/SKILL.md`
-2. `npx skills` creates a symlink: `.claude/skills/<name>` → `../.agents/skills/<name>`
-3. OpenCode reads `.claude/skills/` as a compatibility path
+In the current CLI's default symlink mode, the canonical project store is `.agents/skills/<name>/SKILL.md`. OpenCode is classified as a universal agent and reads that canonical path directly; it does not need a `.claude/skills/` link. If Claude Code is also selected, the installer may create `.claude/skills/<name>` pointing to the canonical skill, and OpenCode's compatibility scan can follow that link too.
 
-**Why this works in OpenCode:**
+**Why a valid linked compatibility path is readable by OpenCode:**
 
 | Step | Mechanism | Status |
 |------|-----------|--------|
@@ -162,13 +159,13 @@ The delivery model works as follows:
 | Walk-up discovery | `fsys.up()` uses `fs.exists()` → follows symlinks | ✅ Works |
 | Global scan | Same `symlink: true` for `~/.claude/skills/` and `~/.agents/skills/` | ✅ Works |
 
-### Potential edge case: Two paths to same skill
+### Potential edge case: Two paths with the same skill name
 
 With `npx skills`, a single skill at `.agents/skills/my-skill/SKILL.md` is reachable via two scans:
 1. `.claude/skills/` → symlink → `.agents/skills/my-skill/SKILL.md`
 2. `.agents/skills/` → direct → `.agents/skills/my-skill/SKILL.md`
 
-OpenCode's `add()` function handles this by logging a warning for duplicate skill names but **both paths resolve to the same logical path** after symlink resolution, so the same SKILL.md file is parsed twice. The second parse overwrites the first in the `state.skills` map with identical content — functionally no issue.
+OpenCode's `add()` function logs a duplicate-name warning and assigns the later parsed entry into `state.skills[name]`. The current loader processes discovered matches concurrently, so this is not a documented precedence mechanism. Even when both paths happen to point at the same bytes, do not depend on duplicate discovery or claim a general “functionally identical” outcome; avoid presenting both paths when one canonical `.agents/skills/` path is sufficient.
 
 ```typescript
 if (state.skills[md.data.name]) {
@@ -231,7 +228,8 @@ If the skill appears, symlink resolution is confirmed operative in your environm
 |----------|--------|------------|
 | Does OpenCode follow symlinks when scanning skill directories? | **Yes** | Source-code confirmed |
 | Is this documented? | **No** | Docs mention no symlink behavior |
-| Does the `npx skills` delivery model work with OpenCode? | **Yes** | All code paths follow symlinks |
+| Can OpenCode read a valid skill-directory symlink produced by an installer? | **Yes in current source** | Scanner follows directory symlinks |
+| Does that prove every `npx skills` delivery topology? | **No** | CLI version, install mode, selected targets, and filesystem policy must be checked separately |
 | Can symlink following be disabled? | **No** | No env var or config option exists |
 | Claude Code comparison | Claude Code explicitly documents symlink support + has `DISABLE_SYMLINKS` env var | OpenCode has neither docs nor disable mechanism |
 

@@ -36,6 +36,8 @@ allowed-tools: ...        # Optional. Space-separated, experimental.
 ---
 ```
 
+`allowed-tools` is a generic experimental schema field, not evidence that every host enforces it. Claude Code documents its own behavior; current Codex docs do not, and OpenCode ignores unknown skill fields.
+
 - `name` must match parent directory name. No consecutive hyphens, no leading/trailing hyphens. (source: specification)
 - `description` must be in third person: "Processes Excel files..." not "I can help you..." (source: Anthropic best-practices)
 
@@ -101,6 +103,8 @@ Source: Claude Code skills docs
 
 Claude Code extends the base specification with: `context: fork` (subagent execution), `allowed-tools`/`disallowed-tools`, `model`/`effort` overrides, `hooks`, `paths` (glob patterns for activation), `argument-hint`/`arguments`, string substitution (`$ARGUMENTS`, `$0`, `$1`, `${CLAUDE_SKILL_DIR}`, `${CLAUDE_PROJECT_DIR}`), and `` !`command` `` dynamic context injection.
 
+Do not generalize this invocation table into a cross-harness “manual-only” guarantee. Codex uses `policy.allow_implicit_invocation: false` in `agents/openai.yaml`, while OpenCode ignores `disable-model-invocation` and has no true per-skill explicit-only equivalent.
+
 ### Evaluation-Driven Development
 
 Source: Anthropic best-practices
@@ -164,6 +168,8 @@ Two choices trading different costs (SKILL.md:13-21):
 - **User-invoked**: Strips description from agent's reach. Only human typing its name can invoke. Zero context load, but spends **cognitive load** — the human is the index that must remember it exists. Set `disable-model-invocation: true`; description becomes human-facing.
 
 "Pick model-invocation only when the agent must reach the skill on its own, or another skill must. If it only ever fires by hand, make it user-invoked and pay no context load."
+
+This vocabulary describes Claude Code behavior in the cited local skill. It is authoring guidance, not a portable runtime contract: use Codex's separate invocation policy where applicable, and do not label an OpenCode skill manual-only merely because it carries the ignored Claude field.
 
 ### The Two Loads
 

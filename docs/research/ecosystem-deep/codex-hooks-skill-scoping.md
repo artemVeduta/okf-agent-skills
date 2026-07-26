@@ -4,7 +4,9 @@
 
 ## Answer: No
 
-**Codex hooks are session-scoped only.** There is no mechanism to bind hooks to specific skills. You must filter by tool name/regex in the matcher.
+**Codex hook configuration has user, project, and plugin scopes, but hook activation has no skill scope.** A hook enabled by one of those layers can filter event-specific fields such as tool name; it cannot bind itself to “while skill X is active.”
+
+This distinction matters: “project-scoped configuration” describes where a hook is enabled, while “skill-scoped activation” would describe when it fires. Codex supports the former and does not document the latter.
 
 ---
 
@@ -56,6 +58,14 @@ There is **no mechanism** for Codex to discover a `hooks.json` or hooks configur
 
 **Contrast with Claude Code:** Claude Code supports hooks within a skill directory when the skill folder is treated as a plugin via a `.claude-plugin/plugin.json` manifest. Changes to `hooks/` within such a skill folder require `/reload-plugins` to take effect. Codex has no equivalent.
 
+### Configuration scope is still broader than a session-only file
+
+| Codex hook source | Configuration scope | Skill-activation scope? |
+|---|---|---|
+| `~/.codex/hooks.json` or inline user TOML | User | No |
+| Trusted project `.codex/hooks.json` or inline project TOML | Project/config layer | No |
+| Plugin-bundled hooks | While the plugin is enabled | No; hooks are not limited to the bundled skill's active interval |
+
 ## 4. `agents/openai.yaml` has no hook configuration
 
 The Codex-specific `agents/openai.yaml` file supports only:
@@ -91,7 +101,7 @@ The JSON input object sent to hook commands on stdin includes fields like `sessi
 
 Source: [Hooks docs](https://developers.openai.com/codex/hooks), "Common input fields" section.
 
-A hook script cannot determine at runtime which skill triggered the tool call it is intercepting.
+A hook script receives no native active-skill identifier. It may infer from command paths or inputs, but that is application-specific and fragile.
 
 ## 6. No changelog or source evidence of hooks+skills integration
 
@@ -117,4 +127,4 @@ A plugin-bundled approach provides partial scoping: if you bundle a skill and it
 | Hook input exposes currently active skill | No | N/A (Claude Code hooks only fire when skill is active) |
 | `agents/openai.yaml` hook configuration | No | N/A (Claude Code equivalent is `.claude-plugin/plugin.json`) |
 
-The Codex hooks and skills systems are **architecturally independent** with no integration points between them as of the latest documentation.
+The Codex hooks and skills systems have no documented **skill-activation binding** as of the latest documentation. This does not erase hook configuration scope: user, trusted-project, and plugin layers remain distinct.

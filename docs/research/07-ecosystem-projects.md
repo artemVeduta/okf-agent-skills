@@ -14,9 +14,40 @@ Each project group has a companion deep-dive file with full CLI interfaces, end-
 | [ecosystem-deep/producers.md](ecosystem-deep/producers.md) | OpenWiki (LangChain), pi-openwiki, leadcraft, WordPress Plugin, Web Converter | 1,107 |
 | [ecosystem-deep/consumers.md](ecosystem-deep/consumers.md) | Kiso, @docmd/plugin-okf, okf-viewer, okapi-okf | 750 |
 | [ecosystem-deep/skills.md](ecosystem-deep/skills.md) | rakibtg/okf-skill, fabricioctelles OKF skill, hermes-okf, okforge | 843 |
-| [ecosystem-deep/mcp-servers.md](ecosystem-deep/mcp-servers.md) | @copperbox/okf-mcp, caedora-mcp, okfy-ai, @quatrain/okf, okf-toolset | 1,240 |
+| [ecosystem-deep/mcp-servers.md](ecosystem-deep/mcp-servers.md) | @copperbox/okf-mcp, caedora-mcp, okfy-ai, okf-toolset | — |
 | [ecosystem-deep/ts-libraries.md](ecosystem-deep/ts-libraries.md) | 6 TypeScript libraries (core-okf, js-okf, okf-tool, turbomem/okf, sorane/okf, okf-toolkit) | 1,557 |
 | [ecosystem-deep/specialized.md](ecosystem-deep/specialized.md) | Inkeep, knowledge-template, openknowledgeformat.com, AgentFi, kb.duyet.net, OriginTrail DKG, W3C DataBook, auto-okf, okfgen, fastrag/okf | 1,018 |
+
+## Ecosystem-map coverage matrix
+
+**Evidence:** Every entry in the okf.md maturity table captured on 2026-07-26
+is accounted for below. “Candidate/compatibility” is not evidence of a distinct
+implementation.
+
+| Ecosystem-map entry | Coverage | Classification |
+|---|---|---|
+| Enrichment Agent | [google-tools.md](ecosystem-deep/google-tools.md) | Implementation |
+| viz.html | [google-tools.md](ecosystem-deep/google-tools.md) | Implementation |
+| kcmd CLI | [google-tools.md](ecosystem-deep/google-tools.md) | Catalog tool + bounded OKF demo |
+| Knowledge Catalog | [05-google-cloud-kc.md](05-google-cloud-kc.md) | Product + bounded demo |
+| Obsidian | [01-okf-site-pages.md](01-okf-site-pages.md) | Compatibility; no dedicated plugin verified |
+| GitHub Actions | [01-okf-site-pages.md](01-okf-site-pages.md) | Candidate/DIY; no official Action verified |
+| MCP Server (kcmd) | [google-tools.md](ecosystem-deep/google-tools.md) | Three MCP tools; no OKF validation |
+| WordPress Plugin | [producers.md](ecosystem-deep/producers.md) | Implementation |
+| okf CLI | [validators.md](ecosystem-deep/validators.md) | Implementation |
+| okflint | [validators.md](ecosystem-deep/validators.md) | Implementation |
+| Kiso | [consumers.md](ecosystem-deep/consumers.md) | Implementation |
+| OpenWiki 0.2 | [producers.md](ecosystem-deep/producers.md) | Implementation |
+| signed-okf | [specialized.md](ecosystem-deep/specialized.md) | Implementation; no OriginTrail code |
+| hermes-okf | [skills.md](ecosystem-deep/skills.md) | Implementation |
+| Inkeep | [specialized.md](ecosystem-deep/specialized.md) | General Markdown IDE + optional OKF pack |
+| Science Template | [specialized.md](ecosystem-deep/specialized.md) | Template |
+| OriginTrail DKG | [specialized.md](ecosystem-deep/specialized.md) | Mapper; on-chain publish is separate |
+| openknowledgeformat.com | [specialized.md](ecosystem-deep/specialized.md) | Web implementation |
+| okf-skill | [skills.md](ecosystem-deep/skills.md) | Implementation |
+| leadcraft | [producers.md](ecosystem-deep/producers.md) | Implementation |
+| pi-openwiki | [producers.md](ecosystem-deep/producers.md) | Implementation |
+| Coding Agent Skills | [skills.md](ecosystem-deep/skills.md) | Category, not one product |
 
 ---
 
@@ -51,12 +82,12 @@ Each project group has a companion deep-dive file with full CLI interfaces, end-
 ### 3. kcmd CLI + MCP Server (Google)
 - **URL**: https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode
 - **Repository**: Same Google Cloud monorepo
-- **Description**: Bidirectional sync between local metadata (YAML/markdown) and Google Cloud Knowledge Catalog. "Git for metadata" — local edit, push/pull to cloud. Ships as TypeScript library, CLI, and MCP server.
-- **Relationship to OKF**: Bridge tool (between filesystem OKF and Knowledge Catalog backend)
-- **Status**: Early product — CLI works, MCP server real, no versioned npm releases
-- **Language/Stack**: TypeScript, npm (`kcmd`), GCP Knowledge Catalog
+- **Description**: Bidirectional sync between a local catalog-specific YAML/Markdown snapshot and Google Cloud Knowledge Catalog. Ships in source as a TypeScript library, CLI, and MCP server.
+- **Relationship to OKF**: Generic kcmd operates on its own catalog layout; a separate `demo/okf` adapter maps a bounded OKF field subset through a custom aspect.
+- **Status**: Source implementation — no public npm package named `kcmd` was present when checked 2026-07-26
+- **Language/Stack**: TypeScript, GCP Knowledge Catalog
 - **License**: Apache 2.0
-- **Key Files/Features**: `init`, `pull`, `push`, `status`, `mcp` subcommands. MCP tools: `pull`, `push`, `list-entries`, `lookup-entry`, `modify-entry`.
+- **Key Files/Features**: `init`, `pull`, `push`, `status`, `mcp` subcommands. MCP registers `list-entries`, `lookup-entry`, and `modify-entry`; `pull`/`push` are CLI-only.
 - **OKF-Specific Logic**: YAML/sidecar format differs from pure OKF (oriented toward Dataplex catalog). Builds hierarchical layout mirroring resource structure.
 - **Dependencies**: GCP project with Knowledge Catalog enabled, `gcloud` auth
 - → **Deep dive**: [ecosystem-deep/google-tools.md](ecosystem-deep/google-tools.md) — full CLI, 20+ TS source files, MCP server with 3 tools, pull/push sync flow
@@ -64,13 +95,13 @@ Each project group has a companion deep-dive file with full CLI interfaces, end-
 ### 4. Google Cloud Knowledge Catalog
 - **URL**: https://cloud.google.com/products/knowledge-catalog
 - **Repository**: N/A (GCP product)
-- **Description**: GCP's AI-powered metadata catalog (formerly Dataplex). Native OKF ingestion, automatic harvesting from BigQuery/AlloyDB/Spanner/Cloud SQL/Firestore/Looker, third-party integrations (Ab Initio, Anomalo, Atlan, Collibra, Datahub), Gemini enrichment, sub-second semantic search for agents.
-- **Relationship to OKF**: Consumer (ingests OKF bundles natively) + enterprise backend
+- **Description**: GCP's AI-powered metadata catalog (formerly Dataplex), with harvesting, enrichment, semantic search, and context APIs.
+- **Relationship to OKF**: Repository demo maps selected OKF fields through a custom Dataplex aspect and back; generic product-level OKF ingestion/export is not established by the audited source.
 - **Status**: GA Google Cloud product
 - **Language/Stack**: GCP enterprise stack
 - **License**: Proprietary (GCP service)
-- **Key Files/Features**: Native OKF ingestion, Context APIs + MCP tools, data products with SLAs
-- **OKF-Specific Logic**: Ingests OKF bundles directly. Not OKF-native — OKF is the portable interop layer.
+- **Key Files/Features**: Context APIs, separate KC MCP integrations, data products, and the demo adapter
+- **OKF-Specific Logic**: Demo-specific mapping; the KC MCP integrations are not shown reading or returning OKF files.
 - **Dependencies**: Google Cloud Platform, paid service (free tier: 100 DCU-hr/month + 1 MiB storage + 1M API calls)
 
 ### 5. superops-team/okf CLI
@@ -133,9 +164,13 @@ Each project group has a companion deep-dive file with full CLI interfaces, end-
 - **Status**: Early — v0.2.1 (July 2026), 2 stars, 1 commit. NOT on PyPI (only GitHub).
 - **Language/Stack**: Python 3.8+, cryptography library, Apache 2.0
 - **License**: Apache 2.0
-- **Key Files/Features**: `sign_okf.py keygen` (Ed25519 keypair), `sign_okf.py sign` (hash + sign bundle), `verify_okf.py` (re-hashes + checks signature). JWKS-based key distribution (`--jwks` can be local file or public URL). Optional OriginTrail DKG anchoring.
+- **Key Files/Features**: `sign_okf.py keygen` (Ed25519 keypair),
+  `sign_okf.py sign` (hash + sign bundle), `verify_okf.py` (re-hashes +
+  checks signature), and JWKS distribution. No OriginTrail integration exists
+  in this repository.
 - **OKF-Specific Logic**: Adds `okf.manifest.json` file (not an OKF reserved name, so additive). Adds optional frontmatter keys per OKF spec extension policy. Tamper-evident: any change to any file or manifest breaks verification. Spec-compliant with "MAY include additional keys" rule.
-- **Dependencies**: Python `cryptography` library. Built by Dynamic Feed (dynamicfeed.ai). Compatible with OriginTrail DKG for on-chain anchoring.
+- **Dependencies**: Python `cryptography` library. Built by Dynamic Feed
+  (dynamicfeed.ai). Any OriginTrail mapping/publication is a separate workflow.
 - → **Deep dive**: [ecosystem-deep/validators.md](ecosystem-deep/validators.md) — keygen/sign/verify CLI, manifest JSON structure, Ed25519 flow, JWKS distribution, tamper-evident design
 
 ### 10. hermes-okf — Agent Memory
@@ -151,16 +186,16 @@ Each project group has a companion deep-dive file with full CLI interfaces, end-
 - **Dependencies**: pyyaml (core), optional LangChain/ChromaDB for RAG. Tight coupling to HermesAgent ecosystem limits broader adoption, but architecture is reference-worthy.
 - → **Deep dive**: [ecosystem-deep/skills.md](ecosystem-deep/skills.md) — 22 CLI subcommands, all Python source, decorators, GitOKFBundle, hot/cold memory, RAG, config validator
 
-### 11. Inkeep Open Knowledge
+### 11. Inkeep OpenKnowledge
 - **URL**: https://github.com/inkeep/open-knowledge
 - **Repository**: github.com/inkeep/open-knowledge
 - **Description**: Beautiful, AI-native WYSIWYG markdown editor and LLM wiki tool. macOS app + web UI. Integrates with Claude, Codex, OpenCode, Pi. MCP, skills, agentic search. OKF starter pack. Git/GitHub sync.
-- **Relationship to OKF**: Editor/IDE ± consumer (native OKF editing with validation)
-- **Status**: Active — v0.9+ (July 2026), 3.1k stars, 1,293 commits
+- **Relationship to OKF**: General Markdown IDE with an optional OKF v0.1 starter pack. The pack is conformant by construction but explicitly says conformance is not enforced.
+- **Status**: Active — GitHub release v0.39.4 (2026-07-24); npm stable tag 0.38.4 when checked 2026-07-26
 - **Language/Stack**: TypeScript/React, GPL-3.0, monorepo (packages/), pnpm, Biome
 - **License**: GPL-3.0
 - **Key Files/Features**: CLIs: `ok init`, `ok start --open`. Full WYSIWYG markdown editor. Side-by-side AI editing with Claude/Codex/OpenCode/Pi. MCP server + agent skills. Team sharing via git/GitHub. Embeddable HTML and rich components. Starter packs including OKF template.
-- **OKF-Specific Logic**: OKF starter pack (`npx create-open-knowledge my-kb --template okf`) generates conformant OKF knowledge base. Live frontmatter validation. Internal link resolution. Concept graph sidebar. "OKF by default" workflow.
+- **OKF-Specific Logic**: `ok seed --pack okf` scaffolds an OKF v0.1-shaped project and installs guidance. Repository tests check the seed; the application does not enforce OKF conformance during normal authoring.
 - **Dependencies**: Node.js 24+, git. Inkeep has funding + existing product (AI search widget). Still pre-1.0.
 - → **Deep dive**: [ecosystem-deep/specialized.md](ecosystem-deep/specialized.md) — full CLI, 21 MCP tools, agent skills system, WYSIWYG features, 10+ agent integrations
 
@@ -211,13 +246,13 @@ Each project group has a companion deep-dive file with full CLI interfaces, end-
 ### 16. OriginTrail DKG + OKF
 - **URL**: Blog post at blog.prototypr.io
 - **Repository**: @origintrail-official/dkg-okf (npm)
-- **Description**: Connects OKF bundles to OriginTrail Decentralized Knowledge Graph (DKG) for on-chain provenance. Each bundle gets an owner, cryptographic proof, and immutable on-chain record. npm package `@origintrail-official/dkg-okf` v10.0.9 (published 4 days ago).
-- **Relationship to OKF**: Trust + persistence layer (on-chain anchoring of bundles)
-- **Status**: Concept — npm package active (v10.0.9, 1,730 weekly downloads), blog post July 4, 2026
+- **Description**: Deterministic OKF→RDF/DKG mapper. Import defaults to off-chain Working Memory; on-chain Verifiable Memory publication is a separate explicit `dkg ka publish` operator step.
+- **Relationship to OKF**: Mapping and DKG persistence layer; not automatic on-chain anchoring
+- **Status**: Released npm package v10.0.9 (checked 2026-07-26)
 - **Language/Stack**: TypeScript (npm package), Apache 2.0
 - **License**: Apache 2.0
-- **Key Files/Features**: `@origintrail-official/dkg-okf` — "Deterministic Google Open Knowledge Format (OKF) → DKG mapper." 1,730 weekly downloads, 1 dependent.
-- **OKF-Specific Logic**: Maps OKF bundles deterministically to DKG. Built on top of signed-okf approach.
+- **Key Files/Features**: `@origintrail-official/dkg-okf` — deterministic Google OKF → DKG mapper with import/export.
+- **OKF-Specific Logic**: Maps OKF bundles deterministically to DKG. It is separate from `signed-okf`; no source dependency or anchoring integration between them was found.
 - **Dependencies**: OriginTrail DKG node or testnet access.
 
 ### 17. WordPress Plugin (Suganthan)
@@ -266,7 +301,8 @@ Each project group has a companion deep-dive file with full CLI interfaces, end-
 - **Dependencies**: SPARQL triplestore, SHACL processor.
 
 ### 21. AgentFitech
-- **URL**: https://medium.com/@AgentFitech
+- **URL**: `https://medium.com/@AgentFitech` (403 to automated link checking on
+  2026-07-26)
 - **Description**: Startup that built OKF support (producer + consumer) within 24 hours of spec release. Documented process on Medium.
 - **Relationship to OKF**: Producer + Consumer (built OKF integration into their product)
 - **Status**: Proof of concept (blog post, no public repo)
@@ -293,37 +329,43 @@ These projects were found via npm search, PyPI, and GitHub search, beyond what t
 
 ### npm Packages
 
-| Package | Publisher | Description | Version | Weekly Downloads | License |
-|---------|-----------|-------------|---------|-------------------|---------|
-| `open-knowledge-format` | kkonstantinov | Placeholder — "Coming soon" | 0.0.1 | 20 | MIT |
-| `@origintrail-official/dkg-okf` | branarakic | OKF → DKG deterministic mapper | 10.0.9 | 1,730 | Apache-2.0 |
-| `@docmd/plugin-okf` | GitHub Actions | Generate OKF bundle from docmd site | 0.8.17 | 5,572 | MIT |
-| `@quatrain/okf` | crapougnax | OKF flat file storage adapter | 1.0.5 | 540 | AGPL-3.0 |
-| `okforge` | jetienne | OKF skill for Claude Code — bundle mechanics + Stop-hook | 1.0.12 | 1,935 | MIT |
-| `@equationalapplications/core-okf` | GitHub Actions | Zero-dep TypeScript OKF primitives (frontmatter, concepts, index/log builders) | 4.22.0 | 3,148 | MIT |
-| `okfy-ai` | 0dust | Convert docs → OKF bundles + serve to MCP agents | 0.3.3 | 2,154 | MIT |
-| `@copperbox/okf-mcp` | GitHub Actions | MCP server providing OKF backend to coding agents | 0.20.0 | 2,860 | ISC |
-| `@turbomem/okf` | arneeshaima | OKF parser, validator, writer for Node.js | 1.0.0 | 439 | Apache-2.0 |
-| `auto-okf` | indexzero | Multi-writer OKF bundles | 0.0.1 | 137 | Apache-2.0 |
-| `js-okf` | prabhay759 | TypeScript library for creating/updating OKF bundles | 0.3.1 | 819 | MIT |
-| `okfgen` | arindam1729 | Generate + validate OKF bundles with LangChain + any model provider | 0.0.3 | 495 | MIT |
-| `@fastrag/okf` | zac_ma | Convert doc corpora → OKF bundles + graph-first Viewer Workbenches | 0.1.0 | 511 | MIT |
-| `okf-toolset` | skye0402 | Filesystem-first OKF toolkit: embeddings, search, MCP, refiner, Git helpers | 0.3.0 | 712 | MIT |
-| `okf-tool` | hanfang5057 | TypeScript OKF library: parse, write, search, validate | 0.2.0 | 322 | Apache-2.0 |
-| `okapi-okf` | GitHub Actions | OKF Knowledge Studio — visualize, explore, audit, edit, query bundles | 0.2.1 | 335 | MIT |
-| `okf-toolkit` | rubenlazarus | Parse, validate, chunk OKF bundles for RAG pipelines | 0.1.0 | 152 | Apache-2.0 |
-| `@sorane/okf` | GitHub Actions | OKF parsing, validation, serialization for sorane | 0.5.0 | 195 | MIT |
-| `caedora-mcp` | williamfclarke | MCP server for reading/maintaining OKF bundles | 0.2.0 | 169 | MPL-2.0 |
-| `okf-viewer` | GitHub Actions | Browse OKF bundle via local CLI + Next.js viewer | 0.4.1 | 150 | MIT |
+| Package | Description | Version | License |
+|---------|-------------|---------|---------|
+| `open-knowledge-format` | Placeholder — "Coming soon" | 0.0.1 | MIT |
+| `@origintrail-official/dkg-okf` | OKF → DKG deterministic mapper | 10.0.9 | Apache-2.0 |
+| `@docmd/plugin-okf` | Generate OKF bundle from docmd site | 0.8.17 | MIT |
+| `okforge` | OKF skill for Claude Code | 1.0.12 | MIT |
+| `@equationalapplications/core-okf` | TypeScript OKF primitives | 4.22.0 | MIT |
+| `okfy-ai` | Docs → OKF + MCP | 0.3.3 | MIT |
+| `@copperbox/okf-mcp` | OKF MCP server | 0.20.0 | ISC |
+| `@turbomem/okf` | Parser, validator, writer | 1.0.0 | Apache-2.0 |
+| `auto-okf` | Multi-writer bundles | 0.0.1 | Apache-2.0 |
+| `js-okf` | Bundle library | 0.3.1 | MIT |
+| `okfgen` | LangChain bundle generator | 0.0.3 | MIT |
+| `@fastrag/okf` | Corpus converter + viewer | 0.1.0 | MIT |
+| `okf-toolset` | Filesystem toolkit | 0.3.0 | MIT |
+| `okf-tool` | Parse/write/search/validate | 0.2.0 | Apache-2.0 |
+| `okapi-okf` | Knowledge Studio | 0.2.1 | MIT |
+| `okf-toolkit` | Parse/validate/RAG chunking | 0.1.0 | Apache-2.0 |
+| `@sorane/okf` | Parse/validate/serialize | 0.5.0 | MIT |
+| `caedora-mcp` | Bundle MCP server | 0.2.0 | MPL-2.0 |
+| `okf-viewer` | Local viewer | 0.4.1 | MIT |
 
 **Most significant newly discovered npm packages:**
-- **`@docmd/plugin-okf`** (5.5k weekly downloads) — most popular OKF npm package by downloads. Generates OKF bundles from docmd sites.
-- **`@equationalapplications/core-okf`** (3.1k downloads, v4.22.0) — mature, zero-dependency TypeScript library. Likely the best maintained TS OKF library.
-- **`@copperbox/okf-mcp`** (2.8k downloads, v0.20.0) — actively maintained MCP server for OKF. High version number suggests rapid iteration.
-- **`okforge`** (1.9k downloads, v1.0.12) — Claude Code skill specifically for OKF bundle mechanics.
-- **`okfy-ai`** (2.1k downloads) — Docs-to-OKF converter + MCP server. Full pipeline.
-- **`okf-toolset`** (712 downloads) — Most comprehensive toolkit: embeddings, search, MCP, refiner, Git helpers.
-- **`okapi-okf`** (335 downloads) — Dedicated OKF studio with visualization, editing, querying.
+- **`@docmd/plugin-okf`** — Generates OKF bundles from docmd sites.
+- **`@equationalapplications/core-okf`** (v4.22.0) — zero-dependency
+  TypeScript library. No cross-project maintenance ranking was established.
+- **`@copperbox/okf-mcp`** — MCP server with bundle validation and
+  multi-bundle operations.
+- **`okforge`** — Claude Code skill for OKF bundle mechanics.
+- **`okfy-ai`** — Docs-to-OKF converter and MCP server.
+- **`okf-toolset`** — Toolkit with embeddings, search, MCP, refiner, and Git
+  helpers.
+- **`okapi-okf`** — OKF studio with visualization, editing, and querying.
+
+Download counts are deliberately omitted because the npm last-week endpoint is
+time-sensitive and the earlier snapshot was not reproducible. Any future usage
+comparison must record the query URL and retrieval interval.
 
 ### PyPI Packages
 
@@ -348,12 +390,12 @@ Note: `signed-okf` is NOT on PyPI (returns 404). Only distributed via GitHub cur
 
 | Priority | Project | Why |
 |----------|---------|-----|
-| **P0** | `rakibtg/okf-skill` | Existing agent skill for producing/consuming OKF — best starting point or reference for building our own |
-| **P0** | `okflint` (mattdav) | The gold-standard validator. Any skill suite MUST run okflint for conformance gating |
+| **P0** | `rakibtg/okf-skill` | Existing agent skill for producing/consuming OKF; evaluate as one implementation reference |
+| **P0** | `okflint` (mattdav) | Deterministic validator worth evaluating for conformance gating |
 | **P0** | OKF Spec (GoogleCloudPlatform/knowledge-catalog) | Authoritative source. All tools ultimately reference this |
 | **P1** | `fabricioctelles/skills` (OKF skill) | Alternative OKF skill implementation — another reference for skill design |
 | **P1** | `hermes-okf` | Reference architecture for OKF as agent memory — types, decorators, session lifecycle |
-| **P1** | `OpenWiki` (LangChain) | Production-grade producer. Shows how OKF integrates with agent instruction files |
+| **P1** | `OpenWiki` (LangChain) | Demonstrates codebase-to-OKF generation and agent-instruction integration; production readiness was not independently established |
 | **P1** | `@equationalapplications/core-okf` | Mature TypeScript library — useful if building TypeScript tooling |
 | **P2** | `superops-team/okf` CLI | Git-aware bundle generation. Complementary to okflint |
 | **P2** | `leadcraft` | Example of OKF as output format for structured planning — architectural pattern reference |
@@ -389,25 +431,29 @@ These projects demonstrate what "doing OKF well" looks like:
 
 | Aspect | Reference | Notes |
 |--------|-----------|-------|
-| **Validation** | `okflint` | Gold standard. Three-tier rules, profile system, deterministic. Should be the CI gate for any bundle. |
+| **Validation** | `okflint` | Deterministic three-tier rules and profiles; one candidate for a CI gate, subject to the selected conformance policy. |
 | **Agent Skill Design** | `rakibtg/okf-skill` | Clean progressive disclosure, deterministic scripts, vendored spec. Reference for SKILL.md structure. |
 | **Agent Memory** | `hermes-okf` | Type system for agent concepts (Decision, Observation, Plan, Session), decorator pattern, Git history. |
-| **Codebase → OKF** | `OpenWiki` (LangChain) | Production-grade. Multi-model, CI integration, agent file injection. |
+| **Codebase → OKF** | `OpenWiki` (LangChain) | Multi-model workflow with CI integration and agent-file injection; production readiness was not independently established. |
 | **Bundle Publishing** | `Kiso` | Simple CLI, GitHub Action, llms.txt + sitemap.xml output. |
 | **Trust** | `signed-okf` | Ed25519 signatures, JWKS key distribution, additive (doesn't break plain OKF). |
 | **Domain Profile** | `knowledge-template` (Open Science) | Shows how to define a vocabulary on top of OKF without forking the spec. |
 | **Planning** | `leadcraft` | Shows OKF as structured deliverable output from a planning workflow. |
-| **Editor Integration** | `Inkeep Open Knowledge` | Full WYSIWYG with live OKF validation. What a mature editor experience looks like. |
+| **Editor Integration** | `Inkeep Open Knowledge` | Editing workflow with OKF guidance. Its official skill explicitly describes guidance rather than lint enforcement. |
 
 ### Ecosystem Health Assessment
 
 **Strengths:**
-- Rapid growth: 22+ projects in 6 weeks since spec publication (June 12, 2026)
+- The ecosystem map lists implementations, integrations, compatibility targets,
+  concepts, and long-existing platforms. It must not be interpreted as 22 new
+  projects created after the specification launch.
 - Multi-language: Python, TypeScript, Go, Java, PHP represented
 - Both producer and consumer tools exist
-- Validation tooling is production-quality (okflint)
-- LangChain backing (OpenWiki, 13.2k stars) signals strong community validation
-- npm ecosystem is particularly rich (20+ packages, several with 1k+ weekly downloads)
+- Deterministic validation tooling exists, including `okflint`
+- OpenWiki demonstrates integration with the LangChain ecosystem; repository
+  stars are not validation of OKF correctness
+- Several npm packages exist, but download counts are intentionally omitted
+  because they are volatile and were inconsistent across earlier snapshots.
 
 **Weaknesses:**
 - Most projects are 0.x or "functional PoC" — few production-hardened
@@ -427,7 +473,7 @@ Detailed per-project research is in `ecosystem-deep/`. Each file covers full CLI
 | Enrichment Agent (Google) | [google-tools.md](ecosystem-deep/google-tools.md) | 15 source files analyzed; BQ pass with shard-collapse regex, schema sampling; web pass fetch_url with 8-step filter chain; ADK agent definition with tool bindings |
 | viz.html Visualizer | [google-tools.md](ecosystem-deep/google-tools.md) | Bundle→JSON graph transformation; Cytoscape.js node/edge schema; internal link rewiring for viewer navigation; self-contained HTML template assembly |
 | kcmd CLI + MCP | [google-tools.md](ecosystem-deep/google-tools.md) | 20+ TS source files; pull/push sync flow; MCP server with 3 tools (list-entries, lookup-entry, modify-entry); YAML sidecar format |
-| kcagent | [google-tools.md](ecosystem-deep/google-tools.md) | **Does not exist** in the public repo — gap confirmed |
+| kcagent | [google-tools.md](ecosystem-deep/google-tools.md) | Exists under `toolbox/enrichment`; source package exposes `kcagent` and `md-fileset` binaries, but is not published on npm |
 | okflint | [validators.md](ecosystem-deep/validators.md) | 15 lint rules (F001–F201, R001–R002, S101–S202, L001–L003); full audit/validate/index CLI; manifest profile system; wikilink resolution algorithm; JSON output for CI; API imports |
 | superops-team/okf | [validators.md](ecosystem-deep/validators.md) | 14 CLI subcommands; 13 lint rules; git repo scanning (AST for Go, regex for others); incremental updates via state file; cross-platform binaries (6 OS/arch) |
 | signed-okf | [validators.md](ecosystem-deep/validators.md) | keygen/sign/verify CLI; manifest JSON (9 fields); Ed25519 7-step signing flow; JWKS format and distribution (file + HTTPS URL); tamper-evident design |
@@ -444,12 +490,11 @@ Detailed per-project research is in `ecosystem-deep/`. Each file covers full CLI
 | fabricioctelles OKF skill | [skills.md](ecosystem-deep/skills.md) | Full SKILL.md; validate.sh; conversion guides; kcmd integration; comparison with rakibtg approach |
 | hermes-okf | [skills.md](ecosystem-deep/skills.md) | 22 CLI subcommands; all Python source analyzed; @memorize_decision/@memorize_tool decorators; GitOKFBundle; hot/cold memory model; config validator (15 checks) |
 | okforge | [skills.md](ecosystem-deep/skills.md) | Full CLI; Stop-hook nudge mechanism; .okforge.config.json mapping; 3 operational modes; webview generator |
-| @copperbox/okf-mcp | [mcp-servers.md](ecosystem-deep/mcp-servers.md) | Canonical MCP server — 20 read tools + 7 write tools; multi-bundle; colocated bundles; cross-bundle edges; remote GitHub bundles; auto-fix registry |
+| @copperbox/okf-mcp | [mcp-servers.md](ecosystem-deep/mcp-servers.md) | MCP server — 20 documented read tools + 7 write tools; multi-bundle; colocated bundles; cross-bundle edges; remote GitHub bundles; auto-fix registry |
 | caedora-mcp | [mcp-servers.md](ecosystem-deep/mcp-servers.md) | 9 read + 7 write tools; unique grep_concepts (regex); ingest_source; local + GitHub bundle providers |
 | okfy-ai | [mcp-servers.md](ecosystem-deep/mcp-servers.md) | Docs→OKF pipeline + MCP; crawl websites; import Markdown; 6 read-only MCP tools; auto-refresh freshness management |
-| @quatrain/okf | [mcp-servers.md](ecosystem-deep/mcp-servers.md) | **NOT related to Google OKF spec** — JSON flat-file persistence adapter for Quatrain Core framework |
 | okf-toolset | [mcp-servers.md](ecosystem-deep/mcp-servers.md) | Core parsing; filesystem store; embeddings (JSONL cache + hybrid search); MCP tool registration; refiner; Git helpers |
-| @equationalapplications/core-okf | [ts-libraries.md](ecosystem-deep/ts-libraries.md) | Most mature TS library (v4.22, 3.1k DL/wk); zero dependencies; full API: parse, validate, create, modify concepts/bundles/indexes |
+| @equationalapplications/core-okf | [ts-libraries.md](ecosystem-deep/ts-libraries.md) | v4.22 at the research snapshot; zero dependencies; API for parsing, validation, and concept/bundle/index mutation. No cross-project maturity ranking was established. |
 | js-okf | [ts-libraries.md](ecosystem-deep/ts-libraries.md) | Interactive mind-map viewer via HTTP server; concept CRUD; bundle management |
 | okf-tool | [ts-libraries.md](ecosystem-deep/ts-libraries.md) | Most comprehensive bundle API: CRUD, search, link graph, sub-index management, pluggable filesystem |
 | @turbomem/okf | [ts-libraries.md](ecosystem-deep/ts-libraries.md) | Bridges OKF to embedded memory system for agents; parser + validator + writer |
@@ -469,25 +514,34 @@ Detailed per-project research is in `ecosystem-deep/`. Each file covers full CLI
 
 New gaps discovered beyond the original 10:
 
-11. **No MCP validation server** — @copperbox/okf-mcp and caedora-mcp are the leading candidates, but neither wraps okflint. An MCP server that delegates to okflint and returns structured validation results would fill a clear gap.
-12. **Quatrain/okf is a false positive** — Despite the npm name, @quatrain/okf is NOT related to OKF. The npm namespace is noisy.
-13. **No kcagent in public repo** — The kcagent enrichment agent referenced in documentation does NOT exist in the public GoogleCloudPlatform/knowledge-catalog repository. This is a gap in Google's public tooling.
+11. **MCP validation exists** — `@copperbox/okf-mcp` exposes
+    `validate_bundle`; `caedora-mcp` exposes `lint_bundle`. Neither is an
+    okflint wrapper, which is a narrower integration opportunity.
+12. **False positives are excluded** — `@quatrain/okf` is a Quatrain-internal
+    JSON persistence adapter, not Open Knowledge Format tooling.
+13. **kcagent exists in source** — `toolbox/enrichment/package.json` declares
+    `kcagent` and `md-fileset`; no public npm package was present when checked.
 14. **@sorane/okf has AI governance fields** — Only library with IPTC digital source type and EU AI Act compliance labeling. No other library addresses AI disclosure or provenance labeling at the frontmatter level.
-15. **okf-toolkit is the only RAG-aware library** — Heading-boundary + sentence splitting with overlap and per-chunk link attribution. If the skill suite needs RAG integration, this is the only library that handles OKF-specific chunking.
+15. **okf-toolkit implements OKF-aware RAG chunking** — Heading-boundary +
+    sentence splitting with overlap and per-chunk link attribution. No claim of
+    ecosystem uniqueness is made without a reproducible coverage test.
 
-## Updated Most Relevant Projects
+## Candidate Project Priorities for This Effort
+
+These priorities are an editorial shortlist, not ecosystem designations or
+cross-project maturity rankings.
 
 | Priority | Project | Why (updated) |
 |----------|---------|---------------|
-| **P0** | `okflint` (mattdav) | Gold-standard validator. 15 lint rules, profile system, wikilink resolution, JSON output. The CI gate. |
-| **P0** | `rakibtg/okf-skill` | Existing agent skill with progressive disclosure architecture. 5 Python stdlib scripts. Best SKILL.md reference. |
-| **P0** | `@equationalapplications/core-okf` | Most mature TS library (v4.22, zero-deps). If TypeScript tooling is needed, this is the foundation. |
+| **P0** | `okflint` (mattdav) | Deterministic validator with 15 researched lint rules, profiles, wikilink resolution, and JSON output; evaluate against the selected conformance contract. |
+| **P0** | `rakibtg/okf-skill` | Existing agent skill with progressive disclosure architecture and 5 Python standard-library scripts; evaluate as one SKILL.md reference. |
+| **P0** | `@equationalapplications/core-okf` | v4.22 and zero dependencies at the research snapshot; evaluate if TypeScript tooling is selected. |
 | **P1** | `hermes-okf` | Reference architecture for OKF as agent memory — types, decorators, GitOKFBundle, session lifecycle. |
-| **P1** | `@copperbox/okf-mcp` | Canonical MCP server (20+7 tools). Multi-bundle, cross-bundle edges, auto-fix registry. The MCP baseline. |
+| **P1** | `@copperbox/okf-mcp` | MCP server with 20 researched read tools and 7 write tools, multi-bundle support, cross-bundle edges, and an auto-fix registry. |
 | **P1** | `fabricioctelles/skills` OKF skill | Alternative skill design — includes kcmd integration, conversion guides, bash validator. |
-| **P1** | `OpenWiki` (LangChain) | Production-grade producer. Shows how OKF integrates with AGENTS.md/CLAUDE.md injection. |
+| **P1** | `OpenWiki` (LangChain) | Demonstrates codebase-to-OKF generation and AGENTS.md/CLAUDE.md injection; production readiness was not independently established. |
 | **P2** | `superops-team/okf` CLI | Git-aware bundle generation + lint. Complementary to okflint. |
-| **P2** | `okapi-okf` | Most complete bundle visualization/editing tool — force-directed graph, CodeMirror editing, AI Q&A. |
+| **P2** | `okapi-okf` | Bundle visualization/editing tool with a force-directed graph, CodeMirror editing, and AI Q&A. |
 | **P2** | `okforge` | Claude Code-specific OKF skill with Stop-hook. Reference for harness-specific skill design. |
-| **P3** | `okf-toolkit` | Only RAG-aware OKF library. Relevant if skill suite needs semantic search. |
+| **P3** | `okf-toolkit` | Implements OKF-aware chunking and is relevant if semantic search enters scope. |
 | **P3** | `signed-okf` | Trust layer for bundle provenance. Relevant if skill suite adds signing/verification. |

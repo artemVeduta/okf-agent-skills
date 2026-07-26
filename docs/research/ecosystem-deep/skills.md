@@ -694,7 +694,6 @@ Uses LangChain + ChromaDB:
 
 - **npm**: https://www.npmjs.com/package/okforge
 - **Version**: 1.0.12 (published 2026-07-02)
-- **Weekly Downloads**: ~47 (npm reports 47/week, but README title says "1.9k weekly")
 - **License**: MIT
 - **Language**: TypeScript (node >= 20.12)
 - **Dependencies**: `chalk`, `commander`, `marked`, `zod`

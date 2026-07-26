@@ -17,10 +17,11 @@
 An LLM-driven agent (Google ADK + Gemini) that reads structured metadata from a
 **source** (currently only BigQuery), enriches each concept into an OKF v0.2
 markdown document, optionally crawls web pages to augment the bundle, and
-regenerates `index.md` files. It is the canonical producer of OKF bundles from
-Google Cloud data.
+regenerates `index.md` files. It is Google's published reference producer for
+the repository's BigQuery example; it is not designated as the canonical
+producer for all OKF bundles.
 
-### Source files (complete inventory)
+### Source files (audited inventory)
 
 ```
 okf/src/reference_agent/
@@ -639,7 +640,7 @@ toolbox/mdcode/
 │   ├── tool/
 │   │   ├── main.ts       (2110 B — CLI entry via cac)
 │   │   ├── commands.ts   (2495 B — init, pull, push command handlers)
-│   │   └── mcp.ts        (2885 B — MCP server with 5 tools)
+│   │   └── mcp.ts        (MCP server with 3 registered tools)
 │   └── libts/
 │       ├── index.ts      (191 B — barrel exports)
 │       ├── manifest.ts   (5608 B — CatalogManifest: init, load, save)
@@ -845,13 +846,11 @@ kcmd mcp --path /path/to/catalog/root
 | `list-entries` | none | Returns JSON array of all local entry names |
 | `lookup-entry` | `name: string` (entry name) | Returns full entry JSON (type, resource, aspects) |
 | `modify-entry` | `name: string`, `field: string` ("resource" or aspect key), `updates: Record<string, any>` | Updates resource-level metadata or a specific aspect. Returns updated entry JSON. |
-| `pull` | (declared but NOT IMPLEMENTED in mcp.ts — not in the actual code) | Would pull latest from Catalog |
-| `push` | (declared but NOT IMPLEMENTED in mcp.ts — not in the actual code) | Would push local changes |
 
-**Important note:** The README documents `pull` and `push` as MCP tools but
-the actual `mcp.ts` source only registers `list-entries`, `lookup-entry`, and
-`modify-entry`. The `pull` and `push` MCP tools are aspirational, not
-implemented yet.
+**Evidence (source checked 2026-07-26):** `mcp.ts` registers exactly the three
+tools above. `pull` and `push` are implemented as CLI command handlers in
+`commands.ts`; they are not registered MCP tools. Website prose that lists
+five MCP tools conflates the CLI and MCP surfaces.
 
 **`modify-entry` behavior:**
 1. Looks up the existing entry.
@@ -1002,23 +1001,24 @@ with:
 
 ### Repository
 
-**`toolbox/kcagent/` does NOT exist** in the `knowledge-catalog` repository
-as of commit `3fcbb9f` (July 2026). The repository contains only
-`toolbox/mdcode/`.
+The public repository implements the `kcagent` package in
+[`toolbox/enrichment`](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/3fcbb9f828/toolbox/enrichment).
+Its
+[`package.json`](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/3fcbb9f828/toolbox/enrichment/package.json)
+names the package and command `kcagent`, while the
+[`README`](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/3fcbb9f828/toolbox/enrichment/README.md)
+documents `kcagent enrich`.
 
 ### Status
 
-The `kcagent` tool does not appear to have been published yet. It may be:
-- Internal to Google and not open-sourced.
-- Planned but not yet committed to the public repo.
-- Referenced in documentation but not yet implemented.
+**Evidence:** `kcagent` is open source in the repository. No matching public npm
+package was verified at the research date, so the source implementation and npm
+distribution status must be described separately.
 
-**What can be inferred from the ecosystem context:**
-- `kcagent` would likely be an agentic wrapper around Knowledge Catalog that
-  combines the enrichment capabilities of the `reference_agent` with the API
-  sync capabilities of `kcmd`, packaged as a dynamic MCP/skill loader.
-- The `toolbox/` directory pattern suggests `kcagent` would follow a similar
-  structure to `mdcode` (TypeScript, bun-compiled binary, MCP server).
+**Evidence:** The documented command enriches a Knowledge Catalog entry with
+agent-discovered context. It must not be described as a hypothetical unified
+wrapper around `reference_agent` and `kcmd` unless its source implements that
+composition.
 
 ### Gap Analysis
 
@@ -1033,15 +1033,17 @@ Given the existing tools:
 3. **Visualization** — handled by the `visualize` subcommand (self-contained
    Cytoscape.js HTML).
 
-4. **The missing piece** — a unified agent that:
+4. **Unresolved product opportunity** — a unified workflow that:
    - Connects to Knowledge Catalog (like kcmd)
    - Enriches entries (like reference_agent)
    - Dynamically loads MCP servers and skills
    - Provides a built-in `md-fileset` MCP server for file browsing
    - Could serve as a "bring your own agent" runtime
 
-This is exactly what `kcagent` was described as, and its absence means users
-must currently compose these capabilities manually.
+The public `kcagent` source covers enrichment, but no matching public npm
+distribution was verified and the broader composition above was not
+established. Do not infer missing source code from missing package-registry
+publication.
 
 ---
 

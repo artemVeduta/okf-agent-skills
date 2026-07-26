@@ -50,7 +50,7 @@ Per the Agent Skills spec at [agentskills.io/specification](https://agentskills.
 | `license` | No constraints specified beyond "short" recommendation. |
 | `compatibility` | Max 500 chars. Environment requirements (product, packages, network access). |
 | `metadata` | Arbitrary key-value mapping (string → string). |
-| `allowed-tools` | Space-separated string of pre-approved tools. (Experimental.) |
+| `allowed-tools` | Present in the generic Agent Skills specification as experimental. Current Codex docs do not state that the runtime honors it; treat Codex support as unsupported/unverified. |
 
 ### Codex-specific additions
 
@@ -312,7 +312,7 @@ Source: [Permissions](https://developers.openai.com/codex/permission-modes).
 **No primary source found** directly comparing Codex's skill approval model to Claude Code's. Key differences inferred from documented architectures:
 - Claude Code skills use `.claude/settings.json` for permission configuration. Codex has no equivalent settings.json for skills.
 - Codex skills are trust-based via progressive disclosure and sandbox enforcement. Claude Code skills have explicit permission declarations.
-- Codex's `allowed-tools` frontmatter field is **experimental** and support varies between agent implementations per the Agent Skills spec.
+- The generic spec's `allowed-tools` field is experimental, but current Codex docs do not describe runtime behavior for it. Do not treat schema acceptance as permission pre-approval.
 
 ### Admin controls
 
@@ -406,7 +406,7 @@ Source: [Config basics](https://developers.openai.com/codex/config-file/config-b
 | Hooks | Separate `hooks.json` / `config.toml` system (10+ events) | Hooks in settings.json + hooks/hooks.json | N/A (different architecture) |
 | Subagents | TOML files in `.codex/agents/` + built-ins | Sub-agents via system prompt | Subagents via skills.json config |
 | Plugin system | `codex plugin install` (unified plugin directory) | `npx skills add` for skills | Skills loaded from config directory |
-| Approval | Sandbox modes + approval modes; `allowed-tools` (experimental) | Permission rules in settings.json | Permission rules in opencode.json |
+| Approval | Sandbox modes + approval modes; `allowed-tools` unsupported/unverified | Permission rules in settings.json | Permission rules in opencode.json |
 | Context budget | 2% of context or 8000 chars max for skill list | ~100 tokens per skill at startup | Configurable |
 
 ---
@@ -414,6 +414,6 @@ Source: [Config basics](https://developers.openai.com/codex/config-file/config-b
 ## Open Questions (No Primary Source Found)
 
 - **Skill script sandboxing**: No primary source explains whether scripts in `scripts/` run with the same sandbox as the parent session or receive a separate sandbox.
-- **Hook-to-skill binding**: No mechanism found in primary sources to bind hooks to specific skills (hooks are session-scoped, not skill-scoped).
+- **Hook-to-skill binding**: Hooks can be configured at user, project, and plugin scopes, but no primary source exposes activation scoped to a currently active skill.
 - **Skill dependency ordering**: No primary source describes how Codex resolves dependencies between skills when both are loaded.
-- **`allowed-tools` implementation status**: Marked "Experimental" in the Agent Skills spec. No Codex-specific docs describe its current behavior.
+- **`allowed-tools` implementation status**: The generic spec marks it experimental; no Codex-specific docs describe runtime support. Status: unsupported/unverified, not “Yes.”

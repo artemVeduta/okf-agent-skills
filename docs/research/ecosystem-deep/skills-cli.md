@@ -55,8 +55,11 @@ Install agent skills from a repository, URL, or local path.
 - Any git URL: `git@github.com:vercel-labs/agent-skills.git`
 - Local path: `./my-local-skills`
 - Well-known URL (RFC 8615): Any URL with `/.well-known/agent-skills/index.json` or `/.well-known/skills/index.json`
-- Ref/branch/tag: `vercel-labs/agent-skills@main`
+- Ref/branch/tag: `'vercel-labs/agent-skills#v0.1.0'`
 - Skill filter: `vercel-labs/agent-skills@skill-name`
+- Ref plus skill filter: `'vercel-labs/agent-skills#v0.1.0@skill-name'`
+
+Quote sources containing `#` in shell examples because an unquoted `#` starts a shell comment in common shells. Current `source-parser.ts` parses the URL fragment as the git ref and the `@` suffix as an optional skill filter.
 
 **Source**: [npm README "Source Formats"](https://www.npmjs.com/package/skills), [src/source-parser.ts](https://github.com/vercel-labs/skills/blob/main/src/source-parser.ts)
 
@@ -170,17 +173,17 @@ The installation pipeline (from source to disk):
 
 **Global install** (`npx skills add owner/repo -g`):
 ```
-~/.claude/skills/<skill-name>/   # canonical copy for non-universal agents
-~/.agents/skills/<skill-name>/   # canonical copy for universal agents
-~/.cursor/skills/<skill-name>    # symlink → universal canonical
-~/.codex/skills/<skill-name>    # symlink → universal canonical
+~/.agents/skills/<skill-name>/   # canonical copy in default symlink mode
+~/.claude/skills/<skill-name>    # symlink → ~/.agents/skills/<skill-name> when Claude Code is selected
 ```
+
+In current symlink-mode source, agents whose project `skillsDir` is `.agents/skills` are treated as universal at both project and global scope. Codex and OpenCode therefore use `~/.agents/skills/` directly in this mode; the installer does not create `~/.codex/skills/` or `~/.config/opencode/skills/` links for them. The README's agent table lists each agent's native global path, but that table does not describe the installer's canonical-store shortcut. With `--copy`, files instead go directly to each selected agent's configured directory.
 
 ### "Universal" vs Non-Universal Agents
 
 The CLI distinguishes two agent categories:
 
-- **Universal agents** (`skillsDir === '.agents/skills'`): Amp, Replit, Universal, Antigravity, Antigravity CLI, Cline, Dexto, Kimi Code CLI, Loaf, Warp, Zed, Codex, Cursor, Deep Agents, Firebender, Gemini CLI, GitHub Copilot, OpenCode, PromptScript — all read from `.agents/skills/`. No symlink needed; the canonical directory IS the agent's directory.
+- **Universal agents** (`skillsDir === '.agents/skills'`): Codex, OpenCode, and the other agents in this CLI category use the canonical `.agents/skills/` project path. The current installer extends that shortcut to global symlink-mode installs and writes them to `~/.agents/skills/`.
 
 - **Non-universal agents** (agent-specific `skillsDir`): Claude Code (`.claude/skills/`), Kiro CLI (`.kiro/skills/`), Windsurf (`.windsurf/skills/`), etc. — each gets a symlink from their agent-specific directory to the canonical `.agents/skills/<skill-name>/`.
 
@@ -305,7 +308,7 @@ There is **no** `npx skills publish` command. The CLI does not manage versioning
 1. Pushing a git repository (GitHub/GitLab/any git host) containing `SKILL.md` files
 2. Users install via `npx skills add <owner>/<repo>`
 
-This means **"publishing" is entirely git-based** — no npm registry, no version registry, no signing. Versioning is via git tags/branches/commits (the `@ref` syntax in source URLs, e.g., `owner/repo@v1.0.0`).
+This means **"publishing" is entirely git-based** — no npm registry, no version registry, no signing. Versioning is via git tags/branches/commits using a URL fragment, for example `npx skills add 'owner/repo#v1.0.0'`. The `@` suffix selects a skill, not a ref.
 
 ### Skills.sh Directory (skills.sh)
 
@@ -371,7 +374,7 @@ The CLI supports **70+ agents**, auto-detects which are installed, and installs 
 | Feature | Support |
 |---|---|
 | Basic skills (name + description) | 70+ agents |
-| `allowed-tools` (pre-approved tool list) | OpenCode, OpenHands, Claude Code, Cline, CodeBuddy, Codex, Command Code, Cursor, Antigravity, Roo Code, GitHub Copilot, Amp, OpenClaw, Neovate, Pi, Qoder, Zencoder |
+| `allowed-tools` (pre-approved tool list) | The CLI preserves the optional field but does not prove or enforce host runtime support. Verify per harness; current Codex docs do not document support and OpenCode ignores unknown skill fields. |
 | `context: fork` (forked sub-context) | Claude Code only |
 | Hooks | Claude Code, Kiro CLI |
 | `compatibility` (environment requirements) | Agent-dependent |
@@ -461,7 +464,7 @@ src/
 
 1. **No npm-based publishing**: Skills are git repos, not npm packages. No `skills publish` command exists.
 2. **No centralized registry**: skills.sh is a leaderboard, not a registry. No package API, no authentication.
-3. **Git-based versioning**: Users pin via `@ref` (tag/branch/commit). No `version` field in SKILL.md frontmatter.
+3. **Git-based versioning**: Users pin via a quoted `#ref` source fragment, for example `'owner/repo#v1.0.0'`. No `version` field in SKILL.md frontmatter.
 4. **Copy from source, symlink to agents**: Skills are always **copied** from the source repo into a canonical directory, then **symlinked** from canonical to agent-specific directories. Never symlinked directly from source.
 5. **Universal agents skip symlinks**: `.agents/skills/` is the canonical directory for universal agents — no symlink needed.
 6. **Fallback to copy**: Symlink failure always falls back to copying. Designed for cross-platform (Windows) compatibility.

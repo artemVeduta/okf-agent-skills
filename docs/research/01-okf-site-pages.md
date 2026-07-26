@@ -65,11 +65,13 @@ Each entry links back to concepts: `[MRR](./mrr.md)`
 - Add subfolders when bundle grows (`operational/`, `financial/`, `product/`)
 - Put `resource:` in frontmatter when a metric has a real dashboard attached
 - Version with git
-- Run the validator at [/validator](/validator)
+- Run the validator at [okf.md/validator](https://okf.md/validator)
 
 ### External Links
 - [SaaS Metrics 2.0 — David Skok](https://www.forentrepreneurs.com/saas-metrics-2/)
-- [What is Good SaaS Churn Rate — Lenny Rachitsky](https://www.lennysnewsletter.com/p/what-is-good-retention-rate)
+- What is Good SaaS Churn Rate — Lenny Rachitsky. The URL captured from the
+  site returned 404 on 2026-07-26:
+  `https://www.lennysnewsletter.com/p/what-is-good-retention-rate`
 - [The One Number You Need to Grow — HBR](https://hbr.org/2003/12/the-one-number-you-need-to-grow)
 - [GitHub repo](https://github.com/fabricioctelles/skills)
 
@@ -323,18 +325,19 @@ Eight production-ready bundle examples with full file contents. Each demonstrate
 
 #### 3. kcmd CLI + MCP Server (Metadata as Code)
 - **Description:** Bidirectional sync tool between local metadata (YAML/markdown) and Google Cloud Knowledge Catalog. "git for metadata"
-- **Distribution:** TypeScript library (`npm install kcmd`), standalone CLI, MCP server
+- **Distribution claimed by page:** TypeScript library, standalone CLI, MCP server
 - **Commands:** `kcmd init --bigquery-dataset`, `kcmd pull`, `kcmd status`, `kcmd push --dry-run`, `kcmd push`
-- **MCP tools:** `pull`, `push`, `list-entries`, `lookup-entry`, `modify-entry`
+- **Page claim:** MCP tools are `pull`, `push`, `list-entries`, `lookup-entry`, `modify-entry`
+- **Primary-source correction (2026-07-26):** the current `mcp.ts` registers only `list-entries`, `lookup-entry`, and `modify-entry`; `pull` and `push` are CLI commands. The public npm registry has no `kcmd` package, so users must build this repository source.
 - **Link:** https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode
 - **Plug-in targets:** Gemini CLI / Google AI Studio, Claude Desktop (MCP config), Cursor / VS Code, Custom agents (LangChain, ADK)
 - **Limitations:** Requires GCP project with Knowledge Catalog, `gcloud` auth only, format differs from pure OKF (Dataplex-oriented), sparse docs
-- **Maturity:** 🟡 Early product, well-structured
+- **Maturity (site editorial):** 🟡 Early product
 
 #### 4. Google Cloud Knowledge Catalog (The Backend)
 - **Description:** GCP product (formerly Dataplex) — AI-powered metadata catalog, "official backend"
-- **OKF features:**
-  - Native OKF ingestion (since June 2026)
+- **OKF evidence:**
+  - Repository demo maps a bounded OKF subset into a custom Dataplex aspect and back; it is not evidence of a generic full-fidelity product importer
   - Automatic harvesting from BigQuery, AlloyDB, Spanner, Cloud SQL, Firestore, Looker
   - Third-party integrations: Ab Initio, Anomalo, Atlan, Collibra, Datahub
   - Native Gemini enrichment
@@ -373,7 +376,8 @@ Eight production-ready bundle examples with full file contents. Each demonstrate
 
 ##### AgentFitech
 - Built OKF support (producer + consumer) within 24 hours of spec release
-- **Link:** https://medium.com/@AgentFitech/google-just-standardized-how-ai-agents-read-the-web-heres-how-we-shipped-it-in-a-day-6bbfd3024320
+- **Link:** `https://medium.com/@AgentFitech/google-just-standardized-how-ai-agents-read-the-web-heres-how-we-shipped-it-in-a-day-6bbfd3024320`
+  (Medium returned 403 to the automated link checker on 2026-07-26)
 - **Takeaway:** Format simple enough for small team to go zero-to-conformant in one sprint
 - **Maturity:** N/A (blog post)
 
@@ -457,7 +461,10 @@ Eight production-ready bundle examples with full file contents. Each demonstrate
 #### Trust & Provenance
 
 ##### signed-okf (DynamicFeed)
-- **Description:** Cryptographic signatures on individual concept files and entire bundles, with optional on-chain anchoring via OriginTrail's Decentralized Knowledge Graph
+- **Site description:** Cryptographic signatures with optional OriginTrail
+  anchoring.
+- **Primary-source correction:** `signed-okf` implements Ed25519/JWKS signing
+  and verification only; its repository contains no OriginTrail integration.
 - **Commands:** `signed-okf sign`, `signed-okf verify`, `signed-okf anchor`
 - **Stack:** Python, Apache 2.0, v0.2.1 (Jul 2026)
 - **Links:** https://github.com/dynamicfeed/signed-okf · https://dynamicfeed.ai
@@ -500,7 +507,8 @@ Eight production-ready bundle examples with full file contents. Each demonstrate
 ##### OriginTrail DKG + OKF
 - **Description:** Connects OKF bundles to OriginTrail Decentralized Knowledge Graph for on-chain provenance and trust verification
 - **Stack:** TypeScript, MIT, v0.1 (Jul 2026)
-- **Link:** https://blog.prototypr.io/googles-okf-comes-to-the-origintrail-dkg-a-memory-ai-agents-can-trust-43c6d87e1de8
+- **Link:** `https://blog.prototypr.io/googles-okf-comes-to-the-origintrail-dkg-a-memory-ai-agents-can-trust-43c6d87e1de8`
+  (Prototypr returned 403 to automated link checking on 2026-07-26)
 - **Maturity:** 🟡 Concept proven, not production-hardened
 
 ##### okf-skill (rakibtg)
@@ -705,7 +713,9 @@ Visual map plotting tools on maturity-vs-ease-of-use axes. Table of all tools wi
 - "Don't confuse 'made by Google' with 'helps you rank on Google'"
 
 **Q: How does OKF work with MCP?**
-- `kcmd` is already an MCP server with tools: pull, push, list-entries, lookup-entry, modify-entry
+- Site claim: `kcmd` is an MCP server with five tools. Source correction:
+  `mcp.ts` registers `list-entries`, `lookup-entry`, and `modify-entry`;
+  `pull`/`push` are CLI commands.
 - Any MCP server can expose OKF bundle as resources (serve as `resource://` URIs)
 - "MCP + OKF is the cleanest integration path"
 - MCP config example provided
@@ -803,7 +813,8 @@ PASS — bundle is OKF v0.1 conformant
 "Want to know when it launches? [Star on GitHub to follow](https://github.com/fabricioctelles/skills)"
 
 ### Editorial Note
-"Meanwhile, you can validate manually with the [3 rules in the spec](/quickstart)"
+"Meanwhile, you can validate manually with the
+[3 rules in the quickstart](https://okf.md/quickstart)"
 
 ---
 
@@ -876,9 +887,12 @@ Output:
 ```
 
 ### Knowledge Catalog Integration
-- Skill knows how to push OKF bundles to Google Cloud Knowledge Catalog
+- Skill claims a direct OKF-to-Knowledge-Catalog workflow. Current source
+  supports `kcmd init/push` for catalog snapshots plus a separate demo adapter;
+  it does not establish a generic direct push for arbitrary OKF bundles.
 - Guides through `kcmd init`, `kcmd push`, MCP server setup
-- Understands kcmd's MCP server tools (pull, push, list-entries, lookup-entry, modify-entry)
+- Lists five kcmd MCP tools, but current source registers only
+  `list-entries`, `lookup-entry`, and `modify-entry`
 
 ### Links
 - Skill source: https://github.com/fabricioctelles/skills/tree/main/skills/okf-open-knowledge-format
@@ -892,11 +906,14 @@ Output:
 ### Site Architecture
 - Built with a doc framework (search bar with keyboard nav, "On this page" sidebar)
 - Footer: OKF v0.1 · 2026 · MIT licensed · "Based on the Google Cloud Markdown spec"
-- GitHub link in footer: https://github.com/fabricioctelles/skills (the site's own repo, NOT the OKF spec repo)
+- GitHub link in footer: https://github.com/fabricioctelles/skills. The
+  current public tree does not contain the deployed site source, so this is a
+  destination/affiliation link, not proof that it is the site's source repo.
 
 ### Key GitHub Repositories Identified
 1. **OKF Spec:** https://github.com/GoogleCloudPlatform/knowledge-catalog (Apache 2.0)
-2. **Site source:** https://github.com/fabricioctelles/skills (the okf.md website repo)
+2. **Site-linked skills repository:** https://github.com/fabricioctelles/skills
+   (deployed site source location unverified)
 3. **kcmd/MCP:** https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode
 4. **Enrichment agent:** https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf
 5. **okf CLI (Go):** https://github.com/superops-team/okf (Apache 2.0, v1.2.0)
@@ -915,13 +932,17 @@ Output:
 - Google Cloud Blog announcement: https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing
 - Karpathy LLM Wiki gist: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
 - W3C/DataBook coverage: https://ontologist.substack.com/p/the-format-convergence
-- AgentFitech Medium: https://medium.com/@AgentFitech/google-just-standardized-how-ai-agents-read-the-web-heres-how-we-shipped-it-in-a-day-6bbfd3024320
+- AgentFitech Medium:
+  `https://medium.com/@AgentFitech/google-just-standardized-how-ai-agents-read-the-web-heres-how-we-shipped-it-in-a-day-6bbfd3024320`
+  (403 to automated link checking on 2026-07-26)
 - kb.duyet.net: https://kb.duyet.net/m/tech-okf-open-knowledge-format
 - Suganthan web converter: https://suganthan.com/free-seo-tools/okf-generator/
 - Suganthan blog: https://suganthan.com/blog/open-knowledge-format/
 - Suganthan WP plugin zip: https://uploads.suganthan.com/4AECBACE-open-knowledge-format.zip
 - openknowledgeformat.com: https://openknowledgeformat.com/
-- OriginTrail blog: https://blog.prototypr.io/googles-okf-comes-to-the-origintrail-dkg-a-memory-ai-agents-can-trust-43c6d87e1de8
+- OriginTrail blog:
+  `https://blog.prototypr.io/googles-okf-comes-to-the-origintrail-dkg-a-memory-ai-agents-can-trust-43c6d87e1de8`
+  (403 to automated link checking on 2026-07-26)
 - LangChain blog: https://www.langchain.com/blog/openwiki-0-2-adds-okf-support
 - Agent Skills info: https://agentskills.io/what-are-skills.md
 

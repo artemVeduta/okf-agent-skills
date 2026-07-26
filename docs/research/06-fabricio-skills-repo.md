@@ -16,16 +16,25 @@ The repo is NOT specifically an OKF implementation — it is a general-purpose s
 
 ## okf.md Site Source
 
-The **okf.md website** is NOT hosted from this repository. It is a separate deployment (likely an Astro site on Coolify/Cloudflare) that serves as the marketing/spec site for the Open Knowledge Format. The relationship works as follows:
+The public evidence does not identify the deployed site's source repository.
+Two different links must be kept separate:
 
 - **okf.md** has an "Install Skill" button that links directly to `fabricioctelles/skills` → `skills/okf-open-knowledge-format/SKILL.md`
-- The okf.md site is built with Astro, Cloudflare, Coolify, Google Analytics, and Google Search Console (per badge tags in the skills README)
 - The site footer credits: "OKF v0.1 · 2026 · MIT licensed · Based on the Google Cloud Markdown spec · GitHub · Spec · Terms · Privacy"
-- The "GitHub" link in the footer points to the Google Cloud Knowledge Catalog repo (the official spec source), not fabricioctelles/skills
+- The footer's "GitHub" link points to `fabricioctelles/skills`
+- The spec page's source link points to
+  `GoogleCloudPlatform/knowledge-catalog/okf/SPEC.md`
 - The okf.md site has pages: Spec, Quickstart, Examples, Tools, Ecosystem Map, FAQ
 - Site features a **browser-based validator** (zero install, paste/upload bundle)
 
-**fabricioctelles also maintains `astro-webmcp`** (12 stars, MIT), an Astro integration that exposes site content via WebMCP for AI agents — likely the technology powering the okf.md site's agent-ready features.
+**Evidence (2026-07-26):** The current public tree of
+`fabricioctelles/skills` contains skills and registry metadata, but no Astro
+application or okf.md page sources. Therefore the footer link establishes
+affiliation/distribution, not that this repository builds the deployed site.
+
+**Inference:** The rendered site appears to use Astro. Hosting provider,
+deployment topology, and whether `astro-webmcp` powers okf.md are not
+established by the audited source and are intentionally left unclaimed.
 
 ## Skills Implemented
 
@@ -225,7 +234,7 @@ A query to `api.github.com/repos/fabricioctelles/okf-validator` returns 404. OKF
 4. **Per-skill versioning**: Each skill has independent version numbers (e.g., humanizar v1.3, startup-idea v1.3)
 
 ### What's reusable for OKF agent skills
-1. **OKF skill itself** (`skills/okf-open-knowledge-format/`) — the most mature OKF agent skill implementation, directly usable
+1. **OKF skill itself** (`skills/okf-open-knowledge-format/`) — a historical OKF v0.1 agent-skill implementation
 2. **validate.sh** — portable bash validator, zero dependencies, checks 3 core conformance rules
 3. **spec-v01.md** — complete embedded copy of the OKF v0.1 specification
 4. **conversion.md** — production-tested migration patterns (Notion, Obsidian, CSV)
@@ -235,7 +244,7 @@ A query to `api.github.com/repos/fabricioctelles/okf-validator` returns 404. OKF
 ### Deployment/operations patterns
 1. **Dual installer support**: Both `skills.sh` (npm) and `agent-skills-cli` supported
 2. **Hash integrity**: `skills-lock.json` with SHA-256 for skill integrity verification
-3. **Cloudflare + Coolify + Astro stack**: Self-hosted on Coolify, fronted by Cloudflare — no serverless vendor lock-in for the main site
+3. **Site stack**: rendered markup indicates Astro; hosting/deployment was not verified from source
 4. **Browser-based validator**: okf.md's validator runs entirely client-side (zero backend/install)
 5. **CI-integration design**: Scripts produce structured output (`--json` flags) and meaningful exit codes for CI pipelines
 
@@ -243,7 +252,7 @@ A query to `api.github.com/repos/fabricioctelles/okf-validator` returns 404. OKF
 The fabricioctelles/skills repo serves as the **primary distribution channel for the OKF agent skill**, but the OKF ecosystem is much broader:
 - **Spec origin**: Google Cloud (GoogleCloudPlatform/knowledge-catalog/okf/)
 - **Official linter**: mattdav/okflint
-- **Marketing website**: okf.md (likely an Astro site, not hosted in this repo)
+- **Marketing website**: okf.md; footer links to this repository, but its deployed source location is unverified
 - **Browser validator**: openknowledgeformat.com
 - **Enterprise integration**: Google Cloud Knowledge Catalog + kcmd
 

@@ -27,6 +27,8 @@ For project-local paths, OpenCode walks **up from CWD until it reaches the git w
 
 Source: https://opencode.ai/docs/skills/#understand-discovery
 
+Current source passes `symlink: true` to skill-directory globbing, so valid directory symlinks are followed. This is source-verified behavior rather than a documented compatibility promise; see [opencode-symlink-resolution.md](opencode-symlink-resolution.md).
+
 ### Configuration
 
 Skills are **not declared in `opencode.json`**. They are discovered automatically from the filesystem locations listed above. No config entry is needed for a skill to be loaded.
@@ -58,6 +60,8 @@ Each `SKILL.md` must start with **YAML frontmatter** (delimited by `---`). Recog
 | `metadata` | No | string-to-string map | Arbitrary key-value pairs |
 
 **Unknown fields are silently ignored.**
+
+Consequently, `disable-model-invocation: true` is not an OpenCode policy. It is ignored, and a valid described skill remains in `<available_skills>` for the model to choose and load. `permission.skill: "ask"` adds an approval prompt but does not hide the skill; `deny` hides and rejects it for everyone. There is no supported explicit-only/manual-only per-skill state.
 
 Source: https://opencode.ai/docs/skills/#write-frontmatter, https://opencode.ai/docs/skills/#validate-names, https://opencode.ai/docs/skills/#follow-length-rules
 
@@ -500,6 +504,6 @@ Source: https://opencode.ai/docs/config/#schema
 - **No "hooks" in `opencode.json`** — pre/post-execution hooks for tools/sessions are exclusively a plugin feature, not a declarative config option.
 - **No skill lifecycle hooks** — plugins have no `skill.load` or `skill.execute` event. Skills are loaded on-demand via the `skill` tool, not trigger-based.
 - **No skill dependency management** — skills cannot declare dependencies on other skills or MCP servers.
-- **No skill auto-trigger** — skills are not auto-invoked based on user prompt matching. The agent decides when to call the `skill` tool based on the skill's `description` field.
+- **No deterministic host-side auto-trigger rule** — OpenCode does not execute a skill merely because a prompt matches. The model sees each described skill and may decide to call the `skill` tool, which is still model invocation.
 - **No skill nesting** — skills cannot include or reference other skills. Each SKILL.md is standalone.
 - **No `permission.skill` for plugins** — plugins cannot register as skill providers or extend the skill mechanism.

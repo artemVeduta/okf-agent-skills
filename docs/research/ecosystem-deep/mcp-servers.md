@@ -1,16 +1,17 @@
 # OKF Ecosystem: MCP Servers & Integrations — Deep Investigation
 
-> Exhaustive research on 5 OKF ecosystem projects. Each section covers repository metadata, architecture, installation, MCP tools, end-to-end flows, configuration, and agent harness integration.
+> Primary-source research on four OKF ecosystem projects, plus one explicitly
+> excluded npm-name false positive. Volatile download counts are not used for
+> ranking.
 
 ---
 
 ## Table of Contents
 
-1. [@copperbox/okf-mcp](#1-copperboxokf-mcp) — The canonical OKF MCP server (39 commits, ISC, 248 weekly)
-2. [caedora-mcp](#2-caedora-mcp) — Caedora.app's MCP server (109 commits, MPL-2.0, 5 weekly)
-3. [okfy-ai](#3-okfy-ai) — Docs-to-OKF conversion pipeline + MCP. (34 commits, MIT, 572 weekly)
-4. [@quatrain/okf](#4-quatrainokf) — Quatrain Core OKF flat-file storage adapter (785 commits, AGPL-3.0, 555 weekly)
-5. [okf-toolset](#5-okf-toolset) — TypeScript toolkit for OKF: embeddings, search, MCP, refiner, Git. (3 commits, MIT, 27 weekly)
+1. [@copperbox/okf-mcp](#1-copperboxokf-mcp) — standalone OKF MCP server
+2. [caedora-mcp](#2-caedora-mcp) — Caedora.app's MCP server
+3. [okfy-ai](#3-okfy-ai) — docs-to-OKF conversion pipeline + MCP
+4. [okf-toolset](#5-okf-toolset) — toolkit with host-owned MCP registration
 
 ---
 
@@ -27,14 +28,18 @@
 | **License** | ISC |
 | **Language** | TypeScript |
 | **Version** | 0.20.0 (4 days ago) |
-| **Weekly Downloads** | ~248 |
 | **Author** | [dantheuber](https://www.npmjs.com/~dantheuber) (copperbox) |
 | **Dependencies** | 3 (no database, no embedding SDK) |
 | **Node Requirement** | Node.js 20+ |
 
 ### What it does
 
-**The canonical OKF MCP server.** `@copperbox/okf-mcp` is the reference implementation giving AI agents a standardized OKF v0.1 backend. It indexes a directory of Markdown files with YAML frontmatter (a "bundle") into an in-memory link graph and exposes it through MCP resources and tools for **search, graph traversal, validation, and authoring**. The bundle stays plain editable markdown — humans browse it with any editor (including as an Obsidian vault), while agents work through the MCP server. It is deliberately **database-free and embedding-free**; the only network calls are for optional read-only remote bundles. It supports multi-bundle setups (org brain + project brain), colocated bundles (one vault = many bundles), remote bundle fetching from GitHub trees or `.tar.gz` archives, cross-bundle graph edge derivation, and a full repair/doctor CLI. Write tools are gated behind `--writable`.
+`@copperbox/okf-mcp` is a standalone implementation giving AI agents an OKF
+v0.1 backend. It indexes a directory of Markdown files with YAML frontmatter
+into an in-memory link graph and exposes MCP resources and tools for search,
+graph traversal, validation, and authoring. It is database-free and
+embedding-free; network access is used only for optional read-only remote
+bundles. Write tools are gated behind `--writable`.
 
 ### Installation
 
@@ -329,7 +334,6 @@ src/
 | **License** | MPL-2.0 |
 | **Language** | TypeScript |
 | **Version** | 0.2.0 (1 month ago) |
-| **Weekly Downloads** | ~5 |
 | **Author** | [williamfclarke](https://www.npmjs.com/~williamfclarke) |
 | **Homepage** | https://caedora.app |
 | **Dependencies** | 5 |
@@ -489,7 +493,6 @@ packages/caedora-mcp/src/
 | **License** | MIT |
 | **Language** | TypeScript |
 | **Version** | 0.3.3 (13 days ago) |
-| **Weekly Downloads** | ~572 |
 | **Author** | [0dust](https://www.npmjs.com/~0dust) |
 | **Dependencies** | 11 |
 | **Package Manager** | pnpm |
@@ -819,7 +822,7 @@ src/
 
 ---
 
-## 4. @quatrain/okf
+## Excluded false positive: @quatrain/okf
 
 ### Repository
 
@@ -833,14 +836,15 @@ src/
 | **License** | AGPL-3.0 |
 | **Language** | TypeScript |
 | **Version** | 1.0.5 (1 day ago) |
-| **Weekly Downloads** | ~555 |
 | **Authors** | [crapougnax](https://www.npmjs.com/~crapougnax), [elliottlepine](https://www.npmjs.com/~elliottlepine) |
 | **Dependencies** | 5 |
 | **Package Manager** | Yarn |
 
 ### What it does
 
-`@quatrain/okf` is **NOT an MCP server**. It is a **flat-file persistence adapter** for the Quatrain Core backend framework. It implements the `OKFBackendAdapter` class that serializes Quatrain `PersistedBaseObject` entities into structured JSON files on disk, conforming to an "OKF" directory layout. It is designed to facilitate **local-first, offline-first architectures** by excluding relational databases.
+`@quatrain/okf` is **not an Open Knowledge Format project and is not counted
+in this ecosystem**. It is also not an MCP server. It is a flat-file JSON
+persistence adapter for the Quatrain Core backend framework.
 
 Despite its name referencing "Open Knowledge Format," this package is **not directly related to the Google OKF v0.1 specification** for Markdown-based knowledge bundles. It uses OKF as a naming convention for its flat-file structure (directory trees of JSON files), not Markdown concept documents. Key features:
 
@@ -996,7 +1000,6 @@ The "OKF" in this package's name is a Quatrain-internal term for their flat-file
 | **License** | MIT |
 | **Language** | TypeScript |
 | **Version** | 0.3.0 (14 days ago) |
-| **Weekly Downloads** | ~27 |
 | **Author** | [skye0402](https://www.npmjs.com/~skye0402) |
 | **Dependencies** | 2 |
 | **Package Manager** | pnpm |
@@ -1237,4 +1240,3 @@ src/
 | **Agent Harnesses** | Any MCP client | Any MCP client | Claude Code, Codex, Cursor, etc. | None | Needs custom server |
 | **License** | ISC | MPL-2.0 | MIT | AGPL-3.0 | MIT |
 | **Maturity** | v0.20 (39 commits) | v0.2 (109 commits) | v0.3.3 (34 commits) | v1.0.5 (785 commits) | v0.3 (3 commits) |
-| **Weekly Downloads** | ~248 | ~5 | ~572 | ~555 | ~27 |

@@ -3,6 +3,15 @@
 > Research date: July 2026
 > Scope: Primary sources (official docs, source repos, spec files) for major AI coding platforms
 
+### Claim labels
+
+- **Evidence** — directly supported by the cited product documentation.
+- **Inference** — synthesis across sources; not a statement made by every vendor.
+- **Candidate default** — proposed behavior that requires representative fixture benchmarks.
+- **Decision required** — unresolved semantics that an implementation must not assume.
+
+Product limits below apply to the named file or mechanism at the documentation date. They are not interchangeable with a model's total context window, and they must not be reused as universal OKF thresholds.
+
 ---
 
 ## 1. OpenCode (AnomalyCo / Kyle Tryon)
@@ -75,14 +84,14 @@
 ### Discovery and Loading
 
 - **CLAUDE.md**: Walks up directory tree from CWD, checks each directory for CLAUDE.md and CLAUDE.local.md. All discovered files are **concatenated** (not overridden). Ordered from filesystem root down to CWD. Subdirectory CLAUDE.md files load on-demand when files in those directories are accessed.
-- **Auto memory**: `MEMORY.md` loaded at session start (first 200 lines or 25KB). Topic files in the memory directory loaded on demand. AutoMemory writes `modified` frontmatter timestamps (ISO 8601) for staleness awareness.
+- **Auto memory**: `MEMORY.md` loaded at session start (first 200 lines or 25 KB, whichever comes first). Topic files in the memory directory load on demand. This is a read cap for Claude auto-memory's index, not a `CLAUDE.md` limit or a model context-window size.
 - **Rules**: All `.md` files in `.claude/rules/` loaded at launch (if no `paths` frontmatter) or conditionally when matching files are opened (if `paths` frontmatter set).
 - **Skills**: Full body loads only when invoked. Description always in context. Frontmatter controls invocation — `disable-model-invocation: true` prevents auto-loading; `user-invocable: false` hides from slash menu.
 - **CLAUDE.md imports**: Expanded at load time. Maximum 4-hop recursion. Markdown code blocks are skipped. External imports show approval dialog on first encounter.
 
 ### Lifecycle Management
 
-- **Auto memory staleness**: `modified` frontmatter timestamps track when each memory file was last written. Claude Code measures MEMORY.md against 200-line/25KB read limits and reminds Claude to shorten it when near limits.
+- **Auto memory lifecycle**: Claude Code measures `MEMORY.md` against its 200-line/25 KB startup-read caps and prompts for shortening near those caps. A modification timestamp shows write recency; it does not establish semantic freshness.
 - **/compact**: Project-root CLAUDE.md survives compaction and is re-read from disk. Nested CLAUDE.md files reload on next file access in subdirectory. Auto memory is re-attached after compaction.
 - **/doctor**: Proposes trims for checked-in CLAUDE.md (v2.1.206+), removing content Claude can derive from code.
 - **/memory**: UI command to browse, open, and edit all memory files.
@@ -92,13 +101,13 @@
 
 ### Anti-patterns / Warnings
 
-- **Size**: "Target under 200 lines per CLAUDE.md file. Longer files consume more context and reduce adherence." Use path-scoped rules or skills instead for detailed instructions.
+- **Size**: Anthropic says to "target under 200 lines per CLAUDE.md file." This is product guidance, not an enforced cap; it is separate from the hard startup-read cap on auto-memory's `MEMORY.md`.
 - **Conflict between rules**: "If two rules contradict each other, Claude may pick one arbitrarily." Periodic review recommended.
 - **CAUTION about enforcement**: "CLAUDE.md instructions shape Claude's behavior but are not a hard enforcement layer." Use hooks for enforcement.
 - **Confusion between mechanisms**: "A section of CLAUDE.md that has grown into a procedure rather than a fact" should become a skill.
 - **Auto memory is NOT shared**: Machine-local only. Not synced across machines or cloud. Subagent memory is separate.
 - **Monorepo contamination**: `claudeMdExcludes` setting needed to skip CLAUDE.md from other teams.
-- **Context window competition**: Every line of CLAUDE.md consumes tokens; specificity matters over volume.
+- **Context use**: `CLAUDE.md` content enters the session context. The amount of remaining usable context varies by model, product surface, tools, conversation, and compaction state; this report assumes no fixed window.
 
 ### ADRs, Glossaries, Durable Knowledge
 
@@ -136,7 +145,7 @@
 
 ### Discovery and Loading
 
-- **AGENTS.md**: Loaded at session start (once per run, once per TUI session). Discovery walks from git root to CWD: checks each directory for `AGENTS.override.md` then `AGENTS.md` then fallback filenames. At global scope (`~/.codex/`), reads `AGENTS.override.md` if present, else `AGENTS.md`. All files concatenated from root down with blank lines — later files near CWD override earlier. Max 32 KiB combined (`project_doc_max_bytes`). Configurable fallback filenames (`project_doc_fallback_filenames`). Customizable with `CODEX_HOME` env var.
+- **AGENTS.md**: Loaded at session start (once per run, once per TUI session). Discovery walks from git root to CWD: checks each directory for `AGENTS.override.md` then `AGENTS.md` then fallback filenames. At global scope (`~/.codex/`), reads `AGENTS.override.md` if present, else `AGENTS.md`. Files are concatenated from root down with blank lines, with later files nearer the CWD taking precedence. The documented default aggregate cap is 32 KiB through configurable `project_doc_max_bytes`; it is not a model context-window size.
 - **config.toml**: Precedence: CLI flags > project `.codex/config.toml` (closest to CWD) > profile files > `~/.codex/config.toml` > `/etc/codex/config.toml` > built-in defaults. Project `.codex/` layers load only for trusted projects. Managed config also enforced via `requirements.toml`.
 - **Memories**: Off by default (experimental, `memories = true` feature flag). Codex turns useful context from eligible prior chats into local memory files. Background processing — skips active/short-lived sessions, waits for idle period, redacts secrets. Per-chat control via `/memories` command. Generation skips when rate-limit remaining below configured threshold (`memories.min_rate_limit_remaining_percent`). Configurable extraction and consolidation models.
 - **Chronicle**: Opt-in research preview (Pro subscribers, macOS only). Captures screen context periodically, runs sandboxed background agents to generate memories. Screen captures are ephemeral (deleted after 6 hours). Uses `consolidation_model` from config.
@@ -156,7 +165,7 @@
 ### Anti-patterns / Warnings
 
 - **Memories as source of truth**: "Keep required team guidance in `AGENTS.md` or checked-in documentation. Treat memories as a helpful recall layer, not as the only source for rules that must always apply." Memories are machine-local, not synced.
-- **Context bloat**: "Keep it small" for AGENTS.md. Codex stops adding files at 32 KiB limit. Suggests splitting large instructions across nested directories.
+- **Context bloat**: Codex says to keep `AGENTS.md` small. Discovery stops adding project instruction content when the configured aggregate byte budget is exhausted; 32 KiB is the documented default, not a universal fixed limit.
 - **Prompt injection via Chronicle**: "Using Chronicle increases risk to prompt injection attacks from screen content. For instance, if you browse a site with malicious agent instructions, Codex may follow those instructions."
 - **Not enforcement**: "Pair `AGENTS.md` with infrastructure that enforces those rules: pre-commit hooks, linters, and type checkers catch issues before you see them."
 - **Secrets in memories**: Codex redacts secrets from generated memory fields, but docs still warn to review memory files before sharing. Chronicle screen captures may contain sensitive visible information.
@@ -253,7 +262,7 @@ Simon Willison uses Codex Desktop extensively for agentic engineering and has pr
 ### Anti-patterns / Warnings
 
 - **Conflict**: "Try to avoid providing conflicting sets of instructions." If multiple sources conflict, priority determines which wins.
-- **Length**: Auto-generation prompt specifies "Instructions must be no longer than 2 pages" and "must not be task specific."
+- **Length**: A cited Copilot auto-generation prompt used "no longer than 2 pages." Treat this as prompt-specific generation guidance, not a general byte/token limit for all Copilot instruction files.
 - **Static duplication**: The auto-generation prompt warns agents to record build steps once so future agents don't re-discover them.
 
 ### ADRs, Glossaries, Durable Knowledge
@@ -283,7 +292,7 @@ Simon Willison uses Codex Desktop extensively for agentic engineering and has pr
 - **Conventions**: Explicitly loaded by user via `aider --read CONVENTIONS.md` or `/read CONVENTIONS.md` in chat. Not automatic.
 - **Auto-load**: Can configure in `.aider.conf.yml` with `read: CONVENTIONS.md` or `read: [CONVENTIONS.md, anotherfile.txt]` to always load.
 - **Read-only marking**: Files added via `--read` or `/read` are marked read-only — aider won't edit them. They are also cached if prompt caching is enabled.
-- **Repository map**: Automatically generated. Uses graph ranking on file dependencies to select most relevant 1k tokens. Dynamically adjusted based on chat state.
+- **Repository map**: Automatically generated. Aider documents a configurable map token budget (commonly about 1,024 tokens by default) and dynamically expands or reduces the map based on chat state. This budget is repository-map content, not the full model window.
 
 ### Lifecycle Management
 
@@ -343,7 +352,7 @@ Simon Willison uses Codex Desktop extensively for agentic engineering and has pr
 ### Anti-patterns / Warnings
 
 - **Auto-memory vs. durable knowledge**: Docs explicitly warn: "For knowledge you want Cascade to reliably reuse, write it as a Rule or add it to AGENTS.md." Auto memory is treated as an unstable scratchpad.
-- **Rule length limits**: 12,000 characters per workspace rule file, 6,000 for global rules.
+- **Rule length limits**: Windsurf documents 12,000 characters per workspace rule file and 6,000 for the global rule file. These character caps apply to those mechanisms, not to Cascade's total context window.
 - **Generic rules**: "There's no need to add generic rules (e.g. 'write good code'), as these are already baked into Cascade's training data."
 - **Precedence during migration**: `.devin/` > `.windsurf/` but both are loaded. Could lead to duplication during transition.
 
@@ -383,15 +392,15 @@ Simon Willison uses Codex Desktop extensively for agentic engineering and has pr
 
 ## 9. Community Patterns and Discourse
 
-### The "Rules" File Pattern
+### The "Rules" File Pattern in the Sample
 
-A clear cross-platform convention has emerged: **markdown files at predictable paths that inject instructions into agent context**. The community has converged on:
+**Inference:** The sampled products show a repeated convention: **Markdown files at predictable paths that supply instructions to agent context**. The details are not uniform:
 
 1. **Root-level files**: `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `.windsurfrules`, `.clinerules` — each originally platform-specific but increasingly interoperable.
 2. **Directory-based rules**: `.cursor/rules/`, `.claude/rules/`, `.devin/rules/`, `.windsurf/rules/`, `.amazonq/rules/` — modular, scoped by glob patterns.
 3. **Path-specific scoping**: Frontmatter `paths`/`applyTo`/`globs` fields control when rules load, reducing context waste.
 
-The `AGENTS.md` file has become a de facto standard bridge — Claude Code, OpenCode, Copilot, Windsurf, and Cursor all support it directly or through import.
+**Evidence:** `AGENTS.md` is a bridge across several sampled products, but support differs: some discover it directly, while Claude Code's documented path is an import or symlink through `CLAUDE.md`. This is interoperability evidence, not a claim of universal support.
 
 **Source**: Primary docs from all platforms; cross-referenced with the `agents.md` spec at https://github.com/agentsmd/agents.md (referenced in GitHub Copilot docs).
 
@@ -440,11 +449,11 @@ The `agents.md` specification (https://github.com/agentsmd/agents.md) is an emer
 
 ---
 
-## 10. Design Principles (Cross-Platform Patterns)
+## 10. Design Premises from the Sample
 
 ### 1. Hierarchical Context Loading
 
-Every platform loads context from multiple scopes, ordered from broadest to most specific:
+**Inference:** Several sampled products load context from multiple scopes, but not every product implements all four levels or the same precedence:
 
 ```
 Organization/Managed → User/Personal → Project → Local (per-directory)
@@ -454,12 +463,12 @@ This allows organizations to set baselines, teams to add project conventions, an
 
 ### 2. On-Demand vs. Always-Loaded Context
 
-Platforms uniformly distinguish between:
+**Inference:** Multiple sampled platforms distinguish between always-loaded and conditional/on-demand context; Aider and other summarized products expose different controls.
 
 - **Always-loaded** (small, always relevant): Root rules, CLAUDE.md, AGENTS.md at project root. Loaded at session start and surviving compaction.
 - **On-demand** (detailed, conditional): Skills, path-scoped rules, topic-specific memory files. Loaded only when relevant, keeping context windows lean.
 
-The threshold for "always-loaded" is typically 200 lines or page-count.
+There is no cross-platform threshold for always-loaded content. Anthropic's under-200-line advice, Claude auto-memory's 200-line/25 KB cap, Windsurf's character limits, Codex's configurable aggregate byte cap, and Copilot prompt guidance measure different artifacts and cannot be normalized without benchmarks.
 
 ### 3. Auto-Discovery from Directory Structure
 
@@ -476,37 +485,37 @@ Path-specific rules use YAML frontmatter `paths`/`applyTo`/`globs` fields with g
 
 ### 5. Skills as Procedural Knowledge
 
-Every major platform now supports "skills" — named, reusable instruction blocks loaded on demand. Skills bridge the gap between "always-on context" (too much for infrequent use) and "conversation instructions" (lost after session). The Agent Skills open standard (agentskills.io) represents an attempt to standardize this.
+**Evidence:** Claude Code, Codex, OpenCode, Cursor, Windsurf, and current Copilot documentation in this sample expose skills or skill-compatible reusable instruction packages. This does not establish that every major platform or every product version supports the same standard.
 
 ### 6. Code as Authoritative, Documentation as Clarifying
 
-Across platforms, the pattern is:
+**Inference:** The sample suggests the following design premise; individual vendors do not all make every statement:
 - **Build/test commands** belong in durable context (they can't be reverse-engineered from code)
 - **Architecture decisions and rationale** belong in durable context (they can't be reverse-engineered)
-- **Directory layout** should NOT be duplicated (agents can read the file tree)
+- Avoid duplicating directory layout when an agent can derive it and the duplication cannot be checked
 - **Code standards** belong in durable context when they deviate from language defaults
-- **API reference documentation** should NOT be maintained if code has type annotations/intellisense
+- Evaluate whether API reference adds non-derivable meaning; type annotations alone do not prove documentation redundant
 
 Claude Code's `/doctor` feature (v2.1.206+) embodies this principle by automatically trimming CLAUDE.md content that can be derived from the codebase.
 
 ### 7. Auto-Memory as a Scratchpad, Not Source of Truth
 
-Platforms that offer auto-generated memory (Claude Code, Windsurf) consistently position it as a convenience feature, not a source of truth:
+**Evidence:** Claude Code and Windsurf distinguish auto-generated memory from user-authored, shared rules. This scoped observation should not be generalized to platforms not reviewed or to future versions.
 - Claude Code: Auto memory is a separate system from CLAUDE.md; limited to 200 lines loaded; contains "learnings and patterns" Claude discovers.
 - Windsurf: "For knowledge you want Cascade to reliably reuse, write it as a Rule or add it to AGENTS.md rather than relying on auto-generated Memories."
 
 ---
 
-## 11. Anti-patterns (Cross-Platform Failure Modes)
+## 11. Candidate Failure Modes from the Sample
 
 ### 1. Context Bloat
 
-The most common anti-pattern across all platforms: dumping everything into a single instruction file. Consequences:
+**Inference:** Several sources favor concise or scoped instructions. The likely failure mode is dumping unrelated guidance into one always-loaded file. The magnitude of each consequence requires product/model-specific evaluation:
 - Token budget consumed by low-value instructions
 - Model attention diluted across too many directives
 - Reduced adherence to any single instruction
 
-**Mitigations**: Path-scoped rules, skills for procedural knowledge, length limits (200 lines).
+**Candidate default:** Compare path-scoped rules, skills, and concise root guidance on fixtures. `200 lines` is Anthropic guidance only, not a portable limit.
 
 ### 2. Redundant Architecture Documentation
 
@@ -516,7 +525,7 @@ Documenting what agents can derive from the code itself (directory structure, de
 
 ### 3. Conflicting Rules Across Scopes
 
-When organization, project, and user rules contradict each other, models pick arbitrarily. No platform currently offers conflict detection.
+When scopes contradict, documented precedence may resolve ordering while semantic conflicts can remain. Anthropic warns Claude may choose arbitrarily between contradictory rules; this behavior is not established for every platform. No reviewed primary source documented general semantic contradiction detection.
 
 **Mitigation**: Periodic review of all instruction files. Explicit priority rules (e.g., Windsurf's "Devin > Windsurf" precedence).
 
@@ -543,7 +552,37 @@ Using CLAUDE.md/AGENTS.md for security-critical rules (e.g., "never commit secre
 
 ### 7. Eager Rule Loading
 
-Loading all rules regardless of current task. Every platform's docs warn against this: "keep rules concise," "use path-scoped rules," "generic rules aren't needed."
+Loading all rules regardless of current task can waste context. Different sampled docs support concise instructions, scoped rules, or omitting generic rules; this is not one warning issued by every platform.
+
+---
+
+## 12. Migration and Portability Research
+
+### Evidence
+
+- Codex documents a dedicated import flow from Claude Code and Claude Cowork that maps instructions, settings, skills, plugins, MCP configuration, hooks, subagents, project folders, and recent chats.
+- Claude Code's `/init` can inspect selected Cursor, Copilot, `AGENTS.md`, Devin/Windsurf, and Cline rule sources and propose `CLAUDE.md` content.
+- Cursor documents migration away from legacy `.cursorrules` to `.cursor/rules/`.
+- Windsurf/Devin documents precedence while both legacy `.windsurf/` and preferred `.devin/` locations may be loaded.
+
+These are product-specific conversions and compatibility paths. They do not define a shared durable-context migration format or guarantee semantic equivalence.
+
+### Decision required
+
+A portable migration needs explicit answers for:
+
+- source inventory and precedence when several instruction systems coexist;
+- stable concept identity when paths change;
+- routing, aliases, redirect chains, cycles, and broken targets;
+- conflict reporting rather than silent concatenation;
+- preservation or reset of provenance, trust, timestamps, and review status;
+- merge/split mapping when source and destination granularity differ;
+- idempotent re-runs and versioned migration manifests;
+- rollback and restore verification.
+
+### Candidate safety protocol
+
+Before any live migration, produce a dry-run manifest, snapshot or full backup, verify the backup, restore it into a disposable location, and compare expected refs/files and semantic checks. Only then apply the migration, validate links and conflicts, and retain the rollback artifact until acceptance. These requirements are design premises to fixture-test, not claims that the sampled platforms implement them.
 
 ### 8. Documentation-Code Divergence
 
@@ -566,3 +605,5 @@ When instructions say one thing and code does another, the model faces ambiguity
 9. AGENTS.md spec: https://github.com/agentsmd/agents.md
 10. Simon Willison's blog: https://simonwillison.net/tags/ai-assisted-programming/ (400+ posts, quoted extensively)
 11. Hamel Husain's blog: https://hamel.dev/ (Evals, coding agents)
+12. Matt Pocock, `writing-great-skills`, pinned upstream snapshot:
+    https://github.com/mattpocock/skills/tree/ed37663cc5fbef691ddfecd080dff42f7e7e350d/skills/productivity/writing-great-skills

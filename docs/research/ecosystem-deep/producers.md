@@ -1096,7 +1096,11 @@ myblog-bundle.zip
 
 Five distinct approaches to producing OKF bundles:
 
-1. **OpenWiki** is the most mature and feature-rich: a full CLI with 12+ LLM providers, dual mode (code + personal), CI integration, connectors to 6 knowledge sources, diagram generation, and a polished TUI. It produces v0.1 bundles for codebases and personal knowledge.
+1. **OpenWiki** exposes a broad researched surface: a CLI with 12+ LLM
+   providers, dual code/personal modes, CI integration, connectors to 6
+   knowledge sources, diagram generation, and a TUI. It produces v0.1 bundles
+   for codebases and personal knowledge. No cross-project maturity ranking was
+   established.
 
 2. **pi-openwiki** is a focused port adapting OpenWiki's core codebase documentation workflow to the IBM PI agent ecosystem, with simpler architecture and fewer features but full integration with PI's command system.
 

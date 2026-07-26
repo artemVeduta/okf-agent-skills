@@ -3,8 +3,14 @@
 ## Version and Status
 
 - **Version**: 0.2
-- **Date**: 2026-06-30 (inferred from body footnote dates)
-- **Source**: GoogleCloudPlatform/knowledge-catalog repository, file `okf/SPEC.md`
+- **Release date**: 2026-07-24. The v0.2 migration commit
+  [`780fe9d`](https://github.com/GoogleCloudPlatform/knowledge-catalog/commit/780fe9d30b)
+  and the official Google Cloud announcement were both published on July 24,
+  2026. Dates inside examples are example data, not publication metadata.
+- **Primary specification**:
+  [`GoogleCloudPlatform/knowledge-catalog/okf/SPEC.md`](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+- **Primary announcement**:
+  [Google Cloud, “Open Knowledge format v0.2 tackles agentic trust”](https://cloud.google.com/blog/products/data-analytics/okf-v0-2-adds-trust-signals/)
 - **License**: Apache 2.0
 - **Stability**: Pre-1.0 (`<major>.<minor>` scheme). Breaking changes are reserved for a major version bump (1.0), but as a 0.x spec, the format is still evolving. The spec says v0.2 is a "minor version bump under §12" from v0.1, though it contains two deliberate breaking changes.
 - **Reference implementation**: `reference-agent` Python package (v0.1.0), a proof-of-concept producer that generates OKF bundles from BigQuery metadata plus web crawls. Also includes a `visualize` subcommand that renders bundles as interactive Cytoscape.js HTML graphs.
@@ -429,13 +435,29 @@ From the "Considered and deferred" section:
 
 The footnote label (`rev-policy`) is the join key into `sources`. Consumers resolve attribution through the matching entry, not by parsing the footnote prose.
 
-## Conformance (§9 in the spec, but it's §11) — NORMATIVE
+## Conformance (§11) — NORMATIVE
 
 A bundle is **conformant** with OKF v0.2 if:
 
 1. Every non-reserved `.md` file in the tree contains a parseable YAML frontmatter block.
 2. Every frontmatter block contains a non-empty `type` field.
 3. Every reserved filename (`index.md`, `log.md`) follows the structure in §8 and §9 respectively when present.
+
+These are the three **bundle-conformance tests**. They should not be expanded
+to include every normative producer or consumer obligation elsewhere in the
+spec.
+
+**Conditional producer obligations**:
+
+- Reserved filenames MUST NOT be used as concept documents (§3.1).
+- If a `log.md` is present, its date headings MUST use `YYYY-MM-DD` (§9).
+- If an actor identifies a human author or confirmer, the producer MUST use
+  the `human:` prefix (§7).
+- In the Attested Computation workflow, an agent MAY supply only declared
+  parameter values and MUST NOT author or edit the sanctioned computation
+  (§10.3).
+- When an optional provenance, trust, lifecycle, or computation family is
+  present, producers SHOULD follow §§5–10 (§11).
 
 **NORMATIVE constraints on consumers** (MUST):
 
@@ -454,7 +476,10 @@ A bundle is **conformant** with OKF v0.2 if:
 - SHOULD surface, not silently drop, a failing attestation (§10.5).
 - SHOULD treat all other constraints as soft guidance.
 
-**Consumer forbearance** is a central conformance principle: "Consumers SHOULD treat all other constraints as soft guidance." This permissive stance is what makes OKF portable — a consumer from any ecosystem can read any OKF bundle without tripping over producer-specific extensions.
+**Consumer forbearance** is a separate interoperability obligation, not an
+additional condition for declaring a bundle conformant. A consumer can report
+the three bundle errors above while still preserving unknown keys and
+tolerating optional-family omissions.
 
 ## Relationship to Other Formats
 

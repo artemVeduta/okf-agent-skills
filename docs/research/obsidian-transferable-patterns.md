@@ -5,6 +5,19 @@ Obsidian ecosystem that can inform how agent-facing durable context
 should be structured -- without adopting Obsidian syntax, wikilinks,
 plugins, or application integration.
 
+### Claim labels
+
+- **Evidence** — a statement supported by the cited source.
+- **Inference** — a transfer interpretation, not established by the source.
+- **Candidate default** — an operational hypothesis requiring fixture benchmarks.
+- **Decision required** — unresolved semantics that tooling must not invent.
+
+Zettelkasten sources in this report describe particular authors' methods and,
+in the structural-layers article, one practitioner's vault history. They are
+anecdotal design inputs, not controlled validation. All numeric counts,
+percentages, ages, limits, and retention intervals are candidate benchmark
+values only.
+
 ---
 
 ## 1. Zettelkasten Method (Atomic Notes)
@@ -38,9 +51,10 @@ The Zettelkasten.de article on when to start a new note states:
 > put things which belong together in a single note, give it an ID, but
 > limit its content to that single topic.
 
-The criterion is reuse potential: if a component of a note could be
-referenced or combined independently, it should be a separate note.
-Atomicity fosters reuse, which multiplies connections in the network.
+**Inference:** Reuse potential is a useful split question: if a component
+could be referenced or combined independently, it may merit a separate
+note. The cited sources do not establish a deterministic split rule or
+prove that more atomic notes improve every retrieval task.
 
 _Source: https://zettelkasten.de/posts/create-zettel-from-reading-notes/_
 
@@ -82,8 +96,8 @@ the Zettel")_
 Atomic notes create a web of individually addressable units. Each unit
 can be found independently and recombined in novel ways. Luhmann
 described this as "internal growth" (or "organic growth" in
-translation). The system scales automatically because each new note
-finds its place in the existing web without needing reorganization.
+translation). The source presents this as supporting internal growth; it
+does not prove automatic scaling or eliminate reorganization in other vaults.
 
 _Source: https://zettelkasten.de/introduction/ (section "The Fixed
 Address of Each Note")_
@@ -143,10 +157,10 @@ that emerged organically:
 The key insight: these layers were not planned. "I didn't plan them in
 advance. It rather was an organic process."
 
-At ~500-700 notes, hub-like notes became necessary. At ~1000-1500 notes,
-structure notes emerged. The author waited until organizational pain was
-felt before introducing structure, and let the shape of the content
-determine the structure.
+In this single reported vault, hub-like notes appeared around 500–700
+notes and structure notes around 1,000–1,500 notes. These are anecdotal
+observations, not necessity thresholds or general triggers. The author
+reports waiting for organizational pain before introducing structure.
 
 _Source: https://zettelkasten.de/posts/three-layers-structure-zettelkasten/_
 
@@ -234,8 +248,9 @@ _Source: https://blacksmithgu.github.io/obsidian-dataview/queries/structure/
 
 ### Community Conventions for Concept Type Classification
 
-The Obsidian community has converged on several type classification
-conventions:
+**Inference:** Examples in the reviewed Obsidian and Dataview material
+include the following type-classification conventions; the evidence does
+not establish community-wide convergence:
 
 1. **Note type** via tag or property: `#permanent-note`,
    `#literature-note`, `#fleeting-note`, `#moc`
@@ -244,8 +259,9 @@ conventions:
 3. **Domain classification**: hierarchical tags like `#psychology/memory`,
    `#cs/algorithms`
 
-Aliases are universally used for synonym management: multiple names for
-the same concept point to the same note.
+Aliases are one documented synonym-management mechanism. Their use is
+not universal, and alias resolution is not the same as immutable concept
+identity.
 
 _Source: Inferred from Dataview annotation conventions and the tagging
 practices described at https://blacksmithgu.github.io/obsidian-dataview/queries/structure/_
@@ -270,31 +286,35 @@ section "Usage")_
 
 ## 4. Growth Management
 
-### When a Vault Becomes Too Large to Navigate
+### Anecdotal Growth Observations
 
-The Zettelkasten.de structural layers article describes clear thresholds:
+The Zettelkasten.de structural-layers article reports one author's
+experience:
 
-- **<500 notes**: Tags and full-text search suffice
-- **~500-700 notes**: Hub notes become necessary (linking to key notes
-  on a topic)
-- **~1000-1500 notes**: Structure notes (MOCs) become necessary
-- **Beyond this**: Structure notes that organize other structure notes
-  (top-layer MOCs)
+- **fewer than roughly 500 notes**: the author used simpler navigation
+- **roughly 500–700 notes**: the author introduced hub-like notes
+- **roughly 1,000–1,500 notes**: the author observed structure notes
+- **beyond that range**: the author added structure notes that organize
+  other structure notes
 
 _Source: https://zettelkasten.de/posts/three-layers-structure-zettelkasten/
 (sections "Bottom Layer" and "Middle Layer")_
 
-The primary failure mode at scale is **opacity**: you can only see a
-few inches into the water at any time. Without structure layers, the
-archive becomes impossible to navigate holistically.
+**Inference:** Opacity is one reported failure mode at scale. The source
+does not establish a universal note count at which navigation fails.
+
+**Candidate default:** Use these counts only to construct benchmark
+fixtures. Select production prompts or warnings from measured retrieval
+recall, precision, navigation effort, latency, and user feedback—not
+from concept count alone.
 
 ### Compaction Strategies: Merging, Summarizing, Archiving
 
-Zettelkasten literature describes several approaches:
+The reviewed Zettelkasten sources describe several approaches, but do
+not define OKF-safe merge, split, redirect, or archival operations:
 
 1. **Synthesis notes**: When multiple notes cover overlapping ground, a
-   new note synthesizes them. The originals may be archived or linked
-   as supporting evidence.
+   new note may synthesize them while originals remain as evidence.
 2. **Buffer notes**: Temporary collection points for related material
    that will later be rearranged into permanent notes. Described as
    "temporary buffer notes to collect stuff that you can later
@@ -306,13 +326,13 @@ Zettelkasten literature describes several approaches:
 _Source: https://zettelkasten.de/overview/ (section "Scaling your note
 archive")_
 
-### Threshold Triggers for Maintenance Actions
+### Candidate Signals for Maintenance
 
-The community converges on several triggers:
+The following are inferences and candidate signals, not community-
+validated triggers:
 
-- **Search result count becomes unmanageable**: When a tag search
-  returns more notes than you can review (typically >50-100), it's time
-  for a structure note.
+- **Search result review cost**: Benchmark whether candidate result sets
+  such as 50–100 items become impractical for target users and agents.
 - **Dead links accumulate**: Linked-to notes that no longer exist signal
   decay.
 - **Unlinked mentions grow**: Content referencing a concept without
@@ -320,22 +340,29 @@ The community converges on several triggers:
 - **Orphan notes**: Notes with zero inbound links may be dead or
   candidates for archiving.
 
-_Source: Inferred from structural layers article and MOC creation
-patterns._
+_Source basis: inference from the structural-layers article and MOC
+examples; no numeric trigger is established by those sources._
 
 ### Loss Prevention: Version Control, Backup
 
-While Obsidian itself relies on file-level recovery (`.obsidian/` config
-storage and sync service), community conventions strongly recommend:
+The reviewed sources support plaintext portability and redundant
+identifiers, but they do not establish a universal Obsidian-community
+backup policy. Candidate safeguards include:
 
-- **Git for vaults**: Full version history, diff tracking, and rollback.
-  Plaintext Markdown makes Git work natively.
+- **Git for vaults**: Committed content gains version history and diffs.
+  Recovery still depends on commits, retained objects and refs, and a
+  surviving repository or verified backup.
 - **Regular exports**: Markdown exports to portable formats.
 - **Redundant ID storage**: Zettelkasten.de recommends placing the note
   ID in both the filename and the file body to survive tool changes.
 
 _Source: https://zettelkasten.de/introduction/ (section "The Archive"
 -- discussion of redundancy and software independence)_
+
+**Candidate default:** Before any automated merge, split, path move,
+archive, purge, or format migration, require a dry-run manifest, a
+snapshot or full backup, backup verification, and a tested restore into
+a disposable location.
 
 ### Archival Patterns
 
@@ -442,8 +469,11 @@ approaches:
 4. **MOCs**: Ordinary files that contain ordered lists of file
    references, functioning as human-curated navigation indices.
 
-The key enabler is **unique, stable file identifiers** (or concept
-identifiers within files) that can be referenced consistently.
+**Decision required:** Choose identity separately from routing. A
+bundle-relative path is a useful locator but is not stable under rename,
+move, archive, split, or merge. Tooling needs explicit semantics for
+immutable IDs versus path identity, aliases, redirects, redirect chains
+and cycles, link rewriting, and broken targets.
 
 ---
 
@@ -528,21 +558,21 @@ _Source: https://blacksmithgu.github.io/obsidian-dataview/annotation/add-metadat
 For each pattern, rated on transferability to agent-facing durable
 context in a filesystem-based system (plaintext Markdown, no Obsidian).
 
-### HIGH Transferability
+### Candidate High Transferability
 
 | Pattern | Rationale |
 |---------|-----------|
 | **Atomicity (one concept per file)** | Directly applicable. Small, single-concept files are easier for both humans and agents to navigate, reference, and recombine. |
 | **Maps of Content (index files)** | Ordinary Markdown files listing links to other files. Requires no tooling beyond a file editor. The most important transferable pattern. |
 | **YAML frontmatter for structured metadata** | Plaintext YAML is universally parseable. Agents can read/write it trivially. No Obsidian dependency. |
-| **Unique stable identifiers per document** | Essential for cross-referencing. Can be filename-based, UUID-based, or timestamp-based. |
+| **Unique stable identifiers per document** | **Decision required:** filename/path identity conflicts with moves; benchmark immutable IDs plus routing/alias metadata against path identity. |
 | **Link context (explain why links exist)** | The practice of annotating links with rationale is pure content discipline, not tooling. |
 | **Template-driven consistency** | A scaffolding script that pre-populates metadata fields. Simple automation, no Obsidian required. |
 | **Progressive disclosure via index → sub-index → leaf** | Works with any filesystem. Top-level MOC lists sub-MOCs; sub-MOCs list content pages. |
 | **Freshness metadata (`reviewed`, `status`, `confidence`)** | Simple YAML fields. Agents can query/update them. Enables automated staleness detection. |
 | **Associative over hierarchical organization** | Files don't need to live in a single folder. Links create the structure; folders are secondary. |
 | **Write in your own words** | Critical for durable context: agents should synthesize understanding, not copy-paste. |
-| **Organic structure emergence** | Start flat, introduce MOCs when search becomes insufficient. Let structure follow content shape. |
+| **Organic structure emergence** | **Candidate default:** start flat and introduce MOCs when fixture metrics show search/navigation degradation. |
 
 ### MEDIUM Transferability
 
@@ -552,7 +582,7 @@ context in a filesystem-based system (plaintext Markdown, no Obsidian).
 | **Unlinked mentions detection** | Requires full-text indexing. Medium effort but conceptually simple. |
 | **Automatic freshness queries** | Requires a scheduled job or agent command that inspects metadata. Medium implementation effort. |
 | **Graph-based orphan detection** | Requires constructing and analyzing a link graph. Medium complexity. |
-| **Three-layer structural emergence** | The layers emerge naturally as volume grows, but require an agent that recognizes the thresholds (~500, ~1000 notes) and acts. |
+| **Three-layer structural emergence** | Anecdotal pattern only. Candidate counts such as 500 and 1,000 belong in fixtures; an agent must not act on count alone. |
 | **Buffer notes for staged processing** | The concept is simple but requires a defined workflow of buffer → permanent note. |
 | **Separating reference management from content** | Useful but adds a second system. Worth it only when source count is high. |
 
@@ -614,26 +644,31 @@ agent-facing durable context system:
 
 ---
 
-## Key Principles Summary
+## Candidate Design Premises
 
 The patterns that transfer most directly to agent-facing durable context
 all share these characteristics:
 
-1. **Plaintext over proprietary formats**: Markdown with YAML
-   frontmatter is universally parseable.
-2. **Stable identifiers over location-based addressing**: What you
-   reference, not where it lives.
+1. **Inference — plaintext portability**: Markdown with YAML
+   frontmatter is broadly supported, but parser/schema compatibility
+   still requires tests.
+2. **Decision required — identity and addressing**: Select immutable
+   identifiers, path identity, and alias/redirect routing semantics
+   explicitly; do not call paths stable by default.
 3. **Links with intent over bare connections**: The *why* of a
    connection is the knowledge.
-4. **Structure that emerges from content, not imposed on it**: MOCs
-   created when navigation pain is felt, not before.
+4. **Candidate default — emergent structure**: Create MOCs when measured
+   navigation pain is felt, not at an anecdotal note count.
 5. **Metadata that enables automation**: Consistent, structured
    frontmatter makes tooling possible.
 6. **Atomicity as a discipline, not a rule**: One concept per file is a
    guideline, adjusted based on reuse potential.
-7. **Freshness as a first-class property**: Every durable context
-   document should know when it was last reviewed and whether it's
-   still current.
+7. **Candidate default — freshness metadata**: Record review evidence
+   where useful; a timestamp alone does not prove that content is
+   current.
+8. **Decision required — merge and split**: Define source/target
+   identity, inbound-link behavior, redirects, trust/provenance,
+   duplicate bodies, and rollback before automating compaction.
 
 ---
 
@@ -661,3 +696,4 @@ all share these characteristics:
 | Luhmann, Communicating with Slip Boxes | http://luhmann.surge.sh/communicating-with-slip-boxes |
 | Obsidian Help, Graph View | https://help.obsidian.md/Plugins/Graph+view |
 | Obsidian Help, Templates | https://help.obsidian.md/Plugins/Templates |
+| Matt Pocock, `writing-great-skills` (pinned upstream snapshot) | https://github.com/mattpocock/skills/tree/ed37663cc5fbef691ddfecd080dff42f7e7e350d/skills/productivity/writing-great-skills |

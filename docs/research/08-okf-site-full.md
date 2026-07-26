@@ -52,9 +52,13 @@ Footer: OKF v0.1 · 2026 · MIT licensed · Based on the Google Cloud Markdown s
 
 ## Spec (/spec) — Full Specification v0.1
 
-**Authoritative source:** [GoogleCloudPlatform/knowledge-catalog — okf/SPEC.md](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+**Canonical v0.1 source snapshot:** [GoogleCloudPlatform/knowledge-catalog —
+`okf/SPEC.md` at the June 12, 2026 commit](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/ee67a5ca27/okf/SPEC.md).
+The `main` URL now serves v0.2.
 
-The okf.md version is an **annotated guide** — the official spec with added developer commentary ("opinions included").
+The okf.md version is a **community annotated guide** based on v0.1, with
+additional developer commentary (“opinions included”); it is not the canonical
+Google-hosted specification.
 
 ### Structure (11 sections + 3 appendices):
 
@@ -66,23 +70,25 @@ The okf.md version is an **annotated guide** — the official spec with added de
 
 4. **Concept Documents** — UTF-8 markdown. Two parts: YAML frontmatter + markdown body.
 
-5. **Frontmatter** — Required: `type` only. Recommended: `title`, `description`, `resource` (URI), `tags`, `timestamp` (ISO 8601). Extensions: any additional keys allowed. Consumers must preserve unknown keys.
+   - **§4.1 Frontmatter** — Required: `type` only. Recommended:
+     `title`, `description`, `resource`, `tags`, `timestamp`.
+   - **§4.2 Body** — Standard Markdown; conventional headings include
+     `# Schema`, `# Examples`, and `# Citations`.
 
-6. **Body** — Standard markdown. Conventional headings: `# Schema`, `# Examples`, `# Citations`. Structure preferred over prose.
+5. **Cross-linking** — Absolute and relative Markdown links; broken links tolerated.
 
-7. **Cross-linking** — Absolute (bundle-relative, `/path`) and relative (`./path`). Links are untyped directed edges. Broken links tolerated (references to not-yet-written concepts allowed).
+6. **Index Files** — Sections grouping linked concepts.
 
-8. **Index Files** — No frontmatter. Sections grouping concepts under headings. Entries SHOULD include `description` from linked concept.
+7. **Log Files** — Date-grouped entries; dates use `YYYY-MM-DD`.
 
-9. **Log Files** — Flat list grouped by ISO 8601 date, most recent first. Entry format: `**Action**`: description with links. Date headings MUST use `YYYY-MM-DD`.
+8. **Citations** — Numbered list under `# Citations`.
 
-10. **Citations** — Numbered list under `# Citations`. Can be URLs, bundle-relative paths, or `references/` subdirectory.
+9. **Conformance** — Three bundle rules: parseable frontmatter, non-empty
+   `type`, and valid present reserved files. Consumer leniency is separate.
 
-11. **Conformance** — Three rules: (1) Every non-reserved `.md` has parseable YAML frontmatter. (2) Every frontmatter has non-empty `type`. (3) Reserved files follow §6/§7 structure. Consumers must be lenient (tolerate missing optional fields, unknown types, broken links, absent index.md).
+10. **Relationship to Other Formats** — Comparison with adjacent tools/formats.
 
-12. **Relationship to Other Formats** — Comparison with Obsidian, Notion, DataHub/OpenMetadata. OKF: unique in being human-readable, agent-readable, specified, AND portable.
-
-13. **Versioning** — `<major>.<minor>`. Minor = backward-compatible additions. Major = breaking changes. Bundles may declare `okf_version: "0.1"` in root `index.md` frontmatter.
+11. **Versioning** — `<major>.<minor>` and optional root `okf_version`.
 
 ### Appendices:
 
@@ -223,14 +229,19 @@ saas-metrics/
 
 ### 3. kcmd CLI + MCP Server (Metadata as Code)
 - **What it does:** Bidirectional sync between local filesystem and Google Cloud Knowledge Catalog. "Git for metadata."
-- **Distribution:** TypeScript library (`npm install kcmd`), standalone CLI, MCP server
-- **MCP tools:** pull, push, list-entries, lookup-entry, modify-entry
+- **Site claim:** TypeScript library, standalone CLI, MCP server; five MCP tools
+- **Primary-source correction (2026-07-26):** `mcp.ts` registers three tools:
+  `list-entries`, `lookup-entry`, and `modify-entry`. `pull` and `push` are CLI
+  commands. No public npm package named `kcmd` was present when checked, so the
+  repository package must be built from source.
 - **Compatible with:** Gemini CLI, Claude Desktop, Cursor, any MCP agent
 - **Maturity:** 🟡 Early product
 - **Link:** [github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode)
 
 ### 4. Google Cloud Knowledge Catalog (The Backend)
-- **What it is:** GCP product (formerly Dataplex). AI-powered metadata catalog. Native OKF ingestion since June 2026.
+- **What it is:** GCP product (formerly Dataplex). The repository contains a
+  demo-specific OKF adapter; generic, full-field native ingestion is not
+  established by that demo.
 - **Features:** Auto-harvesting (BigQuery, AlloyDB, Spanner, Cloud SQL, Firestore, Looker), 3rd-party integrations, Gemini enrichment, semantic search, Context APIs, data products
 - **Pricing:** Free tier (100 DCU-hour/mo + 1 MiB storage + 1M API calls). Standard: $0.06/DCU-hour. Premium: $0.089/DCU-hour. Storage: $2/GiB/month.
 - **Maturity:** 🟢 GA
@@ -280,7 +291,7 @@ saas-metrics/
 #### Trust & Provenance
 | Tool | Description | Maturity | Link |
 |------|-------------|----------|------|
-| signed-okf (DynamicFeed) | Cryptographic signatures + optional OriginTrail anchoring | 🟡 Early | [github.com/dynamicfeed/signed-okf](https://github.com/dynamicfeed/signed-okf) |
+| signed-okf (DynamicFeed) | Site claims signatures + OriginTrail anchoring; source implements Ed25519/JWKS only | 🟡 Early | [github.com/dynamicfeed/signed-okf](https://github.com/dynamicfeed/signed-okf) |
 
 #### Agent Memory & Skills
 | Tool | Description | Maturity | Link |
@@ -288,7 +299,7 @@ saas-metrics/
 | hermes-okf | Filesystem memory for HermesAgent as OKF concept files | 🟡 Functional | [github.com/EliaszDev/hermes-okf](https://github.com/EliaszDev/hermes-okf) |
 | Inkeep Open Knowledge | Docs editor with OKF starter pack, frontmatter validation, concept graph | 🟡 Preview (v0.9) | [github.com/inkeep/open-knowledge](https://github.com/inkeep/open-knowledge) |
 | knowledge-template (Science) | Conformant OKF template for scientific research (hypothesis, method, dataset, finding, review) | 🟢 Ready (v1.0) | [github.com/open-science-pillars/knowledge-template](https://github.com/open-science-pillars/knowledge-template) |
-| OriginTrail DKG + OKF | OKF bundles as verifiable on-chain assets via DKG | 🟡 Concept | [Blog post](https://blog.prototypr.io/googles-okf-comes-to-the-origintrail-dkg-a-memory-ai-agents-can-trust-43c6d87e1de8) |
+| OriginTrail DKG + OKF | OKF bundles as verifiable on-chain assets via DKG | 🟡 Concept | Prototypr blog URL captured; automated checker returned 403 |
 | openknowledgeformat.com | Browser-based validator + starter templates | 🟢 Ready | [openknowledgeformat.com](https://openknowledgeformat.com/) |
 | okf-skill (rakibtg) | Single SKILL.md for Claude Code/Cursor/Hermes agents | 🟡 Functional | [github.com/rakibtg/okf-skill](https://github.com/rakibtg/okf-skill) |
 | leadcraft | Repo → OKF bundle generator | 🟡 Early | [github.com/dskst/leadcraft](https://github.com/dskst/leadcraft) |
@@ -426,7 +437,9 @@ saas-metrics/
 
 23. **Does OKF help with SEO?** — No. Not a search ranking signal. For SEO use schema.org + llms.txt.
 
-24. **How does OKF work with MCP?** — kcmd is already an MCP server. 5 tools: pull, push, list-entries, lookup-entry, modify-entry.
+24. **How does OKF work with MCP?** — The page says kcmd exposes five tools.
+    Current source registers three (`list-entries`, `lookup-entry`,
+    `modify-entry`); `pull` and `push` are CLI-only.
 
 ---
 
@@ -516,7 +529,9 @@ chmod +x scripts/validate.sh
 ```
 
 ### Knowledge Catalog Integration:
-The skill knows how to push bundles via kcmd (`kcmd init`, `kcmd push`, MCP server setup).
+The skill describes pushing bundles via kcmd. Current source supports
+`kcmd init/push` for catalog snapshots and a separate bounded OKF demo adapter,
+not a generic arbitrary-field OKF push contract.
 
 ### Source repo:
 [github.com/fabricioctelles/skills/tree/main/skills/okf-open-knowledge-format](https://github.com/fabricioctelles/skills/tree/main/skills/okf-open-knowledge-format)
@@ -527,8 +542,10 @@ The skill knows how to push bundles via kcmd (`kcmd init`, `kcmd push`, MCP serv
 
 ### How the site is built:
 - **Framework:** Astro (v7) with Starlight docs theme
-- **Repository:** [github.com/fabricioctelles/skills](https://github.com/fabricioctelles/skills) — same repo that houses agent skills
-- **Hosting:** Cloudflare + Coolify (self-hosted deployment platform)
+- **Footer repository link:** [github.com/fabricioctelles/skills](https://github.com/fabricioctelles/skills)
+- **Source caveat:** the current public tree of that repository contains the
+  skills registry but no Astro application/page sources. The deployed site's
+  source repository and hosting pipeline are therefore unverified.
 - **Analytics:** Plausible Analytics (self-hosted in Brazil) + Google Analytics 4
 - **Search:** Client-side search (⌘K bar) — likely Pagefind or similar
 - **License:** MIT (site content), Apache 2.0 (repo)
@@ -561,7 +578,9 @@ skills/
 └── og-image.png
 ```
 
-The okf.md website is built from this same repo using Astro + Starlight (the docs pages at /spec, /quickstart, /examples, /tools, /ecosystem-map, /faq, /validator, /skill, /terms, /privacy are Starlight-generated from markdown files).
+The rendered pages are consistent with Astro/Starlight, but the assertion that
+they are built from the public `fabricioctelles/skills` repository is not
+supported by its current tree.
 
 ### Portuguese Localization:
 - `/termos/` — Portuguese terms of use (Brazilian law, São Paulo jurisdiction)
@@ -577,7 +596,7 @@ The okf.md website is built from this same repo using Astro + Starlight (the doc
 - [GoogleCloudPlatform/knowledge-catalog/tree/main/okf](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) — OKF tooling (enrichment agent, visualizer)
 - [GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/toolbox/mdcode) — kcmd CLI source
 - [cloud.google.com/products/knowledge-catalog](https://cloud.google.com/products/knowledge-catalog) — GCP Knowledge Catalog product page
-- [GitHub — fabricioctelles/skills](https://github.com/fabricioctelles/skills) — Site source + agent skills repo
+- [GitHub — fabricioctelles/skills](https://github.com/fabricioctelles/skills) — footer-linked agent skills repository; not verified as deployed site source
 
 ### Community Tools
 - [github.com/superops-team/okf](https://github.com/superops-team/okf) — Go CLI for Git-based knowledge bases
@@ -610,7 +629,9 @@ The okf.md website is built from this same repo using Astro + Starlight (the doc
 - [medium.com/@AgentFitech](https://medium.com/@AgentFitech/google-just-standardized-how-ai-agents-read-the-web-heres-how-we-shipped-it-in-a-day-6bbfd3024320) — AgentFitech launch post
 - [kb.duyet.net](https://kb.duyet.net/m/tech-okf-open-knowledge-format) — Duyet's knowledge base conversion
 - [ontologist.substack.com/p/the-format-convergence](https://ontologist.substack.com/p/the-format-convergence) — W3C Holon CG / DataBook proposal
-- [blog.prototypr.io/googles-okf-comes-to-the-origintrail-dkg-a-memory-ai-agents-can-trust-43c6d87e1de8](https://blog.prototypr.io/googles-okf-comes-to-the-origintrail-dkg-a-memory-ai-agents-can-trust-43c6d87e1de8) — OriginTrail integration
+- `https://blog.prototypr.io/googles-okf-comes-to-the-origintrail-dkg-a-memory-ai-agents-can-trust-43c6d87e1de8`
+  — OriginTrail integration article; 403 to automated link checking on
+  2026-07-26
 - [tropes.fyi](https://tropes.fyi) — AI writing pattern directory
 - [www.theregister.com/2026/02/16/semantic_ablation_ai_writing/](https://www.theregister.com/2026/02/16/semantic_ablation_ai_writing/) — Semantic ablation article
 - [www.youtube.com/watch?v=0vphxNt4wyk](https://www.youtube.com/watch?v=0vphxNt4wyk) — Philipp Schmid "Don't Ship Skills Without Evals"
@@ -628,7 +649,8 @@ The okf.md website is built from this same repo using Astro + Starlight (the doc
 
 ### SaaS / External Tools
 - [skent.com](https://www.forentrepreneurs.com/saas-metrics-2/) — David Skok SaaS metrics
-- [www.lennysnewsletter.com](https://www.lennysnewsletter.com/p/what-is-good-retention-rate) — Lenny Rachitsky on churn
+- `https://www.lennysnewsletter.com/p/what-is-good-retention-rate` — link
+  captured from the site; returned 404 when rechecked on 2026-07-26
 - [hbr.org/2003/12/the-one-number-you-need-to-grow](https://hbr.org/2003/12/the-one-number-you-need-to-grow) — HBR NPS article
 - [docs.astro.build/en/guides/routing/](https://docs.astro.build/en/guides/routing/) — Astro routing
 - [docs.astro.build/en/guides/content-collections/](https://docs.astro.build/en/guides/content-collections/) — Astro content collections

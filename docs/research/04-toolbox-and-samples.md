@@ -10,7 +10,10 @@ This repository serves **two distinct but related products** under one roof:
 1. **Google Cloud Knowledge Catalog (formerly Dataplex)** — a Google Cloud service for AI-powered data cataloging and metadata management. The `toolbox/` and `samples/` directories serve this platform.
 2. **Open Knowledge Format (OKF)** — a vendor-neutral open specification for representing knowledge as plain markdown files with YAML frontmatter. The `okf/` directory contains the spec, reference implementation, and example bundles.
 
-The OKF specification is explicitly designed to be **universal and not tied to any agent, framework, model provider, or serving system**. The Knowledge Catalog service happens to be one system that can both produce and consume OKF bundles.
+The OKF specification is explicitly designed to be **universal and not tied to
+any agent, framework, model provider, or serving system**. This repository
+contains a demo-specific OKF-to-Knowledge-Catalog adapter; that is narrower
+evidence than a general product-level import/export contract.
 
 ---
 
@@ -18,11 +21,15 @@ The OKF specification is explicitly designed to be **universal and not tied to a
 
 **Location**: `toolbox/`
 
-The toolbox provides development and operational tools for working with Google Cloud Knowledge Catalog metadata. It contains two sub-projects, both written in TypeScript and distributed as npm packages:
+The toolbox provides development and operational tools for working with Google
+Cloud Knowledge Catalog metadata. It contains two TypeScript source packages.
+Both have npm-style `package.json` manifests and compile to local binaries, but
+neither `kcmd` nor `kcagent` was present in the public npm registry when checked
+on 2026-07-26.
 
 ### 1. Metadata as Code (`toolbox/mdcode/`)
 
-**Package**: `kcmd` (npm)  
+**Source package / binary**: `kcmd` (`toolbox/mdcode/package.json`; build from source)
 **Purpose**: Source-code-artifact-based UX for metadata management and context engineering in Knowledge Catalog.
 
 #### Key Capabilities
@@ -76,11 +83,13 @@ publishing:
 #### MCP Server Tools
 | Tool | Description |
 |------|-------------|
-| `pull` | Pull latest metadata from the Catalog service |
-| `push` | Push modified metadata to the Catalog service |
 | `list-entries` | List entries in the catalog snapshot |
 | `lookup-entry` | Lookup an entry and its metadata |
 | `modify-entry` | Modify an entry and its metadata |
+
+**Evidence (2026-07-26):** `toolbox/mdcode/src/tool/mcp.ts` contains exactly
+three `registerTool(...)` calls, for the tools above. `pull` and `push` are CLI
+commands implemented in `src/tool/commands.ts`; they are not MCP tools.
 
 #### Dependencies
 - `@modelcontextprotocol/sdk` ^1.29.0 — MCP server implementation
@@ -104,7 +113,9 @@ toolbox/mdcode/src/
 
 ### 2. Enrichment Agent (`toolbox/enrichment/`)
 
-**Package**: `kcagent` (npm)  
+**Source package / binary**: `kcagent`
+(`toolbox/enrichment/package.json`; build from source, not published on npm as
+of 2026-07-26)
 **Purpose**: Customizable agentic workflow for extracting information from various sources to build metadata about data assets, usable as agent context.
 
 #### Key Capabilities
@@ -160,14 +171,23 @@ Provides three tools for working with a markdown knowledge base directory:
 
 ### How Toolbox Relates to OKF
 
-The toolbox does **not** directly operate on OKF format. It operates on Google Cloud Knowledge Catalog metadata represented in a proprietary YAML/Markdown format. However, there are conceptual parallels:
+The generic toolbox does **not** directly operate on OKF format. It operates on
+Google Cloud Knowledge Catalog metadata represented in a catalog-specific
+YAML/Markdown layout. The repository separately includes
+`toolbox/mdcode/demo/okf/`, whose adapter maps a bounded subset of OKF through a
+custom Dataplex aspect.
 
 - Both use YAML frontmatter + Markdown body structure
 - Both organize knowledge hierarchically in directories
 - Both enable local/offline authoring with version control
 - The `md-fileset` MCP server could feasibly be used to serve OKF bundles as a tool for agents
 
-The `mdcode` directory entry format is a **service-specific serialization format** for Knowledge Catalog/Dataplex entries; OKF is a **universal, vendor-neutral format** for knowledge representation. They share a philosophy but serve different scopes.
+The demo preserves the Markdown body plus `title`, `description`, `tags`,
+`resource`, `type`, `generated.{by,at}`, and
+`sources[].{id,resource,title}`. Its source does not map `verified`, `status`,
+`stale_after`, source credibility fields, computation fields, or arbitrary
+extension keys. Therefore “lossless round-trip” applies to that demo's mapped
+subset, not to every conformant v0.2 document.
 
 ---
 

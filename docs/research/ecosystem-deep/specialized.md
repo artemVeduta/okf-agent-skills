@@ -1,23 +1,30 @@
 # OKF Ecosystem — Specialized & Smaller Projects: Deep Investigation
 
-> Research date: 2026-07-25. OKF v0.1 spec (June 12, 2026) by Sam McVeety & Amir Hormati, Google Cloud.
+> Research corrected 2026-07-26. Evidence comes from primary repositories,
+> package metadata, and official specs; inference is labeled.
 
 ---
 
-## 1. Inkeep Open Knowledge (`github.com/inkeep/open-knowledge`)
+## 1. Inkeep OpenKnowledge (`github.com/inkeep/open-knowledge`)
 
 ### Repository
 - **URL**: https://github.com/inkeep/open-knowledge
-- **Stars**: 3,100+
-- **Commits**: 1,294 (as of July 2026)
 - **License**: GPL-3.0
 - **Language**: TypeScript (monorepo: pnpm workspaces, Turborepo, Biome, Oxlint)
 - **Packages**: `@inkeep/open-knowledge` (npm, the CLI + web app)
+- **Version snapshot**: GitHub release v0.39.4 (2026-07-24); npm stable tag
+  0.38.4 when checked 2026-07-26
 - **Website**: https://openknowledge.ai
 - **macOS app**: https://openknowledge.ai/download/stable
 
 ### What It Does
-OpenKnowledge is a beautiful, AI-native WYSIWYG markdown IDE and knowledge base editor. It provides a Notion/Google Docs-like editing experience over plain markdown files, integrates with Claude, Codex, OpenCode, Cursor, Pi, and other agent harnesses via MCP and CLI, and supports full knowledge management workflows — LLM wikis, codebase wikis, spec writing, meeting ingestion, and entity vaults. It is private, local-first, and free.
+OpenKnowledge is a general-purpose Markdown IDE and LLM-wiki editor, not an
+OKF-only application. It integrates with agent harnesses through MCP/CLI and
+includes an optional OKF v0.1 starter pack.
+
+**Evidence:** The pack's own skill says conformance is “pre-populated, not
+enforced”; repository tests verify the seeded files. The editor does not become
+a continuous OKF validator merely because the starter pack exists.
 
 ### Installation
 
@@ -476,7 +483,6 @@ The knowledge base appears to have been converted from Duyet's existing markdown
 - **License**: Apache-2.0
 - **Language**: TypeScript
 - **Dependencies**: 3
-- **Weekly Downloads**: 319
 
 ### What It Does
 A deterministic, pure (no LLM, no network) mapper from OKF bundles to OriginTrail Decentralized Knowledge Graph (DKG) Knowledge Assets. OKF standardizes *how* knowledge is written and exchanged (portable Markdown + YAML frontmatter + cross-links) but ships no verification, provenance, or ownership layer. This package bridges that gap: converts each concept file into an owned, verifiable RDF Knowledge Asset, reconstructing the bundle's cross-concept link graph. The same bundle always yields identical triples and IRIs.
@@ -648,7 +654,6 @@ databook validate <file>  # SHACL validation
 - **License**: Apache-2.0
 - **Dependencies**: 0
 - **Dependents**: 0
-- **Weekly Downloads**: 12
 
 ### What It Does
 **Placeholder — "Coming soon."** The npm page contains only: "Multi-writer OKF (Open Knowledge Format) bundles. Coming soon."
@@ -672,7 +677,6 @@ Given indexzero's background in distributed systems (invented `winston`, `foreve
 - **License**: MIT
 - **Language**: TypeScript (built with tsup)
 - **Dependencies**: 16 (LangChain, Zod, etc.)
-- **Weekly Downloads**: 56
 
 ### What It Does
 OKFgen generates portable OKF v0.1 bundles from documentation, schemas, source code, and URLs using LangChain with swappable model providers (Nebius, OpenRouter, Ollama, OpenAI, Anthropic). It supports both one-shot generation and incremental updates of existing bundles, plus validation, linting, and an interactive graph viewer.
@@ -820,7 +824,6 @@ payments-okfgen/
 - **License**: MIT
 - **Language**: TypeScript
 - **Dependencies**: 8
-- **Weekly Downloads**: 155
 
 ### What It Does
 CLI and Agent toolkit for creating, validating, searching, and visualizing OKF knowledge bundles. Converts document corpora into structured concept graphs, audits their integrity, and explores them through an interactive Viewer Workbench. Pure mechanical execution — no LLM required for CLI operations. Pinned versioned sources produce deterministic, reproducible output.

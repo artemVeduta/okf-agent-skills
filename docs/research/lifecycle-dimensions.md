@@ -3,6 +3,18 @@
 > Research into state-of-the-art patterns for lifecycle management of agent-facing knowledge.
 > Prepared for the OKF skill suite design.
 
+### Claim labels
+
+- **Evidence** — directly supported by a cited primary source or repository artifact.
+- **Inference** — interpretation of evidence, not a source's normative rule.
+- **Candidate default** — a proposed starting policy or number requiring representative fixture benchmarks.
+- **Decision required** — unresolved semantics that implementation must not guess.
+
+All numeric limits, thresholds, TTLs, similarity scores, depths, word/token
+counts, and retention periods in this report are candidate benchmark inputs,
+not validated defaults. Zettelkasten counts are anecdotal observations from a
+particular practitioner's vault.
+
 ---
 
 ## 1. Concept Depth
@@ -27,14 +39,17 @@ building blocks from source), Intermediate (purpose-built transformation
 steps), and Marts (business-defined entities). The key insight: "stacking our
 transformations in optimized, modular layers means we can apply each
 transformation in only one place" [docs.getdbt.com, "How we structure our dbt
-projects"]. Deep nesting beyond 3-4 levels is considered a smell indicating
-need for refactoring.
+projects"]. The cited dbt layering model does not establish a general
+3–4-level OKF limit. Any such limit is a candidate default requiring fixtures.
 
 Google's **design doc** practice advises: "The sweet spot for a larger project
 seems to be around 10-20ish pages. If you get way beyond that, it might make
 sense to split up the problem into more manageable sub problems." Short "mini
 design docs" of 1-3 pages are explicitly encouraged for incremental work
 [industrialempathy.com, "Design Docs at Google"].
+
+These page counts are one author's practice report, not validated OKF limits.
+They belong in fixtures only.
 
 The **ADR community** (Nygard, adr.github.io) enforces one decision per record:
 "Each ADR should be about one AD, not multiple ADs" — a direct parallel to
@@ -54,8 +69,8 @@ docs with inline SQL for multiple figures; v0.2 decomposes into composable
 narrative concept (`type: Metric`) linking to both. The spec notes: "Because
 each computation is its own concept, revenue can be fresh while profit is past
 its `stale_after`, and each attests on its own run" [02-okf-v02-spec.md:
-§13.2]. This demonstrates an emergent depth heuristic: **split when
-lifecycle/trust signals need to diverge**.
+§13.2]. **Inference:** this suggests a candidate heuristic: consider a split
+when lifecycle or trust signals need to diverge.
 
 ### (c) Gaps
 
@@ -79,19 +94,19 @@ No guidance exists for:
 
 ### (d) Code-backed vs Knowledge-only
 
-**Code-backed**: Concepts should be thin wrappers around code artifacts —
+**Code-backed candidate:** Concepts may be thin wrappers around code artifacts —
 schema descriptions, architectural rationale, metric definitions. The code is
 authoritative; the concept records *why* and *what context cannot be
 recovered*. Depth map: table-level concepts (schema, query patterns) are the
 atom; dataset-level concepts aggregate them; architectural decisions sit at a
-third level. Three levels depth is typical.
+third level in this proposed model. Three levels is not an evidence-backed limit.
 
 **Knowledge-only**: Concepts are the primary artifact. Deeper nesting may be
 warranted because knowledge is structured for human/agent navigation, not
 mirroring a code structure. However, the Zettelkasten lesson applies: **favor
 lateral links over deep hierarchy**. When concepts form a dense graph of
-cross-references, directory depth beyond 3-4 levels should raise a compaction
-flag.
+cross-references. **Candidate default:** benchmark directory-depth warnings,
+including 3–4 levels, before selecting a production trigger.
 
 ---
 
@@ -163,7 +178,8 @@ glossary definition [02-okf-v02-spec.md: §4.1].
 
 ### (d) Code-backed vs Knowledge-only
 
-**Code-backed**: Code is the primary glossary. OKF should only capture terms
+**Code-backed candidate:** Treat code as a primary terminology source and
+capture terms
 where the codebase meaning is ambiguous or the rationale for naming is
 non-obvious. Drift between code and glossary is detected at code-review time by
 a skill that checks: "Does this PR introduce a new term? If so, does it have a
@@ -171,11 +187,10 @@ corresponding or updated OKF entry?" The okforge "Stop-hook nudge" pattern
 (remind when source changes but docs don't) maps directly here
 [ecosystem-deep/skills.md: okforge].
 
-**Knowledge-only**: The glossary IS the authoritative vocabulary. Every term
-must have a definition. The glossary is a dense sub-graph of highly
-cross-referenced concepts. Index regeneration should treat glossary entries
-specially (always listed, never collapsed) and auto-detect when a concept is
-referenced by >N other concepts (it is de facto a glossary term).
+**Knowledge-only candidate:** A curated glossary may be authoritative.
+Definition coverage and special index treatment require fixture evaluation.
+Cross-link count `N` is an unselected candidate threshold, not proof that a
+concept is a glossary term.
 
 ---
 
@@ -248,17 +263,16 @@ heading, creates `log.md` if absent, supports per-subdirectory log files
 
 ### (d) Code-backed vs Knowledge-only
 
-**Code-backed**: `log.md` should be auto-generated and minimal. Git commit
+**Code-backed candidate:** Evaluate a minimal generated `log.md`. Git commit
 history is the primary log; `log.md` serves as a human-readable summary of
-notable changes. A skill should generate log entries from commit messages
+notable changes. A skill could generate log entries from commit messages
 matching a pattern (e.g., `okf: Updated concept tables/users`). The Hermes-OKF
 model of structured commit prefixes (`[session]`, `[decision]`, `[plan]`) is
-the right pattern [ecosystem-deep/skills.md: HermesOKF].
+one design premise [ecosystem-deep/skills.md: HermesOKF].
 
-**Knowledge-only**: `log.md` IS the primary change history. Every modification
-to a concept must produce a log entry with a reference to the concept ID. The
-log is the audit trail. Per-directory logs are appropriate for large bundles;
-a root-level `log.md` aggregates significant cross-cutting changes.
+**Knowledge-only decision required:** Choose whether `log.md` or version
+history is authoritative, which events require entries, and log granularity.
+The proposed per-change concept reference is a candidate default.
 
 ---
 
@@ -341,19 +355,20 @@ Key design decisions:
 
 ### (d) Code-backed vs Knowledge-only
 
-**Code-backed**: Sources are primarily code artifacts (file paths, commit
+**Code-backed candidate:** Sources are primarily code artifacts (file paths, commit
 hashes, API reference URLs). The `sources[].resource` is typically a
-repo-relative path or permalink. A skill should auto-populate `sources` from
-`git blame` of the code that motivated the concept. The okforge
-"folder-to-source mapping" (`.okforge.config.json`) is the right pattern:
-declare which source files a concept is derived from, enabling stale detection
+repo-relative path or permalink. `git blame` can suggest line attribution but
+does not prove conceptual derivation, so automatic provenance requires review.
+The okforge "folder-to-source mapping" (`.okforge.config.json`) is one pattern
+to fixture-test for declaring relevant source files and staleness signals
 [ecosystem-deep/skills.md: okforge].
 
 **Knowledge-only**: Sources are external references (URLs, books, papers,
 interviews). Provenance is more important because there is no code to serve as
 ground truth. The "four-gate test" from the reference agent's web pass
 (referenceable entity, non-bundle-meta, supports concrete citation, reusable by
-2+ concepts) is the right filter for source quality
+2+ concepts) is a **candidate default**, not a validated filter; its reuse
+count and quality outcomes require fixture benchmarks
 [03-reference-agent.md: Web Pass].
 
 ---
@@ -432,17 +447,17 @@ the future? ... Fields are defined independently with no interaction semantics"
 
 ### (d) Code-backed vs Knowledge-only
 
-**Code-backed**: Freshness should be derived from git history, not absolute
-dates. A skill should compute staleness as: "has the source code this concept
-describes changed since this concept was last modified?" The okforge
-`okforge stale` command pattern is the right model
+**Code-backed candidate:** Use git history as a review signal rather than
+deriving semantic staleness directly. A source change can be irrelevant and
+drift can occur without a mapped file change. The okforge
+`okforge stale` command is one pattern to fixture-test
 [ecosystem-deep/skills.md: okforge CLI]. `stale_after` is a fallback for
 concepts that describe external systems or business logic not visible in code.
 
-**Knowledge-only**: Absolute dates are more appropriate because there is no
-code signal for freshness. `stale_after` should be set aggressively (30-90
-days) with a skill that periodically prompts for review. The Wikipedia model
-(human-assigned freshness flags) is more appropriate than automated detection.
+**Knowledge-only candidate:** Absolute dates can supply a review signal where
+there is no code signal. Benchmark intervals, including 30–90 days, against
+source volatility and review cost. Human-assigned flags and automation each
+need false-positive/false-negative evaluation.
 
 ---
 
@@ -497,7 +512,8 @@ Key properties:
 
 The reference agent's `write_concept_doc()` auto-fills `generated: {by, at}`
 but does not auto-fill `verified`. This means all auto-generated content starts
-as `unverified` — a correct default.
+as `unverified` — an observed spec-aligned starting state, not validation of
+an operational approval policy.
 
 ### (c) Gaps
 
@@ -530,20 +546,14 @@ as `unverified` — a correct default.
 
 ### (d) Code-backed vs Knowledge-only
 
-**Code-backed**: Trust tiers are less critical because code is authoritative.
-Agent modifications should follow the PR model: propose changes in a branch,
-request human review via PR, merge on approval. The git workflow IS the
-approval mechanism. The skill suite should provide a `propose` operation that
-creates a branch with proposed OKF changes and opens a PR, rather than writing
-directly to `main`.
+**Code-backed candidate:** A PR can carry review evidence, but merge status
+does not automatically equal concept verification and repositories vary. Test
+a proposal workflow without assuming Git hosting or authorization to open PRs.
 
-**Knowledge-only**: Trust tiers ARE the authority. A concept at `unverified`
-carries significantly less weight than `human-reviewed`. The skill suite should
-enforce tier-gated operations: agents can create concepts at `unverified`,
-promote to `machine-confirmed` by running validation, but cannot promote to
-`human-reviewed` — only a human actor can add that verification event. The
-`status: draft → stable` transition should require at minimum
-`machine-confirmed` trust.
+**Knowledge-only decision required:** Define how advisory trust tiers affect
+operations without contradicting the spec's requirement that unverified
+concepts remain consumable. Human-only `human-reviewed` events follow the
+actor-prefix rule; any gate on `draft → stable` is a candidate policy.
 
 ---
 
@@ -592,10 +602,10 @@ This is a navigation pattern, not a growth-management pattern.
 
 ### (c) Gaps
 
-- **No bundle size thresholds**: at what point does a bundle become too large
-  for an agent's context window? A threshold of ~100K tokens (roughly 50-75
-  dense concepts) is a practical constraint, but OKF has no concept of this
-  limit.
+- **No bundle size thresholds**: usable context varies by model, product
+  surface, tool results, conversation state, and concept density. Candidate
+  fixtures at 100K tokens and 50–75 concepts may be useful, but they are not a
+  fixed or generally practical limit.
 - **No deduplication**: if two agents independently create concepts describing
   the same thing, there is no mechanism to detect or resolve the duplication.
 - **No merge/split tooling**: the spec defines no operations on the bundle
@@ -603,8 +613,8 @@ This is a navigation pattern, not a growth-management pattern.
   and splitting a concept into children (creating stub parents) are undefined.
 - **No "noise" detection**: concepts that are never linked to, never read, and
   past `stale_after` are dead weight. No mechanism identifies or surfaces them.
-- **No auto-summarization**: when a directory has 20+ children, the `index.md`
-  list becomes unwieldy. The LLM synthesis from the reference agent's
+- **No auto-summarization**: candidate fixtures should test directories with
+  20 or more children rather than assuming the list is unwieldy. The LLM synthesis from the reference agent's
   `synthesizer.py` is a stitched one-sentence summary — useful but fragile.
 
 ### (d) Code-backed vs Knowledge-only
@@ -666,6 +676,14 @@ is entirely unspecified.
   concept? Should they be rewritten? Should a redirect concept be left in
   place? The spec says consumers MUST tolerate broken links — but preserving
   navigation during merge requires explicit redirect support.
+- **Path identity conflict**: existing analysis sometimes treats a
+  bundle-relative path as the concept ID, yet archive/move/merge operations
+  change that path. Identity cannot simultaneously be path-bound and stable
+  across relocation without alias or redirect semantics.
+- **No split semantics**: it is undefined whether the original becomes a
+  parent, redirect, alias, or deprecated shell; how statements and inbound
+  links map to children; how trust and provenance divide; and how a split is
+  reversed.
 - **No summarization patterns**: when a verbose concept body should be
   compacted, what is the target length? What structure should a summary
   preserve? There is no `# Summary` conventional heading.
@@ -682,6 +700,12 @@ is entirely unspecified.
   `human-reviewed` concepts may be auto-compacted, and only to produce
   `unverified` summaries that must be promoted.
 
+**Decision required:** Specify immutable identity versus path identity,
+resolution/routing, aliases, redirect-chain/cycle behavior, broken targets,
+inbound-link rewriting, source/target trust, provenance/log events, and
+rollback for both merge and split. Wikipedia redirects are evidence of one
+system's policy, not validation of an OKF redirect format.
+
 ### (d) Code-backed vs Knowledge-only
 
 **Code-backed**: Compaction is rarely needed. Concepts are thin wrappers; if
@@ -689,12 +713,11 @@ code changes, update the concept. If code is deleted, archive the concept. The
 primary compaction operation is archiving concepts whose code sources are
 removed.
 
-**Knowledge-only**: Compaction is essential for long-term health. The skill
-suite should provide: (a) merge-similar (detect overlapping concepts,
-propose merge with redirect), (b) summarize-directory (create a meta-concept
-from a directory's children, leaving children in place but adding
-"summarized-by" links), (c) archive-stale (move concepts past `stale_after` +
-grace period to `archive/`).
+**Knowledge-only candidate:** Fixture-test merge proposals and directory
+summaries without mutating originals. Archive relocation is blocked until path
+identity and redirects are decided. Every risky compaction requires dry-run,
+verified snapshot/backup, tested restore, explicit approval, and post-operation
+link/provenance validation.
 
 ---
 
@@ -722,9 +745,10 @@ archive location. No metadata changes, just relocation.
 concepts: moved from the active directory to an archive subdirectory,
 preserving all metadata [ecosystem-deep/skills.md: HermesAgent].
 
-**Git** itself provides implicit archival: deleted files remain in history. The
-`git archive` command can produce a snapshot of the bundle at any point. This
-is the ultimate fallback: nothing is truly lost.
+**Git** preserves deleted files only when they existed in retained commits.
+`git archive` exports a tree snapshot; it does not preserve commit history,
+refs, reflogs, or uncommitted content. It is therefore an export mechanism,
+not an ultimate recovery guarantee.
 
 ### (b) OKF v0.2 Status
 
@@ -763,19 +787,15 @@ properties:
 
 ### (d) Code-backed vs Knowledge-only
 
-**Code-backed**: Archiving should follow the code's lifecycle. If the code
-entity is removed, the concept moves to `archive/` or gets `status:
-deprecated`. Git history preserves everything. The `archive/` convention is
-appropriate because it reduces noise in active directories while keeping
-content accessible.
+**Code-backed candidate:** Archiving can follow the code lifecycle, but moving
+a concept changes a path-based identity and may break links. Git preserves
+committed history only while the relevant objects and repository/backup remain.
+In-place deprecation versus relocation is a **decision required** choice.
 
-**Knowledge-only**: Archiving needs more ceremony. Deprecation should require a
-reason, a superseding concept reference, and a retention period. A skill
-should automatically: (a) detect concepts past `stale_after` + 90 days with no
-inbound links → propose archival, (b) update `index.md` to hide archived
-concepts by default with a "show archived" toggle, (c) maintain a
-`references/deprecations.md` index mapping deprecated concepts to their
-successors.
+**Knowledge-only candidate:** Archival may require a reason, successor, and
+retention policy. Benchmark candidate detection such as `stale_after` plus 90
+days and zero inbound links; it must only propose, never move automatically.
+Index visibility and a deprecation map are **decision required** semantics.
 
 ---
 
@@ -783,9 +803,11 @@ successors.
 
 ### (a) Community Patterns
 
-**Git** is the baseline: every change is versioned, `git revert` undoes
-mistakes, `git reflog` recovers deleted branches. For file-based knowledge,
-git provides strong loss prevention out of the box. The OKF README acknowledges
+**Git** versions committed changes. `git revert` records a new inverse commit;
+it does not erase or universally undo arbitrary working-tree state. Reflogs are
+local logs of ref updates, expire (with shorter defaults for unreachable
+entries), and do not protect objects forever from pruning. Recovery of a
+deleted branch is conditional, not guaranteed. The OKF README acknowledges
 this: "Pull requests, line-by-line diffs, blame, and review workflows just
 work" [02-okf-v02-spec.md: Design Principles].
 
@@ -825,10 +847,10 @@ repositories:
 
 ### (c) Gaps
 
-- **Is git sufficient?** For code-backed projects where developers are
-  git-savvy, yes. For knowledge-only projects where non-technical users
-  contribute, no. The skill suite should provide an `undo` operation that wraps
-  `git revert` with user-friendly messaging.
+- **Is git sufficient? — Decision required:** Sufficiency depends on whether
+  state was committed, what loss scenarios are in scope, remote/backup
+  independence, retention, and tested restore—not on code-backed versus
+  knowledge-only classification alone.
 - **No soft-delete**: a concept accidentally removed from the filesystem is
   recoverable via git, but only if the user knows to look there. A
   `.trash/` convention or a skill-level `recover` command would provide a
@@ -844,22 +866,24 @@ repositories:
   information. The spec's trust tier model should gate destructive operations:
   only `human-reviewed` operations may delete or significantly reduce concept
   bodies.
-- **No backup verification**: no convention for verifying that git backups are
-  intact. A skill-level `verify-backup` operation could check that `git fsck`
-  passes and all expected files exist.
+- **No backup verification**: `git fsck` can check repository connectivity but
+  does not prove a backup contains every expected ref/file or can be restored.
+  A backup protocol must verify the artifact (for example, `git bundle
+  verify` where applicable), restore into a disposable location, and compare
+  expected refs and files.
 
 ### (d) Code-backed vs Knowledge-only
 
-**Code-backed**: Git is sufficient. The skill suite should rely on git
-operations (`git revert`, `git log`, `git diff`) for loss prevention. The
-Hermes-OKF pattern of structured commit messages by operation type is the
-right addition.
+**Code-backed candidate:** Use Git diffs/history for committed-state inspection
+and pair them with independently verified backup/restore appropriate to the
+threat model. Structured commit messages are a design premise, not validation
+evidence.
 
-**Knowledge-only**: Git is necessary but not sufficient. The skill suite should
-add: (a) a `.trash/` convention with 30-day auto-purge, (b) an `okf undo`
-command that lists recent operations and reverts them, (c) a `--dry-run` flag
-on all destructive operations, (d) automatic `git commit` before any automated
-compaction or archival run.
+**Knowledge-only candidate:** Evaluate a trash/undo UX and require dry-run for
+destructive operations. A 30-day purge is an unvalidated candidate and must
+not run automatically until recovery fixtures pass. An automatic commit is not
+a backup: migration, compaction, archive, and purge require a verified snapshot
+or backup plus a tested restore.
 
 ---
 
@@ -931,9 +955,10 @@ programmatic retrieval API for agents.
   all frontmatter for tag/title matches, (b) do full-text search on concept
   bodies, or (c) use an external embedding/RAG system. The format provides no
   retrieval assistance.
-- **No context-window budget management**: an agent with 100K token context
-  window can hold ~50 dense concepts. But there is no mechanism to say "these
-  are the most important 50 concepts in this bundle." `index.md` provides
+- **No context-budget management**: model and product windows vary, and tool
+  output plus conversation history consume them. A 100K-token/50-concept
+  fixture is one benchmark point, not a fixed capacity. There is no mechanism
+  to rank a budgeted subset. `index.md` provides
   summaries, but no priority signal.
 - **No retrieval relevance feedback**: when an agent reads a concept and finds
   it irrelevant, there is no way to record "this concept is not relevant for
@@ -971,10 +996,51 @@ filename), tag overlap, cross-link density, and semantic similarity.
 
 ---
 
+## 12. Migration
+
+### (a) Evidence from platform migrations
+
+Codex documents a dedicated import flow from Claude Code and Claude Cowork.
+Claude Code's `/init` can inspect selected Cursor, Copilot, `AGENTS.md`,
+Devin/Windsurf, and Cline sources. Cursor and Windsurf document transitions
+from legacy rule locations. These are product-specific conversions; none is a
+shared OKF migration protocol or proof of semantic equivalence.
+
+### (b) OKF v0.2 status and gaps
+
+The format's filesystem portability makes copying possible, but copying is not
+migration semantics. There is no migration manifest, source precedence,
+identity mapping, routing/redirect model, conflict report, schema-version
+transform, trust/provenance policy, merge/split mapping, idempotency rule, or
+rollback protocol.
+
+### (c) Decision required
+
+Define:
+
+- whether concept identity is immutable metadata or bundle-relative path;
+- routing after rename/move and alias/redirect chain, cycle, and failure rules;
+- collision handling and merge/split semantics;
+- whether source trust, verification events, timestamps, and provenance carry
+  forward or reset;
+- deterministic manifests, idempotent re-runs, and validation criteria.
+
+### (d) Candidate safety protocol
+
+Every migration must first emit a dry-run inventory and conflict manifest.
+Before live writes, create a snapshot or full backup, verify it, restore it
+into a disposable location, and compare expected refs/files. After migration,
+validate identities, links, redirects, provenance, and conflicts. Retain the
+rollback artifact until explicit acceptance. These are candidate controls to
+test with fixtures, not claims about existing platform guarantees.
+
+---
+
 ## Priority Gaps
 
-Ranked by urgency for the skill suite design — these gaps must be resolved
-first because other design decisions depend on them:
+**Candidate ordering:** The following gaps should be resolved before risky
+automation because other design choices depend on them. The ordering is a
+design premise, not empirical validation.
 
 ### 1. Operational trust tier model (Approvals and Notices — gap 6c)
 
@@ -997,13 +1063,10 @@ optional `derived_from` or `source_files` field, and the skill suite needs a
 
 ### 3. Retrieval model within context window constraints (Retrieval — gap 11c)
 
-Agents have fixed context windows (100K–200K tokens). Without a retrieval
-model, either: (a) too many concepts are loaded, wasting tokens on irrelevant
-knowledge, or (b) too few are loaded, missing critical context. The design
-must address: what is the default retrieval breadth? How does progressive
-disclosure map to token budgets? Should concepts carry an `importance` or
-`priority` field? This decision affects every operation the skill suite
-performs.
+Available context is bounded but not fixed across agents, models, or product
+surfaces; 100K–200K-token fixtures are candidate benchmarks only. The design
+must address configurable retrieval breadth, tool/conversation overhead,
+progressive disclosure, and whether an importance signal is justified.
 
 ### 4. Merge and split semantics (Compaction — gap 8c)
 
@@ -1025,12 +1088,19 @@ Should indexes show them by default? A concrete `archive/` convention with
 metadata fields (`deprecation_reason`, `superseded_by`, `retain_until`) would
 unblock all freshness-dependent operations.
 
+### 6. Migration and path identity (Migration — gap 12c)
+
+**Decision required:** A migration cannot be safe until identity, routing,
+redirect, conflict, trust/provenance, merge/split, validation, and restore
+semantics are explicit. Path-as-ID conflicts directly with the proposed
+`archive/` relocation model.
+
 ---
 
 ## Bibliography
 
 - OKF v0.2 Specification. GoogleCloudPlatform/knowledge-catalog, `okf/SPEC.md`.
-  2026-06-30.
+  Migration commit 2026-07-24; official announcement 2026-07-25.
 - OKF Reference Agent. GoogleCloudPlatform/knowledge-catalog,
   `okf/src/reference_agent/`. 2026.
 - AWS Prescriptive Guidance. "Architectural Decision Record Process."
@@ -1053,3 +1123,8 @@ unblock all freshness-dependent operations.
 - Michael Nygard. "Documenting Architecture Decisions." thinkrelevance.com,
   2011.
 - OpenLineage. "About OpenLineage." openlineage.io.
+- Git. `git-reflog`, `git-archive`, `git-bundle`, `git-fsck`, and `git-gc`
+  documentation. https://git-scm.com/docs/
+- Matt Pocock. `writing-great-skills`, pinned upstream commit
+  `ed37663cc5fbef691ddfecd080dff42f7e7e350d`.
+  https://github.com/mattpocock/skills/tree/ed37663cc5fbef691ddfecd080dff42f7e7e350d/skills/productivity/writing-great-skills

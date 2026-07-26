@@ -9,7 +9,6 @@
 
 - **npm**: `@equationalapplications/core-okf` v4.22.0
 - **License**: MIT
-- **Weekly Downloads**: ~3,100
 - **Repository**: [equationalapplications/expo-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki) — `packages/okf/`
 - **Repo Stats**: 21 stars, monorepo (6+ packages)
 - **Language**: TypeScript
@@ -18,7 +17,8 @@
 
 ### What it does
 
-The most mature TS OKF library (v4.22.0). A **zero-dependency** set of pure functions for
+At the research snapshot this package was v4.22.0. It is a
+**zero-dependency** set of pure functions for
 serializing/parsing OKF frontmatter, building concept documents, generating `index.md` and
 `log.md` files, extracting markdown cross-links, and managing "Related" sections. It is a
 **builder/primitives** library — it does not read/write the filesystem, validate bundles, or
@@ -181,7 +181,6 @@ const log = buildLogMd([
 
 - **npm**: `js-okf` v0.3.1
 - **License**: MIT
-- **Weekly Downloads**: ~819
 - **Author**: Prabhay Gupta (prabhay759)
 - **Repository**: [prabhay759/js-okf](https://github.com/prabhay759/js-okf)
 - **Repo Stats**: 0 stars, 13 commits
@@ -384,7 +383,6 @@ await server.start();
 
 - **npm**: `okf-tool` v0.2.0
 - **License**: Apache-2.0
-- **Weekly Downloads**: ~322
 - **Author**: Han Fang (hanfang5057)
 - **Repository**: Listed as `hanfang/okf-tool` (404 on GitHub — likely private or renamed)
 - **Language**: TypeScript
@@ -729,7 +727,6 @@ console.log(validation.isValid, validation.issues);
 
 - **npm**: `@turbomem/okf` v1.0.0
 - **License**: Apache-2.0
-- **Weekly Downloads**: ~439
 - **Author**: Arneesh Aima (arneeshaima)
 - **Repository**: [turbomem/turbomem](https://github.com/turbomem/turbomem) — `packages/okf/`
 - **Repo Stats**: 6 stars, 153 commits, monorepo
@@ -933,7 +930,6 @@ await memory.init();
 
 - **npm**: `@sorane/okf` v0.5.0
 - **License**: MIT
-- **Weekly Downloads**: ~195
 - **Author**: masanork (GitHub Actions published, SLSA provenance)
 - **Repository**: [masanork/sorane](https://github.com/masanork/sorane) — `packages/okf/`
 - **Repo Stats**: 0 stars, 261 commits, monorepo
@@ -1271,7 +1267,6 @@ console.log("Bundle size:", bundle.length, "bytes");
 
 - **npm**: `okf-toolkit` v0.1.0
 - **License**: Apache-2.0
-- **Weekly Downloads**: ~152
 - **Author**: Ruben Lazarus (rubenlazarus)
 - **Repository**: Not listed on npm (may not be public on GitHub)
 - **Language**: TypeScript

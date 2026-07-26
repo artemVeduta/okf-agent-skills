@@ -1,23 +1,49 @@
 # Open Knowledge Format — Specification and Ecosystem Report
 
-> Deep primary-source investigation. All claims cite their origin.
+> Primary-source investigation, corrected 2026-07-26.
+>
+> **Evidence** = directly supported by the linked spec, source code, package
+> registry, or first-party article. **Inference** = interpretation of that
+> evidence. **Candidate** = ecosystem item or proposed policy not yet verified
+> or adopted. **Decision required** = a product choice that this research must
+> not make.
 
 ## 1. Executive Summary
 
 The **Open Knowledge Format (OKF)** is an Apache 2.0-licensed open specification for representing organizational knowledge as plain Markdown files with YAML frontmatter. Created by Sam McVeety and Amir Hormati (Data Analytics Engineering, Google Cloud) and announced June 12, 2026, OKF is designed for a world where knowledge corpora are "continuously written and maintained by agents" (02-okf-v02-spec.md: §1).
 
-The format is intentionally minimal: **one required field (`type`)**, two reserved filenames (`index.md`, `log.md`), three conformance rules. A bundle is a directory tree of `.md` files. That is the entire format. No SDK, no schema registry, no build step is required (01-okf-site-pages.md: Quickstart).
+The core bundle test is intentionally minimal: **one always-required field
+(`type`)**, two reserved filenames (`index.md`, `log.md`), and three structural
+conformance tests. Optional v0.2 field families add conditional requirements
+when used, and producers/consumers have further behavioral obligations. A
+bundle remains a directory tree of Markdown files; no SDK or build step is
+required (01-okf-site-pages.md: Quickstart; v0.2 §§4–11).
 
 **Two versions of the specification exist:**
 
 - **v0.1** (June 12, 2026): The minimal core — `type`, `title`, `description`, `resource`, `tags`, `timestamp`, body `# Citations`, three conformance rules. Documented on okf.md as "An Annotated Guide" and in the `okf/SPEC.md` history (08-okf-site-full.md: Spec page).
-- **v0.2** (June 30, 2026): Adds provenance (`sources` with credibility signals), trust (`generated`/`verified` → trust tiers), lifecycle (`status`/`stale_after`), Attested Computations, and an actor convention. The spec claims it's a "minor version bump" but introduces two deliberate breaking changes (`timestamp` → `generated.at`, `# Citations` → `sources`), with explicit v0.1 fallback rules (02-okf-v02-spec.md: §13.1).
+- **v0.2** (July 24, 2026): Adds provenance (`sources` with credibility signals), trust (`generated`/`verified` → trust tiers), lifecycle (`status`/`stale_after`), Attested Computations, and an actor convention. The release date is supported by the official Google Cloud v0.2 article and migration commit `780fe9d`; dates inside spec examples are not release metadata. The spec calls this a minor bump while identifying two deliberate breaking changes (`timestamp` → `generated.at`, `# Citations` → `sources`) with explicit v0.1 fallbacks (02-okf-v02-spec.md: §13.1).
 
-The **ecosystem** has grown rapidly: 22+ projects across Python, TypeScript, Go, Java, and PHP emerged within 6 weeks of the spec's publication. Key tools include `okflint` (the gold-standard deterministic linter), `superops-team/okf` (Go CLI for Git-aware bundle generation), `Kiso` (Java publishing engine), `LangChain OpenWiki` (13.2k stars, production-grade codebase → OKF wiki), and 20+ npm packages. Harrison Chase has endorsed OKF as "an OPEN standard for memory" (01-okf-site-pages.md: LangChain OpenWiki).
+**Evidence:** The audited ecosystem contains implementations across Python,
+TypeScript, Go, Java, and PHP. Examples include `okflint`,
+`superops-team/okf`, Kiso, LangChain OpenWiki, and several npm packages.
+Maturity and popularity are not inferred from unqualified labels such as
+“officially preferred,” asserted production readiness, or transient
+star/download counts.
 
-**Google Cloud Knowledge Catalog** (formerly Dataplex) is a sibling product from the same team — it can ingest and export OKF bundles, but OKF is explicitly vendor-neutral. Bundles work on any filesystem, with any static file server, in Obsidian, and with any LLM that can read text (05-google-cloud-kc.md).
+**Google Cloud Knowledge Catalog** (formerly Dataplex) is a sibling product from
+the same team. A repository demo maps a bounded OKF subset through a custom
+Dataplex aspect and back; this should not be generalized to arbitrary-field
+product import/export or MCP round-tripping. OKF itself is vendor-neutral
+(05-google-cloud-kc.md).
 
-**Key implications for a skill suite:** Build against v0.2 for trust/lifecycle signals while maintaining v0.1 fallback compatibility. The ecosystem lacks a unified multi-skill suite, automatic lifecycle implementation, and an MCP validation server — these are the primary opportunities (07-ecosystem-projects.md: Gaps).
+**Decision required:** **Choose the OKF conformance baseline, compatibility,
+and extension policy** must decide the v0.2 write target, v0.1 read/migration
+support, fallback fields, and extensions. Do not treat MCP validation as an
+unfilled gap:
+`@copperbox/okf-mcp` exposes `validate_bundle`, and `caedora-mcp` exposes
+`lint_bundle`. A new suite must differentiate itself on v0.2 semantics or
+cross-harness workflow rather than merely adding validation.
 
 ---
 
@@ -44,8 +70,8 @@ The **ecosystem** has grown rapidly: 22+ projects across Python, TypeScript, Go,
 
 | Filename | Purpose | Constraint |
 |----------|---------|-----------|
-| `index.md` | Directory listing (§8) | MUST NOT carry concept content; no frontmatter (except bundle-root for `okf_version`) |
-| `log.md` | Update history (§9) | MUST NOT carry concept content |
+| `index.md` | Directory listing (§6) | MUST NOT carry concept content; no frontmatter except the bundle-root version declaration allowed by §11 |
+| `log.md` | Update history (§7) | MUST NOT carry concept content |
 
 ```
 bundle/
@@ -72,7 +98,11 @@ Distribution formats: git repository (recommended), tarball/zip, subdirectory wi
 | `tags` | Recommended | YAML list of short strings |
 | `timestamp` | Recommended | ISO 8601 datetime |
 
-Extensions: producers MAY include any additional keys. Consumers MUST preserve unknown keys on round-trip and MUST NOT reject documents with unrecognized fields (02-okf-v02-spec.md: §4.1).
+Extensions: producers MAY include any additional keys. In v0.2, consumers
+SHOULD preserve unknown keys when round-tripping and MUST NOT reject documents
+with unrecognized fields (§4.1). The okf.md v0.1 annotated guide says MUST
+preserve; this is a wording difference between the community guide and the
+current canonical spec.
 
 **Body conventions:** Standard Markdown. RECOMMENDED: favor structural Markdown (headings, lists, tables, fenced code blocks) over freeform prose. Conventional (non-normative) heading meanings: `# Schema`, `# Examples`, `# Citations` (02-okf-v02-spec.md: §4.2).
 
@@ -82,9 +112,13 @@ Extensions: producers MAY include any additional keys. Consumers MUST preserve u
 
 NORMATIVE: Consumers MUST tolerate broken links. A link to a non-existent target may represent not-yet-written knowledge (02-okf-v02-spec.md: §6).
 
-**Index files (§8):** No frontmatter. Body organized as sections grouping concepts under headings, each entry being `* [Title](url) - description`. Entries SHOULD include the description from the linked concept's frontmatter. Producers MAY auto-generate; consumers MAY synthesize when none is present (02-okf-v02-spec.md: §8).
+**Index files (§6):** No frontmatter except the bundle-root version declaration
+allowed by §11. The body groups concepts under headings, with entries such as
+`* [Title](url) - description`. Entries SHOULD include the linked concept's
+description. Producers MAY auto-generate; consumers MAY synthesize when none is
+present (historical v0.1 `SPEC.md`, §6).
 
-**Log files (§9):** Flat list of date-grouped entries, newest first. NORMATIVE: Date headings MUST use ISO 8601 `YYYY-MM-DD` form. Example:
+**Log files (§7):** Flat list of date-grouped entries, newest first. NORMATIVE: Date headings MUST use ISO 8601 `YYYY-MM-DD` form. Example:
 ```markdown
 # Directory Update Log
 ## 2026-05-22
@@ -92,7 +126,7 @@ NORMATIVE: Consumers MUST tolerate broken links. A link to a non-existent target
 * **Creation**: Established ...
 ```
 
-(02-okf-v02-spec.md: §9)
+(historical v0.1 `SPEC.md`, §7)
 
 **Citations (v0.1):** A numbered list under `# Citations` in the body. Can contain URLs, bundle-relative paths, or `references/` subdirectory references (08-okf-site-full.md: Spec page).
 
@@ -101,9 +135,13 @@ NORMATIVE: Consumers MUST tolerate broken links. A link to a non-existent target
 2. Every frontmatter has a non-empty `type` field
 3. Reserved files (`index.md`, `log.md`) follow §6/§7 structure when present
 
-Consumers MUST be lenient: tolerate missing optional fields, unknown `type` values, broken links, and absent `index.md` (02-okf-v02-spec.md: §11; 08-okf-site-full.md: Spec).
+Consumers MUST be lenient: tolerate missing optional fields, unknown `type`
+values, broken links, and absent `index.md`. For v0.1 this is §9; for v0.2 it is
+§11.
 
-**Versioning:** `<major>.<minor>`. Minor = backward-compatible additions. Major = breaking changes. Bundles MAY declare `okf_version: "0.1"` in bundle-root `index.md` frontmatter (02-okf-v02-spec.md: §12).
+**Versioning (§11):** `<major>.<minor>`. Minor = backward-compatible additions.
+Major = breaking changes. Bundles MAY declare `okf_version: "0.1"` in
+bundle-root `index.md` frontmatter (historical v0.1 `SPEC.md`, §11).
 
 **Design opinions (Appendix C):** The okf.md annotated guide explicitly calls out: untyped links are limiting, no body schema is both a strength and weakness, `resource` field is underspecified, and frontmatter-only validation is "genius" for its simplicity (08-okf-site-full.md: Spec page Appendices).
 
@@ -225,22 +263,40 @@ Security design: agent MAY only supply *values* for declared `parameters`; MUST 
 
 ### 2.3 Normative Requirements Summary
 
-**MUST rules (validator/enforcer MUST check, consumers MUST obey):**
+The specification separates **bundle conformance** from obligations on
+producers and consumers. A validator should not reject a bundle merely because
+an optional family is absent or a SHOULD recommendation is unmet.
 
-| # | Rule | Source |
-|---|------|--------|
-| 1 | Every non-reserved `.md` file MUST have parseable YAML frontmatter | §11 |
-| 2 | Every frontmatter MUST have a non-empty `type` field | §11 |
-| 3 | `index.md` and `log.md` MUST NOT be used for concept documents | §3.1 |
-| 4 | Log date headings MUST use ISO 8601 `YYYY-MM-DD` | §9 |
-| 5 | Bare `verified` mapping `{by, at}` MUST be treated as one-element list `[{by, at}]` | §5.2 |
-| 6 | Producers MUST use `human:` prefix for human-authored/confirmed content | §7 |
-| 7 | Consumers MUST NOT reject a concept for missing any optional family | §5.3 |
-| 8 | Consumers MUST NOT reject a bundle for: missing optional fields, unknown `type` values, unknown frontmatter keys, broken cross-links, missing `index.md` files | §11 |
-| 9 | Consumers MUST tolerate broken cross-links | §6 |
-| 10 | Consumers that do not understand a declared `okf_version` SHOULD attempt best-effort consumption | §12 |
+**Bundle-conformance tests (v0.2 §11):**
 
-(02-okf-v02-spec.md: §11, Conformance; 02-okf-v02-spec.md: Summary of normative vs optional checks)
+| # | Test |
+|---|------|
+| 1 | Every non-reserved `.md` file has parseable YAML frontmatter |
+| 2 | Every such frontmatter block has a non-empty `type` |
+| 3 | Present reserved files follow the `index.md` (§8) and `log.md` (§9) structures |
+
+**Conditional producer obligations:**
+
+| Condition | Obligation | Source |
+|-----------|------------|--------|
+| A reserved filename is present | It MUST NOT be used as a concept document | §3.1 |
+| `log.md` is present | Date headings MUST use `YYYY-MM-DD` | §9 |
+| A `sources` entry is present | It MUST include `resource`; other credibility fields remain optional | §5.1 |
+| A `generated` mapping is present | It MUST include `by`; `at` remains optional | §5.2 |
+| `type: Attested Computation` | It MUST include `runtime` | §10.2 |
+| An actor denotes a human author/confirmer | Use the `human:` prefix | §7 |
+| An agent invokes an Attested Computation | It MAY supply declared parameter values and MUST NOT author/edit the sanctioned computation | §10.3 |
+| An optional trust/provenance/lifecycle/computation family is used | Producer SHOULD follow §§5–10 | §11 |
+
+**Consumer obligations and guidance:**
+
+| Obligation | Source |
+|------------|--------|
+| MUST normalize a bare `verified` mapping to a one-element list | §5.2 |
+| MUST NOT reject missing optional families, unknown types/keys, broken links, or missing indexes | §§5.3, 6, 11 |
+| SHOULD derive trust/staleness only from specified fields and surface failed attestations | §11 |
+| SHOULD preserve unknown keys when round-tripping | §4.1 |
+| SHOULD attempt best-effort consumption of an unknown declared version | §12 |
 
 **SHOULD rules (editorial guidance):**
 
@@ -448,12 +504,12 @@ The `visualize` subcommand produces a self-contained HTML file with an interacti
 |------|-------------|--------|--------|
 | **Reference Enrichment Agent** | Two-pass (BQ + web) Python agent producing OKF bundles from BigQuery metadata via Gemini/ADK | 🟡 Functional PoC | 03-reference-agent.md |
 | **Static HTML Visualizer** | `visualize` subcommand → self-contained Cytoscape.js graph with detail panel, search, filters | 🟢 Ready | 03-reference-agent.md |
-| **kcmd CLI + MCP Server** | TypeScript bidirectional sync tool between local metadata and Google Cloud Knowledge Catalog. "Git for metadata." MCP tools: pull, push, list-entries, lookup-entry, modify-entry | 🟡 Early product | 04-toolbox-and-samples.md: kcmd |
-| **Google Cloud Knowledge Catalog** | GCP product (formerly Dataplex). AI-powered metadata catalog with native OKF ingestion, Gemini enrichment, semantic search, context APIs | 🟢 GA | 05-google-cloud-kc.md |
+| **kcmd CLI + MCP Server** | TypeScript bidirectional sync tool between local catalog metadata and Google Cloud Knowledge Catalog. CLI: `init`, `pull`, `push`; MCP: `list-entries`, `lookup-entry`, `modify-entry` | 🟡 Source package | 04-toolbox-and-samples.md: kcmd |
+| **Google Cloud Knowledge Catalog** | GCP product (formerly Dataplex). Repository includes a bounded OKF adapter demo; product also provides Gemini enrichment, semantic search, and context APIs | 🟢 GA | 05-google-cloud-kc.md |
 | **Data Agent Kit** | Open-source bundle of secure MCP tools, native IDE plugins, data engineering/data science skills. Connects to AlloyDB, BigQuery, Spanner, Cloud SQL, KC, Apache Spark | 🟢 Released | 05-google-cloud-kc.md: Data Agent Kit |
 | **Data Cloud Agents** | Suite of first-party agents (Data Engineering, Data Science, Database Onboarding, Database Observability, Deep Research) using KC context | 🟢 Released | 05-google-cloud-kc.md: Data Cloud Agents |
 | **md-fileset MCP Server** | Built-in MCP server in toolbox/enrichment providing `list_fileset_contents`, `read_fileset_file`, `search_fileset_content` over Markdown directories | 🟡 Bundled | 04-toolbox-and-samples.md: md-fileset |
-| **kcagent** | TypeScript + ADK enrichment agent with dynamic MCP tool loading and skill-based instruction system | 🟡 Preview | 04-toolbox-and-samples.md: Enrichment Agent |
+| **kcagent** | TypeScript + ADK enrichment source package with a compiled `kcagent` binary, dynamic MCP tool loading, and skill-based instructions; not published in the npm registry as of 2026-07-26 | 🟡 Build from source | 04-toolbox-and-samples.md: Enrichment Agent |
 | **Discovery Agent** | Python + ADK search agent on Knowledge Catalog Semantic Search APIs. Uses SKILL.md system instruction pattern | 🟡 Sample | 04-toolbox-and-samples.md: Discovery Agent |
 
 (01-okf-site-pages.md: Tools; 04-toolbox-and-samples.md; 05-google-cloud-kc.md)
@@ -466,7 +522,7 @@ Key architectural insight: The `GoogleCloudPlatform/knowledge-catalog` repositor
 
 | Project | Description | Maturity | Stack | Repo |
 |---------|-------------|----------|-------|------|
-| **OpenWiki 0.2** (LangChain) | Reads codebase → OKF wiki → wires into CLAUDE.md, .cursorrules, AGENTS.md. Personal mode: local brain wiki from Git, Gmail, Notion, X/Twitter | 🟢 Production (13.2k stars) | TypeScript/Node.js, MIT | github.com/langchain-ai/openwiki |
+| **OpenWiki 0.2** (LangChain) | Reads codebase → OKF wiki → wires into CLAUDE.md, .cursorrules, AGENTS.md. Personal mode: local brain wiki from configured connectors | 🟢 Released | TypeScript/Node.js, MIT | github.com/langchain-ai/openwiki |
 | **superops-team/okf** | Go CLI: scans git repos → OKF bundles. Incremental via git hooks, linter (13 rules), query engine | 🟢 Released (v1.2.0) | Go, Apache 2.0 | github.com/superops-team/okf |
 | **WordPress Plugin** (Suganthan) | Auto-generates OKF from WP posts/pages at `/okf/`. Watches publish/edit, rebuilds on every update | 🟢 Ready | PHP 7.4+, GPL | uploads.suganthan.com/4AECBACE-open-knowledge-format.zip |
 | **Suganthan Web Converter** | URL/sitemap → crawls up to 100 pages → OKF concepts with cross-links → ZIP with visual graph | 🟡 Functional | Web tool | suganthan.com/free-seo-tools/okf-generator/ |
@@ -474,9 +530,9 @@ Key architectural insight: The `GoogleCloudPlatform/knowledge-catalog` repositor
 | **pi-openwiki** | OpenWiki ported to IBM PI harness | 🟡 Fresh port (v0.1) | TypeScript, MIT | github.com/barvhaim/pi-openwiki |
 | **AgentFitech** | Built OKF producer + consumer within 24 hours of spec release | 🟡 Blog post | Unknown | medium.com/@AgentFitech |
 | **kb.duyet.net** | Personal knowledge base converted to strict-conformant OKF | 🟢 Live | Markdown | kb.duyet.net |
-| **okfy-ai** | Convert docs → OKF bundles + serve to MCP agents | 🟡 (v0.3.3, 2.1k weekly downloads) | npm, MIT | npm: okfy-ai |
+| **okfy-ai** | Convert docs → OKF bundles + serve to MCP agents | 🟡 (v0.3.3) | npm, MIT | npm: okfy-ai |
 | **okfgen** | Generate + validate OKF bundles with LangChain + any model provider | 🟡 (v0.0.3) | npm, MIT | npm: okfgen |
-| **@docmd/plugin-okf** | Generate OKF bundle from docmd site. Most popular OKF npm package by downloads (5.5k/week) | 🟡 (v0.8.17) | npm, MIT | npm: @docmd/plugin-okf |
+| **@docmd/plugin-okf** | Generate an OKF bundle from a docmd site | 🟡 (v0.8.17) | npm, MIT | npm: @docmd/plugin-okf |
 | **auto-okf** | Multi-writer OKF bundles | 🟡 (v0.0.1) | npm, Apache 2.0 | npm: auto-okf |
 
 #### Consumers (read/query/render OKF bundles)
@@ -484,7 +540,7 @@ Key architectural insight: The `GoogleCloudPlatform/knowledge-catalog` repositor
 | Project | Description | Maturity | Stack | Repo |
 |---------|-------------|----------|-------|------|
 | **Kiso** | Java CLI: `check` (validate) + `build` (static site with llms.txt + sitemap.xml). DaisyUI themes, publishing profiles, GitHub Action | 🟢 Released (v0.1.5) | Java, Apache 2.0 | github.com/oak-invest/kiso |
-| **Inkeep Open Knowledge** | WYSIWYG editor + LLM wiki. macOS app + web UI. OKF starter pack. MCP + skills + agentic search | 🟡 Preview (v0.9+, 3.1k stars) | TypeScript/React, GPL-3.0 | github.com/inkeep/open-knowledge |
+| **Inkeep OpenKnowledge** | General Markdown IDE/LLM-wiki editor with MCP, skills, and an optional OKF v0.1 starter pack; it is not an OKF-only editor or validator | 🟡 Active (GitHub release v0.39.4 on 2026-07-24; npm stable tag 0.38.4 when checked 2026-07-26) | TypeScript/React, GPL-3.0 | github.com/inkeep/open-knowledge |
 | **okapi-okf** | OKF Knowledge Studio: visualize, explore, audit, edit, query bundles | 🟡 (v0.2.1) | npm, MIT | npm: okapi-okf |
 | **okf-viewer** | Browse OKF bundle via local CLI + Next.js viewer | 🟡 (v0.4.1) | npm, MIT | npm: okf-viewer |
 
@@ -500,8 +556,8 @@ Key architectural insight: The `GoogleCloudPlatform/knowledge-catalog` repositor
 
 | Project | Description | Maturity | Stack | Repo |
 |---------|-------------|----------|-------|------|
-| **signed-okf** (DynamicFeed) | Ed25519 signatures on concept files + bundles. JWKS key distribution. Optional OriginTrail DKG anchoring | 🟡 Early (v0.2.1) | Python, Apache 2.0 | github.com/dynamicfeed/signed-okf |
-| **OriginTrail DKG + OKF** | On-chain provenance via OriginTrail Decentralized Knowledge Graph. npm package `@origintrail-official/dkg-okf` (1,730 weekly downloads) | 🟡 Functional (v10.0.9) | TypeScript, Apache 2.0 | npm: @origintrail-official/dkg-okf |
+| **signed-okf** (DynamicFeed) | Ed25519 signing and verification for bundles with JWKS key distribution. Its source does not implement OriginTrail anchoring | 🟡 Early source repository | Python, Apache 2.0 | github.com/dynamicfeed/signed-okf |
+| **OriginTrail DKG + OKF** | Deterministic OKF → RDF/DKG mapper. Import defaults to off-chain Working Memory; on-chain Verifiable Memory publication is a separate explicit `dkg ka publish` step | 🟡 Functional (v10.0.9) | TypeScript, Apache 2.0 | github.com/OriginTrail/dkg/tree/main/packages/okf |
 
 #### Agent Memory and Skills
 
@@ -509,27 +565,26 @@ Key architectural insight: The `GoogleCloudPlatform/knowledge-catalog` repositor
 |---------|-------------|----------|-------|------|
 | **hermes-okf** | Filesystem-based memory for Hermes agent ecosystem. Types: Decision, Observation, Context, Plan, Session, ToolCall. Git-backed history, RAG integration, hot/cold memory | 🟡 Functional (v0.5.9, 26 stars) | Python 3.9+, MIT | github.com/EliaszDev/hermes-okf |
 | **okf-skill** (rakibtg) | Single SKILL.md + Python 3 stdlib scripts (no dependencies). Teaches agents to produce/consume OKF. Installable via `npx skills add` | 🟡 Functional (v1.0) | Python, Apache 2.0 | github.com/rakibtg/okf-skill |
-| **okforge** | OKF skill for Claude Code: bundle mechanics + Stop-hook (1.9k weekly downloads) | 🟡 (v1.0.12) | npm, MIT | npm: okforge |
+| **okforge** | OKF skill for Claude Code: bundle mechanics + Stop-hook | 🟡 (v1.0.12) | npm, MIT | npm: okforge |
 
 #### MCP Servers / Integrations
 
 | Project | Description | Maturity | Stack | Repo |
 |---------|-------------|----------|-------|------|
-| **@copperbox/okf-mcp** | MCP server providing OKF backend to coding agents (2.8k weekly downloads, v0.20.0) | 🟡 Active | npm, ISC | npm: @copperbox/okf-mcp |
-| **caedora-mcp** | MCP server for reading/maintaining OKF bundles | 🟡 (v0.2.0) | npm, MPL-2.0 | npm: caedora-mcp |
+| **@copperbox/okf-mcp** | MCP server for reading, writing, graph traversal, and bundle validation (`validate_bundle`) | 🟡 Active (v0.20.0) | npm, ISC | npm: @copperbox/okf-mcp |
+| **caedora-mcp** | MCP server for reading/maintaining bundles with `lint_bundle` validation | 🟡 (v0.2.0) | npm, MPL-2.0 | npm: caedora-mcp |
 
 #### Libraries and SDKs
 
 | Project | Description | Maturity | Stack |
 |---------|-------------|----------|-------|
-| **@equationalapplications/core-okf** | Zero-dependency TypeScript OKF primitives: frontmatter, concepts, index/log builders (3.1k weekly downloads, v4.22.0) | 🟡 Mature | npm, MIT |
+| **@equationalapplications/core-okf** | Zero-dependency TypeScript OKF primitives: frontmatter, concepts, index/log builders (v4.22.0) | 🟡 Released | npm, MIT |
 | **@turbomem/okf** | OKF parser, validator, writer for Node.js | 🟡 (v1.0.0) | npm, Apache 2.0 |
-| **js-okf** | TypeScript library for creating/updating OKF bundles (819 weekly downloads) | 🟡 (v0.3.1) | npm, MIT |
+| **js-okf** | TypeScript library for creating/updating OKF bundles | 🟡 (v0.3.1) | npm, MIT |
 | **okf-tool** | TypeScript OKF library: parse, write, search, validate | 🟡 (v0.2.0) | npm, Apache 2.0 |
 | **okf-toolkit** | Parse, validate, chunk OKF bundles for RAG pipelines | 🟡 (v0.1.0) | npm, Apache 2.0 |
 | **okf-toolset** | Filesystem-first OKF toolkit: embeddings, search, MCP, refiner, Git helpers | 🟡 (v0.3.0) | npm, MIT |
 | **@sorane/okf** | OKF parsing, validation, serialization for sorane | 🟡 (v0.5.0) | npm, MIT |
-| **@quatrain/okf** | OKF flat file storage adapter (540 weekly downloads) | 🟡 (v1.0.5) | npm, AGPL-3.0 |
 | **@fastrag/okf** | Convert doc corpora → OKF bundles + graph-first Viewer Workbenches | 🟡 (v0.1.0) | npm, MIT |
 
 #### Domain Profiles
@@ -543,7 +598,10 @@ Key architectural insight: The `GoogleCloudPlatform/knowledge-catalog` repositor
 
 ### 4.3 The Existing OKF Skill
 
-**fabricioctelles/skills/skills/okf-open-knowledge-format/** is the most mature OKF agent skill implementation (06-fabricio-skills-repo.md: OKF Skill Deep Dive).
+**Evidence:** A historical snapshot of
+`fabricioctelles/skills/skills/okf-open-knowledge-format/` contained a
+substantial OKF v0.1 agent skill. “Most mature” is not supported by a defined
+comparison and is not used here (06-fabricio-skills-repo.md).
 
 **Structure:**
 ```
@@ -608,8 +666,8 @@ okf-open-knowledge-format/
 |------|-------------|-------|---------|
 | [GoogleCloudPlatform/knowledge-catalog](https://github.com/GoogleCloudPlatform/knowledge-catalog) | OKF spec + reference agent + bundles + Google Knowledge Catalog toolbox | — | Apache 2.0 |
 | [langchain-ai/openwiki](https://github.com/langchain-ai/openwiki) | Codebase → OKF wiki + agent instruction injection | 13.2k | MIT |
-| [inkeep/open-knowledge](https://github.com/inkeep/open-knowledge) | WYSIWYG OKF editor + LLM wiki | 3.1k | GPL-3.0 |
-| [fabricioctelles/skills](https://github.com/fabricioctelles/skills) | Agent skills marketplace (OKF skill + okf.md site source) | 36 | Apache 2.0 |
+| [inkeep/open-knowledge](https://github.com/inkeep/open-knowledge) | General Markdown IDE/LLM wiki with optional OKF starter pack | — | GPL-3.0 |
+| [fabricioctelles/skills](https://github.com/fabricioctelles/skills) | Agent skills repository historically linked by okf.md; public tree does not contain the site source | — | Apache 2.0 |
 | [superops-team/okf](https://github.com/superops-team/okf) | Go CLI for git-aware OKF bundle generation | 16 | Apache 2.0 |
 | [oak-invest/kiso](https://github.com/oak-invest/kiso) | Java publishing engine (bundles → static sites) | 16 | Apache 2.0 |
 | [mattdav/okflint](https://github.com/mattdav/okflint) | Python deterministic linter (v0.3.1) | 4 | MIT |
@@ -619,12 +677,12 @@ okf-open-knowledge-format/
 | [open-science-pillars/knowledge-template](https://github.com/open-science-pillars/knowledge-template) | OKF template for scientific knowledge | 1 | CC-BY-4.0 |
 | [dskst/leadcraft](https://github.com/dskst/leadcraft) | Claude Code plugin → OKF structured deliverables | 1 | MIT |
 | [barvhaim/pi-openwiki](https://github.com/barvhaim/pi-openwiki) | IBM PI port of OpenWiki | 9 | MIT |
-| npm: @equationalapplications/core-okf | Zero-dep TypeScript OKF library (3.1k dls/wk) | — | MIT |
-| npm: @copperbox/okf-mcp | MCP server for OKF (2.8k dls/wk) | — | ISC |
-| npm: @docmd/plugin-okf | OKF bundle generator (5.5k dls/wk) | — | MIT |
-| npm: okfy-ai | Docs-to-OKF + MCP (2.1k dls/wk) | — | MIT |
-| npm: okforge | Claude Code skill for OKF (1.9k dls/wk) | — | MIT |
-| npm: @origintrail-official/dkg-okf | OKF → DKG mapper (1.7k dls/wk) | — | Apache 2.0 |
+| npm: @equationalapplications/core-okf | Zero-dependency TypeScript OKF library | — | MIT |
+| npm: @copperbox/okf-mcp | MCP server for OKF | — | ISC |
+| npm: @docmd/plugin-okf | OKF bundle generator | — | MIT |
+| npm: okfy-ai | Docs-to-OKF + MCP | — | MIT |
+| npm: okforge | Claude Code skill for OKF | — | MIT |
+| npm: @origintrail-official/dkg-okf | OKF → RDF/DKG mapper | — | Apache 2.0 |
 
 (07-ecosystem-projects.md; 01-okf-site-pages.md; 08-okf-site-full.md; 03-reference-agent.md)
 
@@ -649,7 +707,10 @@ okf-open-knowledge-format/
 
 **Does KC produce OKF?** Not directly. The OKF reference agent produces OKF from BigQuery metadata. KC stores metadata in its own service, not as OKF bundles. However, the OKF README explicitly lists Dataplex/KC as a source that *could* export to OKF (05-google-cloud-kc.md: Does KC produce OKF?).
 
-**Does KC consume OKF?** Yes. "A Knowledge Catalog demo shows a bundle round-tripping through Google Cloud's Knowledge Catalog: clean OKF on disk, trust and provenance signals preserved through the catalog and back" (05-google-cloud-kc.md: Does KC consume OKF?).
+**Does KC consume OKF?** The repository includes a demo that pushes a bounded
+OKF field subset through a custom Dataplex aspect and pulls it back. This does
+not establish general product-level preservation of all v0.2 or extension
+fields (05-google-cloud-kc.md).
 
 **Is OKF independent of KC?** Yes, by design. The OKF README states: "OKF is a universal, vendor-neutral format ... not tied to any particular agent, framework, model provider, or serving system." It explicitly mentions Unity Catalog and Collibra as alternative export sources. OKF bundles work on any filesystem (05-google-cloud-kc.md: Is OKF independent?).
 
@@ -666,7 +727,10 @@ okf-open-knowledge-format/
 
 (05-google-cloud-kc.md: MCP Toolbox / Agent Integrations)
 
-**None of the Data Cloud Agents documentation mentions OKF.** They consume context from KC's service API, not from OKF bundles. OKF bundles can round-trip through KC, but this is an interop path, not a dependency (05-google-cloud-kc.md: OKF relevance).
+**None of the cited Data Cloud Agents documentation mentions OKF.** They
+consume context from KC's service API, not from OKF bundles. The separate
+repository demo is an adapter path, not evidence that those agents or KC's MCP
+tools consume OKF documents (05-google-cloud-kc.md).
 
 ---
 
@@ -768,7 +832,10 @@ Based on the v0.2 spec requirements and ecosystem analysis, a comprehensive skil
 
 5. **Non-root `index.md` with frontmatter**: Surface as a warning (not error), per spirit of permissive conformance.
 
-6. **Log file vs git history**: Skill should maintain `log.md` for portability (bundles without VCS) but recommend git for primary history. When both exist, `log.md` is a curated summary; git is the full audit trail.
+6. **Log file vs git history**: A skill may maintain `log.md` for portability
+   in bundles without VCS. When both exist, `log.md` can be a curated summary
+   and committed Git history an additional audit source; neither protects
+   uncommitted or untracked knowledge or replaces a verified backup.
 
 7. **Tag aggregation**: Since the spec leaves tag views to consumption-time synthesis, a skill should include a tag index generator (scan all frontmatter, produce tag → concept mapping).
 
@@ -780,11 +847,22 @@ Based on the v0.2 spec requirements and ecosystem analysis, a comprehensive skil
 
 10. **Automatic lifecycle triggers**: Should the skill proactively check `stale_after` on session start and flag stale concepts? Or only when explicitly asked? Proactive checking is more useful but adds session overhead for large bundles.
 
-11. **Validation gating**: okflint is the gold standard validator. Should the skill always require okflint (adding a Python dependency) or maintain a built-in lightweight validator as fallback? The fabricioctelles approach (prefer okflint, fall back to bash) is pragmatic.
+11. **Validation gating — decision required**: `okflint` is a deterministic
+    validator with profiles, but it is not an officially designated reference
+    validator. Decide whether to require it, wrap it, or maintain a tested
+    built-in validator after the conformance baseline is chosen.
 
-12. **v0.1 vs v0.2 target**: Most ecosystem tools target v0.1. A skill suite targeting v0.2 gains trust/lifecycle/provenance signals but may be incompatible with v0.1-only consumers. Recommendation: produce v0.2 documents; include v0.1 fallback fields (`timestamp`, `# Citations`) for backward compatibility; declare `okf_version: "0.2"` in root `index.md`.
+12. **v0.1 vs v0.2 target — decision required**: v0.2 adds
+    trust/lifecycle/provenance signals and differs from v0.1. The research does
+    not adopt a write target, dual-field fallback, or custom `okf_version`
+    extension. Those belong to **Choose the OKF conformance baseline,
+    compatibility, and extension policy**.
 
-13. **MCP server scope**: Several MCP servers exist for OKF storage/retrieval. A validation MCP server (wrapping okflint) fills a clear gap. Should the MCP server also provide index generation, lifecycle management, and enrichment? This creates a tension between a focused validation tool and a comprehensive OKF management server.
+13. **MCP server scope**: Several MCP servers expose validation operations,
+    including Copperbox `validate_bundle` and Caedora `lint_bundle`. No reviewed
+    server was verified as a thin wrapper around `okflint`. Decide whether this
+    project needs MCP delivery at all before choosing a focused validation
+    surface or a broader management server.
 
 14. **Skill composition vs monolithic skill**: The ecosystem has single-SKILL.md skills. A multi-skill suite covering init/author/validate/enrich/publish/maintain could be composed as separate skills (each with its own SKILL.md) with a coordinator. This follows the SoC principle and allows harnesses to load only what's needed.
 
@@ -824,7 +902,7 @@ Based on the v0.2 spec requirements and ecosystem analysis, a comprehensive skil
 - [okf.md Skill](https://okf.md/skill/) — Skill installation (01-okf-site-pages.md)
 - [okf.md Terms](https://okf.md/terms/) — MIT license, Brazilian law (08-okf-site-full.md)
 - [okf.md Privacy](https://okf.md/privacy/) — Plausible + GA4 (08-okf-site-full.md)
-- [okf.md GitHub (fabricioctelles/skills)](https://github.com/fabricioctelles/skills) — Site source + skill repo (08-okf-site-full.md)
+- [okf.md footer GitHub destination (fabricioctelles/skills)](https://github.com/fabricioctelles/skills) — linked repository; the public tree does not establish that it contains the deployed site source (08-okf-site-full.md)
 
 ### Community Tools
 - [superops-team/okf CLI](https://github.com/superops-team/okf) — Go CLI, git-aware bundle generator (07-ecosystem-projects.md)
@@ -849,11 +927,13 @@ Based on the v0.2 spec requirements and ecosystem analysis, a comprehensive skil
 
 ### Articles and Coverage
 - [Google Cloud OKF announcement (June 12, 2026)](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) — Official launch (01-okf-site-pages.md)
+- [Google Cloud OKF v0.2 announcement (July 24, 2026)](https://cloud.google.com/blog/products/data-analytics/okf-v0-2-adds-trust-signals/) — Official v0.2 release context
 - [Karpathy LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — Predecessor pattern (01-okf-site-pages.md)
 - [AgentFitech — "Shipped in a Day"](https://medium.com/@AgentFitech/google-just-standardized-how-ai-agents-read-the-web-heres-how-we-shipped-it-in-a-day-6bbfd3024320) — 24-hour implementation (01-okf-site-pages.md)
 - [kb.duyet.net OKF conversion](https://kb.duyet.net/m/tech-okf-open-knowledge-format) — Personal KB → OKF (01-okf-site-pages.md)
 - [W3C Holon CG / DataBook Profile](https://ontologist.substack.com/p/the-format-convergence) — Semantic web profile proposal (01-okf-site-pages.md)
-- [OriginTrail DKG + OKF](https://blog.prototypr.io/googles-okf-comes-to-the-origintrail-dkg-a-memory-ai-agents-can-trust-43c6d87e1de8) — On-chain provenance (07-ecosystem-projects.md)
+- [OriginTrail DKG OKF package](https://github.com/OriginTrail/dkg/tree/main/packages/okf)
+  — source for the mapper and explicit publication workflow
 
 ### Standards and Specifications
 - [Agent Skills specification](https://agentskills.io) — Skill format standard (08-okf-site-full.md)

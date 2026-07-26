@@ -2,8 +2,8 @@
 
 **Date:** 2026-07-26
 **Source:** wayfinder:research — [Research workspace topology, autodiscovery, and cross-repository knowledge routing](https://github.com/artemVeduta/okf-agent-skills/issues/20)
-**Method:** Parallel fan-out research (4 sub-agents), full primary-source verification
-**Report quality:** Deep-researched, source-cited, actionable
+**Method:** Primary-source capability research plus analytical design synthesis
+**Evidence status:** Harness and prior-art capabilities are source-backed. `.okf-workspace.json`, CUE-style routing, discovery algorithms, token estimates, caching, and the Tilt flows are proposals that require prototypes; they are not validated OKF behavior.
 
 ---
 
@@ -13,14 +13,22 @@ These are the unambiguous terms every part of the OKF skill suite must use. No s
 
 | Term | Definition |
 |------|-----------|
-| **Workspace root** | The directory from which the agent harness was launched (harness CWD). May or may not be a git repository root. |
+| **Harness CWD** | The directory the agent harness was launched in. It is an input to discovery, not automatically the root of a connected workspace. |
+| **Workspace root** | An explicitly selected or manifest-bearing federation boundary that may contain multiple repositories. It can equal harness CWD, but must not be inferred above a git boundary without an explicit bootstrap signal. |
 | **Repository root** | The top-level directory of a git working tree (`git rev-parse --show-toplevel`). |
 | **Project root** | A directory within a repository that is a self-contained buildable/testable unit, identified by a build manifest (`package.json`, `go.mod`, `Cargo.toml`, etc.). In a standalone repo, project root = repository root. In a monorepo, it is a workspace member. |
 | **Monorepo child** | A project root inside a monorepo, declared as a workspace member by the monorepo manager's manifest (not every subdirectory is a child). |
 | **OKF bundle** | A directory tree of `.md` files conforming to the OKF v0.2 spec: one required field (`type`), two reserved filenames (`index.md`, `log.md`). The unit of knowledge scope. |
 | **Knowledge scope** | The set of code artifacts and domain concepts that a single OKF bundle is authoritative for. Every concept in the bundle should be traceable to artifacts in this scope. |
 | **Connected workspace** | A developer session where two or more independent repositories are open simultaneously and the developer works across them. The workspace root is not a repository root (or is one repo root with peers). |
-| **Harness CWD** | The directory the agent harness was launched in — the starting point for OKF discovery. |
+
+### 1.1 Design boundary
+
+OKF v0.2 does not define federation, cross-bundle precedence, or a workspace manifest. The rules below therefore separate:
+
+- **Verified harness facts:** where each harness can read, how it treats repository boundaries, and which configuration/permission layer grants access.
+- **Proposed OKF behavior:** bootstrap rules, manifests, routing, caching, missing-repository states, and lifecycle scope.
+- **Prototype obligations:** executable tests needed before any proposal becomes normative.
 
 ---
 
@@ -74,7 +82,7 @@ OKF skills must operate across Claude Code, OpenAI Codex, and OpenCode. This sec
 
 ## 3. Topology Pattern Analysis
 
-### 3.1 Pattern 1: Monorepo with Root Knowledge + Child Projects
+### 3.1 Pattern 1: Monorepo with Root Knowledge + Child Projects (proposal)
 
 **Structure:** Monorepo root (e.g., Turborepo + pnpm) with an `okf/` bundle at root and optional per-child `okf/` bundles under `packages/<name>/` or `apps/<name>/`.
 
@@ -88,42 +96,42 @@ OKF skills must operate across Claude Code, OpenAI Codex, and OpenCode. This sec
 - Workspace root ≠ monorepo root when harness started inside a child directory. Discovery must walk UP, not stop at child boundary.
 - Turborepo explicitly bans nested packages. OKF should match: no nested child bundles.
 
-### 3.2 Pattern 2: Standalone Repository
+### 3.2 Pattern 2: Standalone Repository (proposal)
 
 **Structure:** Single repo = single project = one `okf/` bundle.
 
 **Discovery:** Trivial. `git rev-parse --show-toplevel` returns the root. One bundle. The simplest case — no routing decisions needed.
 
-### 3.3 Pattern 3: Several Standalone Repositories Connected for One Workflow
+### 3.3 Pattern 3: Several Standalone Repositories Connected for One Workflow (proposal)
 
 **Structure:** Parent directory (non-repo) containing multiple independent git repos, each with its own `okf/`.
 
-**Discovery:** `git rev-parse --show-toplevel` from CWD fails (CWD is not in any git repo). Skill must walk immediate children, detect git repos, check each for `okf/`. A `.okf-workspace.json` manifest (Section 6) provides explicit registration.
+**Discovery proposal:** If CWD is not in a repo, do not equate it with a trusted workspace automatically. Bootstrap from an explicit workspace-root argument or a valid manifest at/above CWD; an opt-in immediate-child scan may suggest candidates but must not authorize access. Each candidate requires path-containment and harness-access checks.
 
 **Knowledge routing:** Each repo has its own bundle. No cross-bundle linking in the OKF spec (multi-bundle operations are explicitly out of scope for v0.2). For connected workspaces, the skill should surface that multiple bundles exist and suggest which to consult.
 
-### 3.4 Pattern 4: Non-Repository Workspace Root with `projects/` Folder
+### 3.4 Pattern 4: Non-Repository Workspace Root with `projects/` Folder (proposal)
 
 **Structure:** A Tilt/Kubernetes workspace root (non-git) containing a `projects/` directory with cloned git repos inside.
 
-**Discovery:** Check for `projects/` directory first, then walk children for git repos and `okf/` bundles. The workspace root itself can have an `okf/` for workspace-level context (valid per spec — a bundle does not require being inside a git repo).
+**Discovery proposal:** A `projects/` convention may be one opt-in bootstrap adapter, not a universal first step. A workspace-level bundle is readable only after the non-repository root is explicitly selected/trusted and the harness grants access.
 
-**Dynamic repos:** Tilt may clone repos into `projects/` at `tilt up` time. These repos may not exist when `okf-init` first runs. The skill must handle "repo not yet cloned" as a discovered-but-absent state and re-check when file watchers detect new directories.
+**Dynamic repos proposal:** A manifest entry can be `declared_missing` before clone and transition to `available` after re-discovery. A repository cannot be “discovered but absent” from filesystem heuristics alone; its expected path must come from a manifest or external orchestrator. Watchers/TTL polling are implementation options to prototype, not established skill behavior.
 
-### 3.5 Pattern 5: Monorepo + Standalone Project Side by Side
+### 3.5 Pattern 5: Monorepo + Standalone Project Side by Side (proposal)
 
 **Structure:** A monorepo and a standalone project in sibling directories, both with independent OKF bundles.
 
-**Knowledge routing:** When working in the monorepo, load monorepo bundles. When working in the standalone, load its bundle. When the monorepo imports the standalone as a dependency (e.g., `@company/design-system`), the skill can resolve through `node_modules` symlinks to discover the standalone's bundle as supplementary context.
+**Knowledge routing proposal:** When working in one repo, sibling bundles are out of scope by default. Dependency symlinks may suggest a candidate, but routing must resolve `realpath`, re-apply workspace containment/trust, reject escape from the declared workspace unless explicitly allowed, and confirm the harness can access the sibling.
 
-### 3.6 Pattern 6: Complex Nesting
+### 3.6 Pattern 6: Complex Nesting (proposal)
 
 | Topology | Detection | OKF Handling |
 |----------|-----------|-------------|
 | **Nested git repos** (`.git` inside `.git`) | Run `git rev-parse` from workspace root; scan for nested `.git` dirs | Flag as anomaly. The inner repo's files are physically within the outer repo — ambiguous knowledge scope. |
 | **Git submodules** | `.gitmodules` file; `git submodule status` | Exclude by default (submodules are vendored dependencies). Include only by explicit opt-in in manifest. |
 | **Git worktrees** | `.git` is a file (not dir); `git worktree list` | Multiple worktrees share git history. Each may have different `okf/` versions. Discovery via `git worktree list`. |
-| **Symlinked sources** | `realpath` resolution | Resolve to real path. If different from working repo, it's a connected workspace boundary. Flag to user. |
+| **Symlinked sources** | `realpath` resolution | Apply an explicit symlink policy (`deny`, `within-workspace`, or allowlisted external target). Check containment on the resolved target, not only the lexical path. Reject cycles and broken links. |
 | **Sparse checkouts** | `git sparse-checkout list` | `okf/` may be sparse-checked-out or not. If committed but not on disk, generate from git index. |
 | **Generated/vendor dirs** | Path matches `node_modules`, `dist`, `build`, `vendor`, `.venv`, `__pycache__`, etc. | **Always exclude**. Use hard-coded exclusion list + respect `.gitignore` + optional `.okfignore`. |
 
@@ -135,7 +143,7 @@ OKF skills must operate across Claude Code, OpenAI Codex, and OpenCode. This sec
 
 OKF v0.2 has **no multi-bundle operations** — this is Limitation #4 in the spec. Cross-bundle links would be broken by design. Every routing decision for the skill suite is greenfield.
 
-### 4.2 Routing Model: Two-Tier with CUE-Style Subsumption
+### 4.2 Proposed Routing Model: Two-Tier with CUE-Style Subsumption
 
 **Base layer — Shared glossary bundles:** A bundle published at a known location defines canonical `type: Term` concepts. These are base definitions.
 
@@ -147,13 +155,13 @@ OKF v0.2 has **no multi-bundle operations** — this is Limitation #4 in the spe
 
 **Prior art:** CUE's value lattice (values ordered by subsumption, conflict = ⊥), Nix overlays (later overlays override earlier), Turborepo `extends` chains (replace vs append).
 
-### 4.3 Precedence Rules
+### 4.3 Proposed Precedence Rules
 
 1. **Explicit routing > implicit** — a workspace manifest routing rule wins over heuristics.
 2. **Nearest bundle wins** — in a hierarchical topology, the bundle physically closest to the files being edited takes precedence. A child project's bundle overrides the parent monorepo's root bundle within the child's scope.
 3. **Trust tier as tiebreaker** — between two compatible definitions, `human-reviewed` > `machine-confirmed` > `unverified`.
 
-### 4.4 Provenance Tracking
+### 4.4 Proposed Provenance Tracking
 
 Every concept that enters a bundle from an external source should carry provenance. Recommended extension fields:
 
@@ -163,13 +171,13 @@ Every concept that enters a bundle from an external source should carry provenan
 - `overrides.path` — which concept this overrides
 - `overrides.fields` — which fields differ
 
-### 4.5 Parent-to-Child Knowledge Propagation
+### 4.5 Proposed Parent-to-Child Knowledge Propagation
 
-**Default: parent bundles ARE readable from child contexts.** When an agent operates in `monorepo/packages/web/`, it can read from `monorepo/okf/` and `monorepo/packages/web/okf/`. A child's local concept with the same key **shadows** the parent's (prototype chain semantics). A child may opt out entirely via `okf-inherits: false` in its bundle root `index.md` frontmatter.
+**Candidate default:** parent bundles are readable from child contexts inside one trusted repository. Shadow/merge semantics, `okf-inherits`, and concept identity are not defined by OKF v0.2 and require a routing prototype before adoption.
 
 ---
 
-## 5. Lifecycle Scope Per Topology
+## 5. Proposed Lifecycle Scope Per Topology
 
 ### 5.1 `init` — Setting Up OKF
 
@@ -238,11 +246,11 @@ Derived from Zettelkasten community patterns ([obsidian-transferable-patterns.md
 
 ---
 
-## 6. Workspace/Federation Manifest
+## 6. Proposed Workspace/Federation Manifest
 
 ### 6.1 Explicit Manifest: Necessary, Optional, or Avoidable?
 
-**Verdict: Optional, strongly recommended for monorepos (T3) and connected repos (T4). Avoidable for standalone projects (T1, T2).**
+**Proposal:** Avoid a manifest for the single-repository case; require an explicit bootstrap mechanism for connected repositories. `.okf-workspace.json` is a candidate design, not part of the OKF specification.
 
 This follows the pattern of every major monorepo tool: no configuration for simple cases, explicit manifests for complex cases.
 
@@ -264,22 +272,32 @@ This follows the pattern of every major monorepo tool: no configuration for simp
 | **Lerna** | `lerna.json` + `nx.json` | `packages`, `version` mode, per-command options |
 | **Rush** | `rush.json` | All projects, common folders, phased commands |
 
-**The pattern for OKF:** A manifest follows VS Code's approach — `.okf-workspace.json` with `bundles[]` (each declaring `name`, `path`, `project_type`, `description`, `tags`), `routing` (rules for bundle interaction), `validation` (pre-PR scope, blocking behavior), and `trust_gates` (per-operation trust eligibility).
+**Candidate shape:** `.okf-workspace.json` could contain `schema_version`, `workspace_root`, and `bundles[]`. Each bundle needs a stable ID, path relative to the manifest, expected repository identity, required/optional status, and project metadata. Routing, validation, trust gates, and symlink policy must be versioned rather than inferred.
 
-### 6.3 Autodiscovery (No Manifest) Heuristics
+Minimum semantics to prototype:
 
-When no manifest exists, the skill uses:
+- Reject unknown major `schema_version`; define forward-compatible handling for additive minor fields.
+- Resolve every path relative to the manifest, canonicalize with `realpath` when present, and enforce the configured containment/symlink policy.
+- Distinguish `available`, `declared_missing`, `not_a_repository`, `bundle_missing`, `access_denied`, and `invalid` rather than collapsing all failures into “missing.”
+- Define whether newly cloned repositories become active automatically or require trust/confirmation.
+- Preserve a stable repository/bundle identity across path changes; a directory name alone is insufficient.
 
-1. **Walk-up:** From CWD, walk up looking for `okf/` directory. First found is the nearest bundle.
+### 6.3 Proposed Autodiscovery Without a Manifest
+
+For a single repository, a prototype should test:
+
+1. **Walk-up within the repository:** From CWD, walk up looking for `okf/`. Stop at the repository root.
 2. **Monorepo detection:** If `pnpm-workspace.yaml` / `turbo.json` / `nx.json` found at git root, read workspace members and check each for `okf/`.
-3. **Git worktree boundary:** Stop walk-up at `git rev-parse --show-toplevel`. Bundles within the same git repo are "local."
-4. **Bundle directory name:** Look for directories named `okf`, `okf-bundle`, `knowledge` at any level within the git worktree.
+3. **Git worktree boundary:** Do not walk above `git rev-parse --show-toplevel` without an explicit workspace-root/manifest bootstrap.
+4. **Bundle name:** Treat `okf/` as the only default. Alternate names require explicit configuration; recursively guessing `knowledge/` risks unrelated data and excessive scans.
+
+For a connected workspace, no-manifest peer scanning must be opt-in, shallow, and advisory. Candidate siblings do not enter the routing graph until trust, canonical-path containment, repository identity, and per-harness access all succeed.
 
 ### 6.4 Explicit vs Implicit Tradeoffs
 
 | Dimension | Explicit Manifest | Implicit Autodiscovery |
 |-----------|------------------|----------------------|
-| **Token cost** | Lower (O(1) + bundle scanning) | Higher (filesystem walk O(n)) |
+| **Token/scan cost** | Expected lower, but benchmark required | Expected higher, but depends on bounded scan policy; benchmark required |
 | **Reliability** | Higher (authoritative, no ambiguity) | Lower (heuristics can miss bundles) |
 | **Portability** | Higher (JSON is universal) | Lower (depends on filesystem layout) |
 | **Maintenance** | Higher (must update when bundles change) | Lower (zero config, auto-discovers) |
@@ -289,43 +307,41 @@ When no manifest exists, the skill uses:
 
 ## 7. Performance, Security & Operations
 
-### 7.1 Startup Performance
+### 7.1 Startup Performance (planning estimates, not measurements)
 
-**Context window capacities** (all three harnesses use 1M+ token models):
+The relevant constraints are harness-specific metadata budgets, latency, filesystem work, and attention quality. Model context windows and prices change independently and are not evidence for this routing design.
 
-- Claude Opus 5 / Sonnet 5 / Fable 5: 1M tokens
-- GPT-5.6 Sol / Terra / Luna: 1.05M tokens
-- Gemini 2.5 Pro: 2M tokens
+The following ranges are hypothetical planning inputs derived from assumed concept sizes, not benchmark results:
 
-The real constraint is not window size but **attention quality degradation over longer contexts**.
-
-**Bundle token costs:**
-
-| Bundle Size | Concepts | Load all | Cost (Opus 5, $5/MTok input) |
-|------------|----------|---------|------------------------------|
-| Small | 10-30 | 9k-45k tokens | $0.045-$0.225 |
-| Medium | 50-100 | 45k-150k tokens | $0.225-$0.75 |
-| Large | 200-500 | 150k-750k tokens | $0.75-$3.75 |
-| Very large | 1000+ | 750k+ tokens | > $3.75 |
+| Bundle Size | Concepts | Hypothetical load-all range |
+|------------|----------|-----------------------------|
+| Small | 10-30 | 9k-45k tokens |
+| Medium | 50-100 | 45k-150k tokens |
+| Large | 200-500 | 150k-750k tokens |
+| Very large | 1000+ | 750k+ tokens |
 
 **Loading all bundles at session start is unsustainable.** The solution is **three-tier lazy loading:**
 
-1. **Session start:** Load only bundle root `index.md` files (flat listing of top-level concept types). For 20 bundles: ~12k tokens.
+1. **Session start:** Load only selected bundle root indexes. The “20 bundles ≈ 12k tokens” figure is a proposal assumption to measure, not a validated budget.
 2. **On navigation:** Load subdirectory `index.md` only when the agent accesses that subdirectory.
 3. **On concept access:** Load full concept body only when the agent needs specific knowledge.
 
 ### 7.2 Caching Strategy
 
-**Recommended: Filesystem cache keyed by git HEAD SHA.**
+**Candidate to prototype: filesystem cache keyed by repository identity + git HEAD + bundle content state.**
 
 - Cache store: `.okf/cache/` (or configurable path)
 - Invalidated on: git checkout/switch (full), file modification (per-concept), missing repo detection (per-entry)
-- Cached content: Parsed frontmatter for all concepts (not bodies), index entries, link graphs, tag maps, staleness status, trust tiers — ~5-10% of full bundle size
+- Cached content: Parsed frontmatter for all concepts (not bodies), index entries, link graphs, tag maps, staleness status, trust tiers. The “5-10%” size estimate requires measurement.
 
 ### 7.3 Security Boundaries
 
-- **Filesystem access:** OKF skills need the same permissions as a coding agent. Each harness gates filesystem access through its own permission model.
-- **Scope control:** Skills should use a configurable `OKF_ROOT` path, defaulting to `./okf/` relative to project root. Sibling repos are intentionally out of scope unless explicitly added.
+- **Per-harness access:** A manifest does not grant filesystem access. Claude Code may require an added directory and permission/trust, Codex must have sandbox access to paths outside its writable/readable roots, and OpenCode evaluates `external_directory`/agent permissions. Prototype each harness from the same CWD.
+- **Bootstrap above git boundary:** Never search upward past the repository root or sideways into siblings merely because the OS allows it. Require a user-selected workspace root, manifest, or harness-native multi-root input.
+- **Scope control:** Default to the current repository's `okf/`. Sibling repos are out of scope unless explicitly declared and trusted.
+- **Containment:** Normalize lexical paths, then validate canonical `realpath` targets. Re-check containment after every symlink and reject `..` escapes, cycles, broken links, and target changes.
+- **Symlink policy:** Make policy explicit (`deny`, `within-workspace`, allowlist). Do not derive trust from the link's location.
+- **Repository trust:** Record/ask trust per canonical repository identity, not only per manifest entry or path string.
 - **`.gitignore` respect:** Automatic in git repos. Support `.okfignore` for project-specific exclusions.
 - **Secrets:** OKF bundles should NEVER contain credentials. Validation should flag common secret patterns.
 - **Private repos:** Follow the harness's telemetry exclusion pattern — never log or transmit bundle contents from private repos.
@@ -338,48 +354,48 @@ The real constraint is not window size but **attention quality degradation over 
 
 ### 7.5 Missing Repos & Offline Operation
 
-- **Missing repo:** Log warning, continue loading available bundles. Do not fail. Surface status: "Loaded: 3/5 bundles. Missing: repo-w (not cloned), repo-v (no okf/)."
+- **Missing repo proposal:** Required missing/denied/invalid entries should make the workspace result incomplete and may block operations that require them; optional entries may warn and continue. Surface distinct statuses, not one generic missing warning.
 - **Offline:** OKF bundles are local files — offline operation works by default. Skip enrichment/validation requiring network. Defer `sources[].resource` URL resolution.
-- **Dynamic repos:** File watchers (inotify/FSEvents) detect new directory appearance; short TTL cache (60s) balances freshness.
+- **Dynamic repos proposal:** Watchers or polling may detect a declared path appearing. The activation/trust transition and any TTL (including 60 seconds) require prototype data and must not be hard-coded from this report.
 
 ---
 
-## 8. Tilt/Kubernetes Acceptance Scenarios
+## 8. Tilt/Kubernetes Analytical Walkthroughs (not validated)
 
 ### Scenario A: Tilt Workspace with `project/` Folder, Harness from Tilt Root
 
 **Setup:** Tilt root at `/workspace/` with `Tiltfile`. Repos dynamically cloned into `project/` (`api-server`, `worker`, `frontend`). Harness starts from `/workspace/`.
 
-**Discovery walkthrough:**
+**Analytical walkthrough:**
 1. CWD = `/workspace/` — not a git repo.
-2. Check for workspace-level `okf/` (create if missing for workspace-level context).
-3. Check `project/` directory — each child with `.git/` and `okf/` is registered.
-4. Result: 3 repo-scoped bundles mapped. Workspace-level `okf/` for cross-service context.
+2. Require `/workspace/` to be selected as a workspace boundary or contain a valid manifest; do not create `okf/` during discovery.
+3. Treat `project/` children as candidates. Resolve canonical paths, validate repository/bundle state, request/verify trust, and confirm the active harness can access each one.
+4. Expected proposal result: available and unavailable entries are mapped with explicit status. A workspace-level bundle participates only if declared and accessible.
 
-**Dynamic repos:** Tilt clones repos at `tilt up` time. The skill handles "repo not yet cloned" as a discovered-but-absent state. File watchers detect when repos appear and trigger re-discovery.
+**Dynamic repos:** Only a manifest/orchestrator can declare a repository before it exists. A prototype must verify state transitions, trust prompts, cache invalidation, and behavior while required repos are absent.
 
 ### Scenario B: Monorepo in Tilt Workspace, Harness from Monorepo Root
 
 **Setup:** Tilt root at `/workspace/` with `projects/` containing `client`, `workers`, `worker-manager` (Turborepo monorepo), `model` (database repo), `ui-components` (git npm package). Harness starts from `worker-manager/` (monorepo root).
 
-**Discovery walkthrough:**
+**Analytical walkthrough:**
 1. CWD = `/workspace/projects/worker-manager/` — IS a git repo root.
 2. Detect monorepo: `turbo.json` + `pnpm-workspace.yaml`. Discover children: `apps/scheduler/`, `apps/dispatcher/`, `packages/shared-utils/`.
 3. Root bundle: `worker-manager/okf/`. Child bundles at each child's `okf/`.
 4. **Connected workspace discovery:** Monorepo does NOT automatically discover sibling repos (outside its git root). Options:
-   - Walk up from CWD to Tilt root, then discover `projects/` peers.
+   - Explicitly bootstrap the Tilt root, then inspect declared peers. Do not silently walk above the monorepo's git boundary.
    - Use `.okf-workspace.json` manifest declaring connected bundles.
-   - Resolve `package.json` dependencies (`@company/ui-components` → `node_modules` symlink → `../../projects/ui-components/` → discover its `okf/`).
+   - Resolve a dependency symlink only as a candidate; enforce realpath containment, symlink policy, trust, and harness access before reading `ui-components/okf/`.
 
-**Knowledge routing:** Agent in `apps/scheduler/` gets monorepo root + scheduler child bundles. UI changes resolve through `node_modules` symlinks to `ui-components/okf/`. Cross-service concerns use workspace-level `okf/` at Tilt root.
+**Proposed routing:** An agent in `apps/scheduler/` may receive the monorepo root + scheduler bundles after the merge/shadow prototype defines precedence. Sibling UI and workspace-level bundles require explicit federation and access; dependency presence alone is insufficient.
 
 ---
 
-## 9. Topology/Behavior Comparison Matrix
+## 9. Proposed Topology/Behavior Comparison Matrix
 
 | Behavior | Standalone (T1/T2) | Monorepo (T3) | Connected Repos (T4) | Multi-Bundle (T5) |
 |----------|-------------------|---------------|---------------------|-------------------|
-| **Discovery** | Walk up from CWD to git root | Detect monorepo manager, walk declared workspace members | Walk peers from workspace root or use manifest | Read `okf.json` topology declaration |
+| **Discovery** | Walk up from CWD to git root | Detect monorepo manager, walk declared workspace members | Explicit workspace bootstrap/manifest; peer scan is opt-in and advisory | Read a proposed versioned topology manifest |
 | **Bundle count** | 1 | 1 root + N child | 1 per repo | N domain bundles |
 | **Routing rule** | N/A (single bundle) | Child shadows root; root covers cross-cutting | Each repo is independent; manifest enables cross-refs | Domain-type-based routing from topology |
 | **Init scope** | Create single `okf/` | Create root + optionally per-package | Per-repo; manifest coordinates | User-specified domain split |
@@ -411,17 +427,20 @@ These questions must be answered before implementation proceeds:
 
 ---
 
-## 11. Recommended Approaches for Prototyping
+## 11. Required Prototypes Before Implementation
 
 Priority-ordered, based on dependency graph and risk:
 
 | Priority | Prototype | Type | Rationale |
 |----------|----------|------|-----------|
 | **P0** | Autodiscovery for standalone repos (Pattern 2) | `wayfinder:prototype` | Lowest risk, provides the foundation. Must work reliably before anything else. |
+| **P0** | Workspace bootstrap + git-boundary stop | `wayfinder:prototype` | Prove that connected-workspace discovery never walks above or sideways from a repo without an explicit root/manifest. |
+| **P0** | Realpath containment + symlink policy | `wayfinder:prototype` | Test escape, cycle, broken-link, retargeting, dependency-link, and allowlisted-external cases before reading sibling content. |
 | **P0** | Autodiscovery for monorepos (Pattern 1) | `wayfinder:prototype` | Most common complex case. Prove monorepo manager detection + child discovery + bundle routing. |
-| **P1** | `.okf-workspace.json` manifest schema + parser | `wayfinder:prototype` | Unblocks connected workspaces (Patterns 3, 4) and acceptance scenarios. |
-| **P1** | Connected workspace discovery (Patterns 3, 4) | `wayfinder:prototype` | Tilt acceptance scenarios depend on this. Must handle missing/dynamic repos. |
-| **P2** | Three-tier lazy loading + filesystem cache | `wayfinder:prototype` | Token budget and performance are gating factors for real-world use. |
+| **P1** | `.okf-workspace.json` versioned schema + parser | `wayfinder:prototype` | Define schema evolution, stable IDs, relative paths, required/optional entries, trust, and symlink policy. |
+| **P1** | Connected workspace discovery (Patterns 3, 4) | `wayfinder:prototype` | The Tilt walkthroughs depend on this. Must distinguish declared-missing, access-denied, invalid-repo, and bundle-missing states and define dynamic transitions. |
+| **P1** | Cross-harness sibling-access matrix | `wayfinder:prototype` | Launch Claude Code, Codex, and OpenCode from the same repo and verify read/write/trust behavior for declared siblings. |
+| **P2** | Three-tier lazy loading + filesystem cache benchmark | `wayfinder:prototype` | Replace token/cache estimates with measurements across representative bundle sizes and invalidation cases. |
 | **P2** | Knowledge routing with CUE-style subsumption | `wayfinder:prototype` | The semantic core of multi-bundle operation. Depends on concept identity key decision. |
 | **P3** | Lifecycle scope enforcement per topology | `wayfinder:prototype` | Depends on routing and trust tier decisions. Can be incremental. |
 | **P3** | Cross-bundle reference extension (`bundle://` URIs) | `wayfinder:prototype` | Greenfield; OKF v0.2 has no multi-bundle operations. Needs careful design. |

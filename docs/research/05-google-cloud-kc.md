@@ -28,7 +28,8 @@ The "Related articles" sidebar on the KC blog page links to "Open Knowledge form
 
 ## MCP Toolbox / Agent Integrations
 
-Knowledge Catalog exposes MCP tools through two paths:
+Knowledge Catalog has several agent integration paths. They should not be
+collapsed into one “OKF MCP” surface:
 
 ### 1. Pre-built `dataplex` tool in MCP Toolbox
 - Repo: `github.com/googleapis/mcp-toolbox`
@@ -89,7 +90,10 @@ Google Cloud offers a suite of first-party agents that use Knowledge Catalog:
 
 **Agent development tools**: Conversational Analytics API, BigQuery ADK integration, BigQuery Agent Analytics plugin, Looker agent analytics block.
 
-**OKF relevance**: None of the Data Cloud Agents documentation mentions OKF. The agents consume context from Knowledge Catalog's *service API*, not from OKF bundles. However, the OKF reference agent can *produce* OKF bundles from BigQuery datasets, and those bundles can round-trip through Knowledge Catalog.
+**OKF relevance**: None of the Data Cloud Agents documentation cited here
+mentions OKF. The agents consume context from Knowledge Catalog's *service
+API*, not from OKF bundles. Separately, the repository contains an OKF demo
+adapter for a bounded field subset.
 
 ## Relationship to OKF Format
 
@@ -99,9 +103,21 @@ Not directly. The OKF reference agent produces OKF from BigQuery metadata (it re
 However, the OKF README explicitly lists "Dataplex" (i.e., Knowledge Catalog) as one source that could *export* to OKF: "export pipelines from existing catalogs (Dataplex, Unity Catalog, Collibra, ...)."
 
 ### Does KC consume OKF?
-Yes, through the demo: "A Knowledge Catalog demo shows a bundle round-tripping through Google Cloud's Knowledge Catalog: clean OKF on disk, trust and provenance signals preserved through the catalog and back." (OKF v0.2 blog)
+**Evidence:** The official
+[OKF v0.2 article](https://cloud.google.com/blog/products/data-analytics/okf-v0-2-adds-trust-signals/)
+describes a Knowledge Catalog round-trip demo. The corresponding primary source
+is `toolbox/mdcode/demo/okf/`.
 
-This means KC can ingest an OKF bundle, preserve its trust signals, and serve that same context through its MCP tools. Then the OKF bundle can be recovered from KC — a full round-trip.
+**Scope limit:** This is demo code, not evidence of a generic product-level OKF
+import/export API. The adapter maps the Markdown body plus `title`,
+`description`, `tags`, `resource`, `type`, `generated.{by,at}`, and
+`sources[].{id,resource,title}` through a custom `okf` Dataplex aspect. It does
+not map all v0.2 trust/lifecycle/computation fields or arbitrary extension
+keys.
+
+**Not established:** The demo does not show that Knowledge Catalog's MCP tools
+serve the restored OKF document or that an MCP client can request an OKF
+round-trip. Those are separate service/API paths.
 
 ### Is OKF independent of KC?
 **Yes, by design.** The OKF README explicitly states: "OKF is a universal, vendor-neutral format ... not tied to any particular agent, framework, model provider, or serving system." It explicitly mentions Unity Catalog and Collibra as alternative export sources. OKF bundles are just directories of markdown files — they can be consumed by any static file server, Obsidian, MkDocs, or any LLM that can read files.
@@ -152,5 +168,5 @@ A CLI agent for testing data context, listed in KC docs: "Use Antigravity CLI ag
 | **Portability** | Locked to GCP | Any filesystem, git repo, static server |
 | **Trust signals** | Internal to service | First-class frontmatter: `generated`, `verified`, `status`, `stale_after`, `sources`, `attested computations` |
 | **Agent access** | MCP tools (via `mcp-toolbox`), Gemini CLI extension, REST API | Direct file reading, git clones, any tool that reads markdown |
-| **Relationship** | Can ingest/export OKF bundles. OKF is explicit about vendor neutrality; KC is one of many possible consumers/producers | Lives in KC's repo but is format-only, service-agnostic. Reference agent produces OKF from BigQuery but format is not KC-dependent |
+| **Relationship** | Repository demo maps a bounded OKF subset into a custom Dataplex aspect and back; generic product import/export is not established here | Lives in KC's repo but is format-only and service-agnostic. Reference agent produces OKF from BigQuery but format is not KC-dependent |
 | **Authors** | Chai Pydimukkala (PM), Sam McVeety (TL) | Sam McVeety (TL), Amir Hormati (TL) |

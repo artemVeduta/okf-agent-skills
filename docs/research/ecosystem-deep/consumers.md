@@ -274,7 +274,6 @@ $ kiso-cli build --source=examples/kb-google-example --destination=public
 - **Stars**: 2.2k (docmd monorepo)
 - **Commits**: 2,383 (docmd monorepo)
 - **Version**: 0.8.17
-- **Weekly Downloads**: ~2,599
 - **License**: MIT
 - **Language**: TypeScript
 - **Owner**: docmd-io (mgks/ghsp)
@@ -427,7 +426,6 @@ Each concept file carries the OKF-required `type` field in frontmatter plus the 
 - **Stars**: 1
 - **Commits**: 20
 - **Version**: 0.4.1
-- **Weekly Downloads**: ~133
 - **License**: MIT
 - **Language**: TypeScript (Next.js 16.2.10, React 19)
 - **Owner**: manojbajaj95
@@ -562,7 +560,6 @@ $ okf-viewer validate ./path/to/okf-bundle
 - **Stars**: 2
 - **Commits**: 22
 - **Version**: 0.2.1
-- **Weekly Downloads**: ~16
 - **License**: MIT
 - **Language**: TypeScript (pnpm monorepo, pure ESM)
 - **Owner**: sebastienfi (Sébastien Fichot)

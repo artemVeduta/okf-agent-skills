@@ -1,6 +1,6 @@
 # OpenCode: `disable-model-invocation` Equivalent
 
-> **Answer: No.** OpenCode has no mechanism to prevent the agent from auto-invoking a skill while still allowing the human to invoke it manually.
+> **Answer: No.** OpenCode has no supported mechanism that hides one skill from model choice while preserving a separate direct/manual invocation path.
 
 Research date: 2026-07-26
 
@@ -31,7 +31,7 @@ OpenCode recognizes only these frontmatter fields:
 
 **Unknown fields are silently ignored** (https://opencode.ai/docs/skills/#write-frontmatter).
 
-Placing `disable-model-invocation: true` in an OpenCode SKILL.md has **zero effect** — it passes validation but is not acted upon.
+Placing `disable-model-invocation: true` in an OpenCode `SKILL.md` has **zero effect**. Because the field is ignored rather than interpreted as `false`, a valid skill with a description remains listed to the model and remains invocable through the `skill` tool.
 
 ### Source Code Confirmation
 
@@ -132,7 +132,7 @@ It appears to be vestigial or reserved for future use. Currently, it has no effe
 
 ---
 
-## 5. Accidental Workaround: Omit `description`
+## 5. Missing `description` Is Not a Manual-Invocation Feature
 
 The docs state `description` is required (https://opencode.ai/docs/skills/#write-frontmatter). However, the code treats it as optional:
 
@@ -149,18 +149,20 @@ export function fmt(list: Info[], opts: { verbose: boolean }) {
 }
 ```
 
-This means: if you create a SKILL.md with a `name` but **no `description`**:
+This means that a `SKILL.md` with a `name` but **no `description`** currently:
 
 1. The skill is loaded and is present in the skill registry (`Skill.all()` returns it).
 2. But it **never appears in `<available_skills>`** in the system prompt.
-3. The model has **no way to discover** the skill's name or existence.
-4. If a human types the skill name in a message (e.g., "use the my-skill skill"), the model **can still load it** if it recognizes the instruction, because `Skill.require(name)` has no description gate.
+3. Does not advertise its name through `<available_skills>`.
+4. Can still be loaded by the model if the model is given the exact name and chooses to call `skill({ name })`, because `Skill.require(name)` has no description gate.
 
 **Caveats:**
 - This is undocumented/accidental behavior, not an intentional API.
 - The docs state `description` is required, so skills without it may fail future validation.
-- The model cannot discover the skill — it must be told by the human.
+- The skill is not discoverable through the normal listing, but the human still does not invoke it directly; the model makes the tool call after being told the name.
 - There is no `/skill-name` slash-command mechanism for skills. Skills do not appear individually in the slash menu — only a global `/skills` browse command exists (`/packages/opencode/src/cli/cmd/run/footer.prompt.tsx:423-438`).
+
+This unsupported parser/listing mismatch must not be described as a human-only or manual-only invocation mode.
 
 ---
 
@@ -168,25 +170,23 @@ This means: if you create a SKILL.md with a `name` but **no `description`**:
 
 | Mechanism | Model sees skill? | Can auto-invoke? | Human can invoke? | Notes |
 |-----------|-------------------|------------------|--------------------|-------|
-| `disable-model-invocation: true` | ❌ (no effect) | ❌ (no effect) | ❌ (no effect) | Claude Code only; silently ignored by OpenCode |
+| `disable-model-invocation: true` | ✅ | ✅ | Indirectly, by asking the model | Ignored by OpenCode, so ordinary visible/invocable behavior remains |
 | `permission.skill: "deny"` | ❌ | ❌ | ❌ | Skill hidden from everyone |
-| `permission.skill: "ask"` | ✅ | ✅ (with prompt) | ✅ | In `--auto` mode, loads without any prompt |
+| `permission.skill: "ask"` | ✅ | ✅ (subject to approval) | Indirectly, by asking the model | In `--auto` mode, loads without any prompt |
 | `tools: { skill: false }` | ❌ (all skills) | ❌ | ❌ | Disables entire skill system for that agent |
-| Omit `description` field | ❌ (name hidden) | ❌ (undiscoverable) | ✅ (by name in prompt) | Undocumented, accidental behavior; docs say description is required |
+| Omit `description` field | ❌ in normal listing | Possible if exact name is supplied | Indirectly, by asking the model | Undocumented invalid authoring pattern, not a supported invocation mode |
 
 ---
 
 ## 7. Conclusion
 
-**OpenCode has no mechanism equivalent to `disable-model-invocation`.** The permission system is binary: a skill is either visible+loadable (allow/ask) or invisible+unloadable (deny). There is no third state of "visible only to humans."
+**OpenCode has no mechanism equivalent to `disable-model-invocation`.** The permission system is binary: a skill is either model-visible and loadable (`allow`/`ask`) or hidden and rejected (`deny`). There is no supported third state that a human invokes directly while the model cannot select it.
 
-Two partial mitigations exist:
+One partial mitigation exists:
 
 1. **Set `permission.skill: "ask"`** — the model can still see and auto-invoke the skill, but the human must approve each load. This fails in `--auto` mode (approvals are bypassed).
 
-2. **Omit `description`** — the skill becomes invisible to the model in the `<available_skills>` listing while remaining loadable by explicit name. This is accidental behavior, not a supported API, and fragile (a future version may enforce `description` as required or stop filtering descriptions in `fmt()`).
-
-Neither is a reliable substitute for `disable-model-invocation`. To achieve human-only skill invocation, a code change to OpenCode would be needed — either:
+Omitting `description` is not a supported mitigation: it violates the documented format and still relies on the model to call the skill tool. To achieve a true explicit-only skill policy, a code change to OpenCode would be needed — either:
 - Adding a supported `disable-model-invocation` frontmatter field that filters skills from `available_skills` while keeping them in the registry, or
 - Extending the permission system with a `hidden` action that keeps the skill loadable but not listed in the tool description/system prompt.
 
