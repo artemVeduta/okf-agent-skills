@@ -30,7 +30,7 @@ Out of the question's scope, deliberately:
 
 ```bash
 node prototypes/concept-selection/tui.ts          # drive it by hand
-node prototypes/concept-selection/walkthrough.ts  # replay the 37 hard cases + the sweep
+node prototypes/concept-selection/walkthrough.ts  # replay the 42 hard cases + the sweep
 ```
 
 Node 22.6+ (native TypeScript type stripping). No dependencies, no package manager, nothing
@@ -44,7 +44,7 @@ written to disk.
 | `corpus.ts` | Three fake bundles with made-up character counts and ground-truth token counts. | no |
 | `driver.ts` | `step(world, key)` — the one keystroke path the TUI and the walkthrough share. | no |
 | `tui.ts` | Terminal shell; re-renders the whole budget and selection after every key. | no |
-| `walkthrough.ts` | 37 cases plus a 3,626-run sweep, replayed through those same keys. | no |
+| `walkthrough.ts` | 42 cases plus a 4,312-run sweep, replayed through those same keys. | no |
 
 ## The model
 
@@ -130,7 +130,8 @@ notice is part of the selection and is paid for out of the same budget.
 
 ## Found by replaying, not by reasoning
 
-Three bugs in the model surfaced as walkthrough mismatches:
+Bugs in the model that surfaced as walkthrough mismatches, or under an adversarial review of the
+finished prototype:
 
 - **The notice can be the line that overruns the budget it exists to prevent.** Reserving the
   notice as it currently stands is wrong twice over: one more clipped concept can flip it from
@@ -144,12 +145,28 @@ Three bugs in the model surfaced as walkthrough mismatches:
 - **There is a floor below which no honest answer exists** — the path list plus the smallest
   possible omission notice. Below it the selector refuses before spending a token, rather than
   spending down to an answer that cannot say what it left out.
+- **A pin that costs nothing refused the whole selection.** Reserving the *ranked fill's*
+  worst-case notice before honoring the pins meant a pin whose LINE tier an index had already
+  pre-paid could be refused with tokens to spare — and the refusal was non-monotone in the budget:
+  fine at 700, refused at 900, fine again at 4,000, because a larger budget bought more discovery,
+  scored more candidates, and pushed the reservation up. Pins are measured against what pins owe;
+  the ranked loop reserves for its own pending clips as it goes.
+- **A pin was reading sections nobody had paid to grep,** and the "how many concepts were ranked
+  without their status read" count was itself computed by reading `status`. Both are fixture
+  oracles: a real implementation cannot know either thing.
+- **The `withDescriptions` flag was dead, which made the worse index strictly better.** Both index
+  kinds unlocked title *and* description scoring, so a bare link list bought identical retrieval
+  34% cheaper. A bare list now buys a title only, and does not pre-pay the LINE tier.
+- **The notice printed three things it did not price.** Unsearched directory names grow with the
+  bundle and are the commonest omission under satisficing; charging for them was the whole point
+  of the convergence argument.
 
 ## Validation
 
-`walkthrough.ts` replays **37/37** named cases plus a **3,626-run sweep** (every fixture × query ×
+`walkthrough.ts` replays **42/42** named cases plus a **4,312-run sweep** (every fixture × query ×
 exact-reference set × budget × task under the ceiling estimator) with no invariant violated, and a
-separate 4,000-run randomised-dial fuzz per estimator produced the percentages above.
+separate randomised-dial fuzz — 30,000 runs under the ceiling, 4,000 per estimator — produced the
+percentages above and no budget violation under the ceiling.
 
 Validated in-session against the scripted catalogue; **not yet driven live at the keyboard**, and
 the fixtures are illustrative, not the benchmark corpus

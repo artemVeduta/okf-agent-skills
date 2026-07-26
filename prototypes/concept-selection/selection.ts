@@ -38,8 +38,8 @@ export type Tier = 'LINE' | 'CARD' | 'SECTION' | 'FULL';
 export const TIERS: Tier[] = ['LINE', 'CARD', 'SECTION', 'FULL'];
 
 /** How much of a concept has already been paid for by a discovery purchase. */
-export type Seen = 'path' | 'line' | 'card';
-const SEEN_ORDER: Seen[] = ['path', 'line', 'card'];
+export type Seen = 'path' | 'title' | 'line' | 'card';
+const SEEN_ORDER: Seen[] = ['path', 'title', 'line', 'card'];
 const atLeast = (s: Seen, want: Seen) => SEEN_ORDER.indexOf(s) >= SEEN_ORDER.indexOf(want);
 
 export interface Section {
@@ -298,7 +298,7 @@ export interface Notice {
   unsearched: string[];
   unresolved: string[];
   filtered: string[];
-  /** Ranked without their frontmatter ever being read — status and tags were invisible. */
+  /** Candidates ranked without their frontmatter ever read — status and tags invisible. */
   unstatused: number;
   missed: number;
   cost: number;
@@ -448,6 +448,13 @@ export function select(corpus: Corpus, req: Request): Plan {
     reasons.push(`budget source unknown — falling back to the ${d.unknownBudgetFloor}-token floor, reporting degraded rather than blocking`);
   if (req.budget.source === 'estimated')
     reasons.push(`budget was estimated, not reported — the ${total}-token total is used as given, but every figure below inherits its uncertainty`);
+  const nullQuery = ts.length === 0;
+  if (nullQuery)
+    reasons.push(
+      req.query.trim() === ''
+        ? 'no query: nothing was searched for, and only exact references can select anything'
+        : `no term survived "${req.query}" — every word was a stopword or shorter than the minimum, so nothing was searched for`,
+    );
   const dropped = droppedTerms(req.query);
   if (dropped.length > 0)
     reasons.push(`dropped as too short to be a term: ${dropped.map((t) => `"${t}"`).join(', ')} — they can never appear as unexplained, because they never became terms`);
@@ -460,15 +467,6 @@ export function select(corpus: Corpus, req: Request): Plan {
     actual: reserve,
     why: 'held back for the rest of the operation before anything is selected',
   });
-
-  // There is a floor below which no honest answer exists: the path list is the cheapest possible
-  // discovery, and a report of what was omitted is not optional. A budget that cannot cover both
-  // is refused before a single token is spent, rather than spent down to a misleading answer.
-  const floorCost = est(corpus.pathListChars, e) + d.noticeBase + d.noticeCounted;
-  if (spendable < floorCost) {
-    return insufficient(corpus, req, lines, reasons, total, reserve, spendable, 0, 0, ts, [], e,
-      `${spendable} spendable tokens cannot cover the path list (${est(corpus.pathListChars, e)}) plus the smallest possible omission notice (${d.noticeBase + d.noticeCounted}) — nothing can be selected honestly`);
-  }
 
   let spent = 0;
   let actualSpent = 0;
@@ -495,7 +493,18 @@ export function select(corpus: Corpus, req: Request): Plan {
       corpus.concepts.find((c) => c.resource === ref || c.sourceRefs?.includes(ref));
     if (found) {
       if (!pins.includes(found)) pins.push(found);
-    } else unresolved.push(ref);
+    } else if (!unresolved.includes(norm)) unresolved.push(norm);
+  }
+
+  // There is a floor below which no honest answer exists: the path list is the cheapest possible
+  // discovery, and a report of what was omitted is not optional. A budget that cannot cover both is
+  // refused before a single token is spent, rather than spent down to a misleading answer. The
+  // check sits *after* pin resolution — which is pure lookup and costs nothing — so a refusal can
+  // still name a reference that resolves to nothing.
+  const floorCost = est(corpus.pathListChars, e) + d.noticeBase + d.noticeCounted;
+  if (spendable < floorCost) {
+    return insufficient(corpus, req, lines, reasons, total, reserve, spendable, 0, 0, ts, unresolved, e,
+      `${spendable} spendable tokens cannot cover the path list (${est(corpus.pathListChars, e)}) plus the smallest possible omission notice (${d.noticeBase + d.noticeCounted}) — nothing can be selected honestly`);
   }
 
   // -- Phase DISCOVER -------------------------------------------------------
@@ -523,7 +532,8 @@ export function select(corpus: Corpus, req: Request): Plan {
     corpus.concepts.some((c) => {
       const s = seen.get(c.id)!;
       if (c.id.replace(/[/-]/g, ' ').toLowerCase().includes(t)) return true;
-      if (atLeast(s, 'line') && `${c.title ?? ''} ${c.description ?? ''}`.toLowerCase().includes(t)) return true;
+      if (atLeast(s, 'title') && (c.title ?? '').toLowerCase().includes(t)) return true;
+      if (atLeast(s, 'line') && (c.description ?? '').toLowerCase().includes(t)) return true;
       if (atLeast(s, 'card') && `${(c.tags ?? []).join(' ')} ${c.type}`.toLowerCase().includes(t)) return true;
       return false;
     });
@@ -563,7 +573,10 @@ export function select(corpus: Corpus, req: Request): Plan {
         ? 'pre-pays the LINE tier for every concept it lists'
         : 'link list without descriptions — pre-pays a bare title, not a description (§spec §8)',
     });
-    for (const id of idx.entries) bump(id, 'line');
+    // A bare link list buys titles and nothing else, so it neither unlocks description scoring nor
+    // pre-pays the LINE tier — otherwise the cheaper, less informative index would be strictly
+    // better than the richer one, which is how an unused `withDescriptions` flag hides a bug.
+    for (const id of idx.entries) bump(id, idx.withDescriptions ? 'line' : 'title');
   }
 
   // (b) frontmatter scans — the only channel that reveals tags, type and status
@@ -646,7 +659,9 @@ export function select(corpus: Corpus, req: Request): Plan {
         filtered.push(c.id);
         continue;
       }
-    } else if (c.status !== 'stable') {
+    } else {
+      // Counting only the non-stable ones would read the field this branch exists to say was
+      // never read. All the selector knows is that it ranked something blind.
       unstatused++;
     }
 
@@ -662,10 +677,12 @@ export function select(corpus: Corpus, req: Request): Plan {
     const pathHits = hits(c.id.replace(/[/-]/g, ' '), ts);
     add(pathHits.length * d.wPath, `path:${pathHits.join('+')}`);
 
-    if (atLeast(s, 'line')) {
+    if (atLeast(s, 'title')) {
       const titleHits = hits(c.title ?? '', ts);
-      const descHits = hits(c.description ?? '', ts);
       add(titleHits.length * d.wTitle, `title:${titleHits.join('+')}`);
+    }
+    if (atLeast(s, 'line')) {
+      const descHits = hits(c.description ?? '', ts);
       add(descHits.length * d.wDescription, `desc:${descHits.join('+')}`);
     }
     if (atLeast(s, 'card')) {
@@ -720,16 +737,29 @@ export function select(corpus: Corpus, req: Request): Plan {
   }));
   const pinCost = () =>
     pinPlans.reduce((n, p) => n + est(chargeableChars(p.c, p.tier, p.matched, seen.get(p.c.id)!), e), 0);
-  const fixedNamed = unresolved.length + undiscoveredDirs.length + filtered.length;
-  const pinBudget = remaining() - noticeReserve(d, fixedNamed + candidates.filter((c) => c.score > 0).length, spendable);
+  const fixedNamed = unresolved.length + undiscoveredDirs.length + unsearchedDirs.length + filtered.length;
+  // Reserve only what is *already* known to be omissible. Reserving for the ranked fill's worst
+  // case as well made a pin that costs nothing — its LINE tier already pre-paid by an index —
+  // refuse the whole selection with tokens to spare, and made the refusal non-monotone in the
+  // budget: ok at 700, refused at 900, ok again at 4,000. The ranked loop reserves for its own
+  // pending clips as it goes, and the final collapse backstops both.
+  const pinBudget = remaining() - noticeReserve(d, fixedNamed, spendable);
+  // Degrade the most expensive pin first: it frees the most budget per step, so fewer pins are
+  // degraded overall. The order references were typed in is not a priority signal, and letting it
+  // decide which one survives at FULL would be a ranking rule the human cannot see.
+  const byCost = [...pinPlans].sort(
+    (a, b) =>
+      est(chargeableChars(b.c, 'FULL', b.matched, seen.get(b.c.id)!), e) -
+      est(chargeableChars(a.c, 'FULL', a.matched, seen.get(a.c.id)!), e),
+  );
   for (const floor of ['SECTION', 'CARD', 'LINE'] as Tier[]) {
     if (pinCost() <= pinBudget) break;
-    for (const p of pinPlans) {
+    for (const p of byCost) {
       if (pinCost() <= pinBudget) break;
       if (TIERS.indexOf(p.tier) > TIERS.indexOf(floor)) p.tier = floor;
     }
   }
-  if (pins.length > 0 && pinCost() > pinBudget) {
+  if (pins.length > 0 && pinCost() > Math.max(pinBudget, 0)) {
     // Even at LINE the pins do not fit. A partial answer here would be the silent overrun in a
     // different costume, so the selection refuses and says by how much.
     return insufficient(corpus, req, lines, reasons, total, reserve, spendable, spent, actualSpent, ts, unresolved, e,
@@ -839,7 +869,12 @@ export function select(corpus: Corpus, req: Request): Plan {
       actual: chargeableActual(c, placed, matched, s),
       summary: `selected at ${placed} (score ${score})`,
       detail: signals.join(', ') || 'no signal',
-      nextAction: placed === asked ? 'none' : `raise the budget by ~${askedCost - cost} for ${asked}`,
+      nextAction:
+        placed === asked
+          ? 'none'
+          : TIERS.indexOf(asked) > TIERS.indexOf(d.maxRankedTier)
+            ? `the maxRankedTier dial capped this at ${d.maxRankedTier}; raising the budget will not change it`
+            : `raise the budget by ~${askedCost - cost} for ${asked}`,
     });
   }
 
@@ -866,8 +901,10 @@ export function select(corpus: Corpus, req: Request): Plan {
       cost: 0,
       actual: 0,
       summary: 'never looked at — discovery stopped first',
-      detail: 'every query term was already explained by a cheaper channel, so its directory was never opened',
-      nextAction: 'broaden the query, or switch discovery to exhaustive',
+      detail: nullQuery
+        ? 'there were no query terms to explain, so no channel was worth buying and its directory was never opened'
+        : 'every query term was already explained by a cheaper channel, so its directory was never opened',
+      nextAction: nullQuery ? 'ask something, or name an exact reference' : 'broaden the query, or switch discovery to exhaustive',
     });
   for (const id of filtered)
     entries.push({
@@ -912,7 +949,11 @@ export function select(corpus: Corpus, req: Request): Plan {
   };
   const reportedUndiscovered = dirsOf('UNDISCOVERED');
   const reportedUnsearched = dirsOf('UNSEARCHED');
-  const named = clipped.length + unresolved.length + reportedUndiscovered.length + filtered.length;
+  // Everything the notice *names* is priced. `missed` and `unstatused` are single counted lines and
+  // ride inside `noticeBase`; unsearched directories are named, grow with the bundle, and are the
+  // commonest omission under satisficing — printing them free understated the notice's own cost.
+  const named =
+    clipped.length + unresolved.length + reportedUndiscovered.length + reportedUnsearched.length + filtered.length;
   const anything = named > 0 || missed > 0 || reportedUnsearched.length > 0 || unstatused > 0;
   const notice: Notice = {
     form: anything ? noticeForm(d, named, spendable) : 'none',
@@ -1024,7 +1065,7 @@ function insufficient(
   e: Estimator,
   why: string,
 ): Plan {
-  return {
+  const plan: Plan = {
     outcome: 'insufficient',
     reasons: [...reasons, why],
     budget: { total, reserve, spendable, spent, free: spendable - spent, actualSpent, source: req.budget.source, estimator: e.name },
@@ -1060,11 +1101,14 @@ function insufficient(
           nextAction: 'raise the budget, or ask for fewer exact references',
         })),
     ],
+    // A refusal spends nothing, so its notice is free: there is no selection for it to crowd out.
     notice: { form: unresolved.length > 0 ? 'named' : 'none', clipped: [], undiscovered: [], unsearched: [], unresolved, filtered: [], unstatused: 0, missed: 0, cost: 0 },
     terms: ts,
     unexplained: [],
     violations: [],
   };
+  plan.violations = verify(corpus, plan, reserve, total);
+  return plan;
 }
 
 // ---------------------------------------------------------------------------

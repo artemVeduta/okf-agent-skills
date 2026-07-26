@@ -117,7 +117,7 @@ function render(): void {
     console.log(`  ${YELLOW}collapsed${R} ${plan.notice.clipped.length} clipped, ${plan.notice.filtered.length} filtered, ${plan.notice.undiscovered.length} directories unread, ${plan.notice.unresolved.length} unresolved`);
   console.log(`  ${plan.notice.missed} concept(s) looked at and not matched ${D}(counted, never named — naming them costs what loading them costs)${R}`);
   if (plan.notice.unstatused > 0)
-    console.log(`  ${YELLOW}${plan.notice.unstatused}${R} ranked without their frontmatter read — status and tags were invisible`);
+    console.log(`  ${YELLOW}${plan.notice.unstatused}${R} candidates ranked without their frontmatter read — status and tags were invisible for all of them`);
   if (plan.notice.undiscovered.length > 0)
     console.log(`  ${YELLOW}unaffordable${R} directories never read: ${plan.notice.undiscovered.join(', ')} ${D}(raise the budget)${R}`);
   if (plan.notice.unsearched.length > 0)

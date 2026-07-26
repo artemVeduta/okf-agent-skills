@@ -232,9 +232,10 @@ const codeBacked = bundle({
     indexDoc('', ['overview'], true),
     indexDoc('metrics', ['metrics/revenue', 'metrics/arr', 'metrics/churn'], true),
     indexDoc('tables', ['tables/orders', 'tables/invoices', 'tables/customers', 'tables/posting-export'], true),
-    // A bare link list: legal, and it makes the LINE tier a title with no description (§spec §8).
-    indexDoc('playbooks', ['playbooks/close-the-books', 'playbooks/legacy-close', 'playbooks/incident-billing'], false),
-    indexDoc('policies', ['policies/revenue-recognition', 'policies/data-retention', 'policies/unfiled-note'], true),
+    indexDoc('playbooks', ['playbooks/close-the-books', 'playbooks/legacy-close', 'playbooks/incident-billing'], true),
+    // A bare link list: legal, and it buys a title with no description — so it neither unlocks
+    // description scoring nor pre-pays the LINE tier.
+    indexDoc('policies', ['policies/revenue-recognition', 'policies/data-retention', 'policies/unfiled-note'], false),
   ],
 });
 
@@ -377,6 +378,7 @@ export const QUERIES: Record<string, string[]> = {
     'churn',
     'authentication rate limiting',
     'posting export column schema',
+    '',
   ],
   '2': ['what is durable context', 'knowledge-only project', 'release checklist', 'trust tier', 'embeddings'],
   '3': ['cache invalidation', 'policy', 'storage', 'quantum'],
@@ -390,6 +392,7 @@ export const EXACT_SETS: Record<string, string[][]> = {
     ['metrics/mrr'],
     ['metrics/revenue', 'tables/orders', 'policies/revenue-recognition'],
     ['tables/orders', 'metrics/mrr'],
+    ['metrics/mrr', 'metrics/mrr.md'],
   ],
   '2': [[], ['domain/durable-context'], ['domain/does-not-exist'], ['glossary', 'domain/trust-tier']],
   '3': [[], ['policy/policy-04'], ['ops/ops-01', 'ops/ops-02', 'ops/ops-03']],

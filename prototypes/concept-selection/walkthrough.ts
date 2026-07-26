@@ -269,7 +269,7 @@ const CASES: Case[] = [
   // --- ranking ------------------------------------------------------------
   {
     name: 'a body-only term is found by the probe and nothing else',
-    keys: 'qqq',
+    keys: 'qqq+',
     why: '"proration" and "ledger" live in a Computation section; no frontmatter channel can see them',
     check: (p) =>
       all(
@@ -352,6 +352,63 @@ const CASES: Case[] = [
         ok(p.budget.spent === 0, `nothing should have been spent, got ${p.budget.spent}`),
         ok(p.reasons.some((r) => r.includes('cannot cover')), 'the floor was not explained'),
       ),
+  },
+
+  // --- found by the adversarial review, kept as regressions ---------------
+  {
+    name: 'a pin whose tier is already paid for never refuses the selection',
+    keys: 'spxt-',
+    why: 'reserving the ranked fill\'s worst-case notice at pin time made a *free* pin refuse the whole run with tokens to spare',
+    check: (p) =>
+      all(
+        ok(p.outcome !== 'insufficient', `outcome should not be insufficient, got ${p.outcome} with ${p.budget.free} free`),
+        ok(p.entries.some((e) => e.verdict === 'PINNED'), 'the pin was not honored'),
+      ),
+  },
+  {
+    name: 'refusal is monotone in the budget',
+    keys: 'spxt',
+    why: 'ok at 700, refused at 900, ok again at 4,000 is not a budget rule, it is a bug wearing one',
+    check: () =>
+      ok(
+        ['spxt--', 'spxt-', 'spxt', 'spxt+'].every((k) => run(drive(k)).plan.outcome !== 'insufficient'),
+        'a larger budget produced a refusal a smaller one did not',
+      ),
+  },
+  {
+    name: 'the same broken reference named twice is one verdict and one charge',
+    keys: 'xxxxxx',
+    why: 'an id and its `.md` spelling are one reference; two verdicts for one concept breaks the invariant and double-charges the notice',
+    check: (p) =>
+      all(
+        ok(p.entries.filter((e) => e.verdict === 'UNRESOLVED').length === 1, 'a duplicated reference produced two verdicts'),
+        ok(p.violations.length === 0, `violations: ${p.violations.join(' | ')}`),
+      ),
+  },
+  {
+    name: 'a query with no surviving terms says so instead of claiming it was answered',
+    keys: 'qqqqqqq',
+    why: 'no terms means nothing was searched for — reporting directories as "already explained" explains nothing',
+    check: (p) =>
+      all(
+        ok(p.terms.length === 0, 'the case no longer drives an empty query'),
+        ok(p.reasons.some((r) => r.startsWith('no query')), 'the empty query was not reported'),
+        ok(
+          p.entries.filter((e) => e.verdict === 'UNSEARCHED').every((e) => e.detail.includes('no query terms')),
+          'an entry still claimed its directory was skipped because the query was explained',
+        ),
+      ),
+  },
+  {
+    name: 'a tier capped by a dial does not blame the budget',
+    keys: 'qqm+',
+    why: '#29 invariant 1 is only worth having if the next action names the fix that works',
+    check: (p) => {
+      const capped = p.entries.find((e) => e.verdict === 'SELECTED' && e.tier !== e.askedTier);
+      return capped
+        ? ok(capped.nextAction.includes('maxRankedTier'), `next action blames the wrong thing: ${capped.nextAction}`)
+        : 'no ranked concept was capped, so the case proves nothing';
+    },
   },
 
   // --- floors -------------------------------------------------------------
