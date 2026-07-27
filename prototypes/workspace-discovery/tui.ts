@@ -45,7 +45,7 @@ function render(): void {
   console.log(`  cwd        ${world.cwd}`);
   console.log(`  named      ${namedPath(world)} ${D}(the path [x] adjudicates)${R}`);
   console.log(
-    `  harness    ${a.harness}  ${D}symlink=${a.symlinkPolicy} allowlist=${a.allowlist.join(',') || 'none'} grants=${a.grants.join(',') || 'none'} peer-scan=${a.peerScan}${R}`,
+    `  harness    ${a.harness}  ${D}symlink=${a.symlinkPolicy} allowlist=${a.allowlist.join(',') || 'none'} additional-dirs=${a.grants.join(',') || 'none'} peer-scan=${a.peerScan}${R}`,
   );
   console.log(
     `  authority  ${D}root=${a.selectedRoot ?? 'none'} manifest-on-disk=${world.fs.manifestAt ?? 'none'} supplied=${a.manifestSupplied} schema=${world.fs.manifest?.schemaVersion ?? '-'}${R}`,
@@ -90,7 +90,7 @@ function render(): void {
       `${D}query   ${R} ${B}[r]${R}${D}read scope${R}  ${B}[w]${R}${D}route a write${R}  ${B}[x]${R}${D}reach the named path${R}`,
       `${D}scope   ${R} ${B}[b/B]${R}${D}select/clear root${R}  ${B}[m]${R}${D}manifest supplied${R}  ${B}[M]${R}${D}manifest on disk${R}  ${B}[V]${R}${D}schema major${R}  ${B}[o]${R}${D}peer scan${R}`,
       `${D}trust   ${R} ${B}[t]${R}${D}trust named${R}  ${B}[T]${R}${D}trust all${R}  ${B}[u]${R}${D}revoke${R}  ${B}[s]${R}${D}symlink policy${R}  ${B}[a]${R}${D}allowlist /opt${R}`,
-      `${D}access  ${R} ${B}[h]${R}${D}harness${R}  ${B}[g/G]${R}${D}grant/revoke${R}`,
+      `${D}access  ${R} ${B}[h]${R}${D}harness${R}  ${B}[g/G]${R}${D}grant/revoke additional dirs${R}`,
       `${D}world   ${R} ${B}[c]${R}${D}clone missing${R}  ${B}[d]${R}${D}drop bundle${R}  ${B}[k]${R}${D}move repo${R}  ${B}[K]${R}${D}swap identity${R}  ${B}[L]${R}${D}retarget links${R}  ${B}[H]${R}${D}checkout${R}  ${B}[f]${R}${D}edit bundle${R}  ${B}[q]${R}${D}quit${R}`,
     ].join('\n'),
   );

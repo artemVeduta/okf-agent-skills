@@ -165,7 +165,7 @@ export function step(w: World, key: string): World {
     case 'g':
       return recorded(
         { ...w, auth: { ...w.auth, grants: ['/'] } },
-        'harness granted access to everything (still not a scope decision)',
+        'explicit additional-directory grant -> / (Codex `--add-dir` style; still not a scope decision)',
       );
     case 'G':
       return recorded({ ...w, auth: { ...w.auth, grants: [] } }, 'revoke harness grants');

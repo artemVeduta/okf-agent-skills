@@ -89,8 +89,9 @@ const SCENARIOS: Scenario[] = [
   { name: 'Tilt root before any of that', keys: '7r', expect: 'REFUSE CWD_NOT_A_WORKSPACE', why: 'Scenario A step 2: require explicit selection, and create nothing while discovering' },
 
   // --- per-harness divergence ----------------------------------------------
-  { name: 'federated peer read under Claude Code', keys: '8eemTgx', expect: 'ROUTE OK', why: 'an added directory is a real multi-root mechanism' },
-  { name: 'the identical request under Codex', keys: '8eemTghx', expect: 'REFUSE HARNESS_NO_ACCESS', why: 'Codex is the portable floor: outside its sandbox there is no grant to give' },
+  { name: 'federated peer read under Claude Code', keys: '8eemTgx', expect: 'ROUTE OK', why: 'an explicit additional-directory grant makes an independently authorized peer accessible' },
+  { name: 'Codex refuses an authorized peer without an additional-directory grant', keys: '8eemThx', expect: 'REFUSE HARNESS_NO_ACCESS', why: 'the manifest widens discovery authority but does not grant filesystem access' },
+  { name: 'Codex admits that peer with an explicit --add-dir-style grant', keys: '8eemTghx', expect: 'ROUTE OK', why: 'the grant widens access after independent manifest authorization; it does not widen discovery authority' },
 
   // --- write routing never widens ------------------------------------------
   { name: 'write with federated peers readable', keys: '8mTgw', expect: 'ROUTE OK', why: 'read scope may federate; the write target stays inside the current repository' },

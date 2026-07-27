@@ -9,7 +9,7 @@
  *   1. the machine must never read above or sideways from a repository unless explicitly
  *      authorized, and
  *   2. the human must always be able to see *which* gate refused, because each gate has a
- *      different fix and some fixes are not even available on some harnesses.
+ *      different fix and may require harness-specific configuration.
  *
  * This file is the part worth keeping: a pure resolver over an injected filesystem view
  * and an injected authority record. No I/O, no clock, no randomness, no harness coupling.
@@ -84,7 +84,8 @@ export type Harness = 'claude-code' | 'codex' | 'opencode';
 export type SymlinkPolicy = 'deny' | 'within-workspace' | 'allowlist';
 
 /**
- * The exhaustive list of things that may widen scope past a repository boundary (§7.3).
+ * The bootstrap candidates exercised by this prototype (§7.3). This is not exhaustive:
+ * whether harness-native multi-root bootstrap belongs here remains undecided.
  * Note what is absent: the working directory, a `projects/` folder, and a dependency symlink.
  */
 export interface Bootstrap {
@@ -103,7 +104,7 @@ export interface Authority {
   /** Allowlisted external symlink targets, used only under the `allowlist` policy. */
   allowlist: string[];
   harness: Harness;
-  /** Directories the harness has been configured to reach beyond its native root. */
+  /** Explicit additional-directory grants beyond the native root (for example, Codex `--add-dir`). */
   grants: string[];
   /** Opt-in, shallow, advisory peer scan (§6.3). Never authorizes anything. */
   peerScan: boolean;
@@ -730,8 +731,8 @@ function bundlePath(dir: string): string {
 }
 
 /**
- * A manifest does not grant filesystem access (§7.3). The three harnesses differ, and Codex
- * is the floor: "no repo = CWD only", with no portable multi-root mechanism (§2.1, §2.2).
+ * A manifest does not grant filesystem access (§7.3). Native access is limited to the current
+ * repository (or cwd without one); explicit additional-directory grants widen access only.
  */
 export function harnessCanReach(
   fs: Fs,
@@ -744,7 +745,6 @@ export function harnessCanReach(
   if (blocked) return false;
   const native = repoRoot ?? here;
   if (isAncestor(native, target)) return true;
-  if (auth.harness === 'codex') return false; // sandbox, not a prompt
   return auth.grants.some((g) => isAncestor(g, target));
 }
 
@@ -975,7 +975,7 @@ function nextActionFor(e: Entry | undefined): string {
         : `trust repository identity ${e.repoIdentity}`,
     );
   }
-  if (e.failed.includes('ACCESS')) fixes.push('grant the harness access to the path (Codex: not possible outside its sandbox)');
+  if (e.failed.includes('ACCESS')) fixes.push('configure access to the path (Codex sandbox root: `--add-dir <path>`; OS denial: adjust filesystem permissions)');
   return fixes.join('; then ') + '.';
 }
 
@@ -1022,7 +1022,7 @@ export function explainScope(r: Resolution): string[] {
     case 'unscoped':
       return [
         'no scope. cwd is not inside a repository and nothing has widened it.',
-        'the portable floor: Codex gives a skill nothing above cwd when there is no repo (§2.1).',
+        'the portable floor without an additional-directory grant: Codex gives a skill nothing above cwd when there is no repo (§2.1).',
       ];
     case 'rejected':
       return [r.authority, 'autodiscovery is not a fallback for a manifest this build cannot parse.'];

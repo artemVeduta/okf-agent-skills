@@ -12,7 +12,7 @@ Tilt scenarios, which deterministic discovery and routing transitions feel safe 
 1. the machine must **never read above or sideways** from a repository unless explicitly
    authorized — and must not name back what it refused to look at; and
 2. the human must always be able to see **which gate** refused, because each gate has a different
-   fix and some fixes do not exist on some harnesses.
+   fix and may require harness-specific configuration.
 
 Out of the question's scope, deliberately: what happens when two bundles define the same concept —
 merge, shadow, or subsumption semantics and the concept identity key are issues
@@ -25,7 +25,7 @@ never answers "are these the same concept?".
 
 ```bash
 node prototypes/workspace-discovery/tui.ts          # drive it by hand
-node prototypes/workspace-discovery/walkthrough.ts  # replay the 51 hard cases
+node prototypes/workspace-discovery/walkthrough.ts  # replay the 52 hard cases
 ```
 
 Node 22.6+ (type stripping); no dependencies, no package manager, nothing written to disk.
@@ -63,15 +63,22 @@ unscoped ─(cd into a repo)────────────→ repo ─(exp
                             any of the above ─(manifest major version)→ rejected
 ```
 
-`unscoped` is the portable floor — Codex gives a skill nothing above cwd when there is no
-repository (§2.1), so the machine must be correct with zero adapters. The **current repository is
-trusted implicitly**; nothing else is.
+`unscoped` is the portable floor — without an explicit additional-directory grant, Codex gives a
+skill nothing above cwd when there is no repository (§2.1), so the machine must be correct with
+zero adapters. The **current repository is trusted implicitly**; nothing else is.
 
-**Authority is exhaustive and short.** Only a user-selected workspace root, a manifest at or below
-the ceiling, or a manifest supplied out of band widens scope. Not cwd. Not a `projects/` folder.
-Not a dependency symlink. Not a harness grant — **access is not authority**: being able to read a
-path never widens what is looked at, and declaring a path never grants permission to read it
-(§7.3, "a manifest does not grant filesystem access").
+**The tested authority candidates are short, not exhaustive.** This prototype exercises a
+user-selected workspace root, a manifest at or below the ceiling, and a manifest supplied out of
+band. Not cwd. Not a `projects/` folder. Not a dependency symlink. Not an access-only harness grant
+— **access is not authority**: being able to read a path never widens what is looked at, and
+declaring a path never grants permission to read it (§7.3, "a manifest does not grant filesystem
+access"). Whether harness-native multi-root bootstrap is a fourth authority source remains open.
+
+Codex CLI does have an access fix for paths outside its native workspace: start it with repeatable
+`--add-dir <path>` flags. The first-party CLI reference says this grants additional directories
+write access alongside the main workspace. In this model that flag contributes an access grant
+only; a selected root or manifest must independently authorize discovery. Source checked
+2026-07-27: [OpenAI Codex CLI reference](https://developers.openai.com/codex/developer-commands/?surface=cli).
 
 **Reads may federate; writes never do.** The write target is the nearest admitted bundle at or
 above cwd *inside the current repository*. A federated peer and a non-repository workspace root are
@@ -125,8 +132,11 @@ And three of the doc's own contradictions were resolved in a direction, not left
   (§6.2, §7.5). The prototype activates on re-resolution; §7.5 pre-emptively vetoes hard-coding
   any TTL, so no clock exists here at all.
 - **Whether a harness-native multi-root input should count as a bootstrap signal.** §7.3 lists it
-  alongside a user-selected root; the prototype deliberately does not, so that granting access and
-  widening scope stay visibly separate. Reversing this is a one-line change in `pickBootstrap`.
+  alongside a user-selected root; the prototype deliberately treats `--add-dir`-style grants as
+  access-only so that granting access and widening scope stay visibly separate. A distinct
+  harness-native multi-root bootstrap signal remains a candidate authority source, not a ruled-out
+  one. Testing that policy requires a distinct authority signal and corresponding
+  `pickBootstrap` handling.
 - **Which repository owns an overlapping path** when a git repo is nested inside another's working
   tree. The prototype flags the anomaly and refuses to pick (§3.6).
 - **Where the workspace-level bundle of a non-repository root physically lives**, and what trust
