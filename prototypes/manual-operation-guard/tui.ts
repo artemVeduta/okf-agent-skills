@@ -32,7 +32,7 @@ function render(): void {
   const g = world.guard;
   const cfg = g.config;
 
-  console.log(`${B}MANUAL-OPERATION GUARD${R} ${D}prototype · wayfinder #29${R}`);
+  console.log(`${B}MANUAL-OPERATION GUARD${R} ${D}prototype · Prototype the portable manual-operation guard state machine${R}`);
   console.log(
     `${D}t+${world.now / 60000}min · ${world.sessionId} · epoch ${g.ledger.epoch} · spent confirmations ${g.ledger.spent.length}${R}`,
   );

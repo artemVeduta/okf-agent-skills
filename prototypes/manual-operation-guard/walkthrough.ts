@@ -21,9 +21,12 @@ interface Scenario {
 
 const SCENARIOS: Scenario[] = [
   { name: 'baseline: request + preview + confirm', keys: 'apcr', expect: 'ALLOW OK', why: 'only the full triple authorizes' },
+  { name: 'preview + confirm without a request', keys: 'pc', expect: 'REFUSE NO_EXPLICIT_REQUEST', why: 'ambient explicit attestation is not a recorded request' },
+  { name: 'request and preview select different scopes', keys: 'aspc', expect: 'REFUSE NO_EXPLICIT_REQUEST', why: 'the token binds request occurrence, operation, and selector' },
+  { name: 'request and preview name different operations', keys: 'a4pc', expect: 'REFUSE NO_EXPLICIT_REQUEST', why: 'a request for migration cannot back a compaction preview' },
   { name: 'file added under the confirmation', keys: 'apcnr', expect: 'EXPIRE SCOPE_MOVED', why: 'unseen work must never ride along' },
   { name: 'file edited in place (same count)', keys: 'apcer', expect: 'EXPIRE SCOPE_MOVED', why: 'fingerprint is content-based, not count-based' },
-  { name: 'file moved, content identical', keys: 'apcvr', expect: 'EXPIRE SCOPE_MOVED', why: 'path/content sameness is undecided (#22/#24)' },
+  { name: 'file moved, content identical', keys: 'apcvr', expect: 'EXPIRE SCOPE_MOVED', why: 'concept identity and merge semantics remain separate decisions' },
   { name: 'mtime-only touch', keys: 'apctr', expect: 'ALLOW OK', why: 'expiring on noise trains blind reconfirmation' },
   { name: 'confirmation reused for another operation', keys: 'apc4r', expect: 'REFUSE OPERATION_MISMATCH', why: 'confirmation binds the operation' },
   { name: 'scope widened after confirmation', keys: 'sapcssr', expect: 'REFUSE SELECTOR_MISMATCH', why: 'a superset is unpreviewed work' },
@@ -32,16 +35,18 @@ const SCENARIOS: Scenario[] = [
   { name: 'confirmation aged out (ttl adapter on)', keys: 'apcTr', expect: 'EXPIRE CONFIRMATION_AGED_OUT', why: 'staleness is shown as a number' },
   { name: 'session / context boundary crossed', keys: 'apcSr', expect: 'EXPIRE SESSION_BOUNDARY', why: 'the confirming human may be gone' },
   { name: 'model-initiated request', keys: 'AAa', expect: 'REFUSE NO_EXPLICIT_REQUEST', why: 'manual-only means human-initiated' },
-  { name: 'model-initiated preview, self-confirmed', keys: 'AApc', expect: 'REFUSE SELF_CONFIRMED', why: 'the agent cannot supply both halves' },
+  { name: 'model-initiated preview, self-confirmed', keys: 'AApc', expect: 'REFUSE NO_EXPLICIT_REQUEST', why: 'the agent cannot supply the recorded request' },
+  { name: 'model confirms a valid requested preview', keys: 'apAAc', expect: 'REFUSE SELF_CONFIRMED', why: 'a recorded request does not let the agent echo the human token' },
   { name: 'requested but never previewed', keys: 'ar', expect: 'REFUSE NO_PREVIEW', why: 'no run against an unseen scope' },
   { name: 'confirming a token that was never minted', keys: 'apC', expect: 'REFUSE UNKNOWN_TOKEN', why: 'blocks forged / hallucinated ids' },
   { name: 'cancel, then re-invoke', keys: 'apcxr', expect: 'REFUSE NO_EXPLICIT_REQUEST', why: 'cancel destroys, never parks' },
-  { name: 'restart after an expiry', keys: 'apcerpcr', expect: 'ALLOW OK', why: 'every refusal has a reachable recovery' },
+  { name: 'restart after an expiry', keys: 'apcerapcr', expect: 'ALLOW OK', why: 'recovery records a fresh request before minting a new token' },
   { name: 'replay after a successful run', keys: 'apcrkr', expect: 'REFUSE TOKEN_SPENT', why: 'confirmations are single-use' },
   { name: 'retry after a run failed midway', keys: 'apcrfr', expect: 'REFUSE RUN_FAILED_MIDWAY', why: 'the bundle is in neither state' },
   { name: 'another session ran first', keys: 'apcor', expect: 'EXPIRE SUPERSEDED_BY_ANOTHER_RUN', why: 'last-write-wins is caught here or nowhere' },
   { name: 'empty scope', keys: '4aEpc', expect: 'REFUSE EMPTY_SCOPE', why: 'a silent no-op must not report success' },
-  { name: 'truncated preview (24 files)', keys: 'Gapc', expect: 'REFUSE PREVIEW_INCOMPLETE', why: 'confirming unseen scope breaks the invariant' },
+  { name: 'complete:false without a marker item', keys: 'Gapc', expect: 'REFUSE PREVIEW_INCOMPLETE', why: 'completeness is retained from the Preview contract' },
+  { name: 'fresh execute preview becomes incomplete', keys: 'apcGr', expect: 'REFUSE PREVIEW_INCOMPLETE', why: 'completeness is checked again immediately before execution' },
   { name: 'preview cannot be computed', keys: 'aBp', expect: 'REFUSE PREVIEW_FAILED', why: 'no manifest, no token' },
   { name: 'transform version bumped after confirmation', keys: 'apcUr', expect: 'EXPIRE TRANSFORM_CHANGED', why: 'work identity includes the transform' },
   { name: 'init over a non-empty bundle', keys: '1apcr', expect: 'ALLOW OK', why: 'init is scoped work, not a special case' },
@@ -64,7 +69,7 @@ const GREEN = '\x1b[32m';
 
 let mismatches = 0;
 
-console.log(`${B}MANUAL-OPERATION GUARD — scripted walkthrough (wayfinder #29)${R}\n`);
+console.log(`${B}MANUAL-OPERATION GUARD — scripted walkthrough${R}\n`);
 
 for (const scenario of SCENARIOS) {
   const world = drive(scenario.keys);
@@ -87,3 +92,5 @@ console.log(
   `${B}${SCENARIOS.length - mismatches}/${SCENARIOS.length}${R} scenarios behaved as designed` +
     (mismatches ? ` ${RED}(${mismatches} need a decision)${R}` : ''),
 );
+
+if (mismatches) process.exitCode = 1;

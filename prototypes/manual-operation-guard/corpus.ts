@@ -8,7 +8,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { TRUNCATION_MARKER, type OperationName, type PlannedItem, type Preview } from './guard.ts';
+import { type OperationName, type PlannedItem, type Preview } from './guard.ts';
 
 export interface CorpusFile {
   path: string;
@@ -98,10 +98,7 @@ export function computePreview(corpus: Corpus, operation: OperationName, selecto
       operation,
       selector,
       transformVersion: corpus.transformVersion,
-      items: [
-        ...planned.slice(0, PREVIEW_BUDGET),
-        { path: TRUNCATION_MARKER, contentHash: '-', action: 'KEEP', risk: 'SAFE' },
-      ],
+      items: planned.slice(0, PREVIEW_BUDGET),
       complete: false,
       error: null,
     };

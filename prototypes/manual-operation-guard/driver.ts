@@ -97,7 +97,11 @@ export function step(world: World, key: string): World {
     }
 
     case 'a':
-      return dispatch(world, `ask ${world.operation}`, { kind: 'request', operation: world.operation });
+      return dispatch(world, `ask ${world.operation} '${world.selector}'`, {
+        kind: 'request',
+        operation: world.operation,
+        selector: world.selector,
+      });
     case 'p':
       return dispatch(world, `preview ${world.operation} '${world.selector}'`, {
         kind: 'preview',

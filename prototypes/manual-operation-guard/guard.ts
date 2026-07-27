@@ -1,5 +1,6 @@
 /**
- * PROTOTYPE — portable manual-operation guard (wayfinder ticket #29).
+ * PROTOTYPE — portable manual-operation guard (wayfinder ticket
+ * "Prototype the portable manual-operation guard state machine").
  *
  * QUESTION BEING PROTOTYPED
  * When a harness invokes a manual-only operation (`init`, large/full `sync`,
@@ -13,7 +14,8 @@
  * no terminal code and no harness coupling. Every fact it needs — the current
  * time, the session identity, whether the harness could attest an explicit user
  * request, and the freshly observed preview — arrives as data on the action or
- * the environment. Cross-harness research (ticket #4 / #16 / #17) found that no
+ * the environment. The cross-harness architecture and invocation-control
+ * research found that no
  * harness exposes (b) "a preview was shown", (c) "the human confirmed *that*
  * preview", or (d) a reliable staleness signal to skill content, so the guard
  * manufactures and persists those facts itself and treats everything a harness
@@ -23,7 +25,7 @@
 import { createHash } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
-// Domain vocabulary (CONTEXT.md, issues #7 / #11 / #19 / #23)
+// Domain vocabulary (CONTEXT.md and the related operation-contract decisions)
 // ---------------------------------------------------------------------------
 
 export type OperationName = 'init' | 'sync' | 'migration' | 'compaction';
@@ -31,7 +33,7 @@ export type OperationName = 'init' | 'sync' | 'migration' | 'compaction';
 /** What the harness can say about the invocation that reached the skill. */
 export type RequestAttestation =
   | 'explicit' // Claude Code `disable-model-invocation`, Codex `allow_implicit_invocation: false`
-  | 'unknown' // OpenCode: the harness cannot tell (issue #17)
+  | 'unknown' // OpenCode: the harness cannot tell
   | 'model-initiated'; // the agent decided to do this on its own
 
 export type PlannedAction = 'CREATE' | 'MODIFY' | 'MOVE' | 'DELETE' | 'KEEP';
@@ -67,10 +69,19 @@ export interface PreviewToken {
   selector: string;
   transformVersion: string;
   items: PlannedItem[];
-  attestation: RequestAttestation;
+  complete: boolean;
+  request: RequestBinding | null;
   mintedAt: number;
   mintedInSession: string;
   epochAtMint: number;
+}
+
+export interface RequestBinding {
+  occurrence: number;
+  operation: OperationName;
+  selector: string;
+  attestation: Exclude<RequestAttestation, 'model-initiated'>;
+  recordedAt: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,8 +107,9 @@ export function fingerprint(preview: Preview): string {
   return createHash('sha256').update(canonical).digest('hex');
 }
 
-export function tokenIdFor(fp: string): string {
-  return `P-${fp.slice(0, 8)}`;
+export function tokenIdFor(fp: string, requestOccurrence: number | null): string {
+  const bound = createHash('sha256').update(`${requestOccurrence ?? 'unrequested'}:${fp}`).digest('hex');
+  return `P-${bound.slice(0, 8)}`;
 }
 
 export function countDestructive(items: PlannedItem[]): number {
@@ -132,7 +144,7 @@ export function describeDrift(confirmed: PlannedItem[], observed: PlannedItem[])
 
 export type GuardState =
   | { phase: 'idle' }
-  | { phase: 'requested'; operation: OperationName; attestation: RequestAttestation; at: number }
+  | { phase: 'requested'; request: RequestBinding }
   | { phase: 'previewed'; token: PreviewToken }
   | { phase: 'confirmed'; token: PreviewToken; confirmedAt: number; confirmedInSession: string; degraded: boolean }
   | { phase: 'executing'; token: PreviewToken }
@@ -162,10 +174,11 @@ export interface GuardModel {
   config: GuardConfig;
   state: GuardState;
   ledger: Ledger;
+  requestOccurrences: number;
 }
 
 export function initialModel(config: GuardConfig): GuardModel {
-  return { config, state: { phase: 'idle' }, ledger: { epoch: 0, spent: [] } };
+  return { config, state: { phase: 'idle' }, ledger: { epoch: 0, spent: [] }, requestOccurrences: 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +186,7 @@ export function initialModel(config: GuardConfig): GuardModel {
 // ---------------------------------------------------------------------------
 
 export type GuardAction =
-  | { kind: 'request'; operation: OperationName }
+  | { kind: 'request'; operation: OperationName; selector: string }
   | { kind: 'preview'; preview: Preview }
   | { kind: 'confirm'; tokenId: string }
   | { kind: 'execute'; operation: OperationName; selector: string; observed: Preview }
@@ -235,7 +248,7 @@ export interface GuardResult {
 export function reduce(model: GuardModel, action: GuardAction, env: GuardEnv): GuardResult {
   switch (action.kind) {
     case 'request':
-      return onRequest(model, action.operation, env);
+      return onRequest(model, action.operation, action.selector, env);
     case 'preview':
       return onPreview(model, action.preview, env);
     case 'confirm':
@@ -251,7 +264,7 @@ export function reduce(model: GuardModel, action: GuardAction, env: GuardEnv): G
   }
 }
 
-function onRequest(model: GuardModel, operation: OperationName, env: GuardEnv): GuardResult {
+function onRequest(model: GuardModel, operation: OperationName, selector: string, env: GuardEnv): GuardResult {
   if (env.attestation === 'model-initiated') {
     return blocked(model, {
       verdict: 'REFUSE',
@@ -263,12 +276,19 @@ function onRequest(model: GuardModel, operation: OperationName, env: GuardEnv): 
   }
 
   const restarting = model.state.phase === 'stale' || model.state.phase === 'failed' || model.state.phase === 'completed';
+  const request: RequestBinding = {
+    occurrence: model.requestOccurrences + 1,
+    operation,
+    selector,
+    attestation: env.attestation,
+    recordedAt: env.now,
+  };
   return {
-    model: { ...model, state: { phase: 'requested', operation, attestation: env.attestation, at: env.now } },
+    model: { ...model, state: { phase: 'requested', request }, requestOccurrences: request.occurrence },
     outcome: {
       verdict: restarting ? 'RESTART' : 'RECORDED',
       code: 'OK',
-      summary: `explicit request recorded for ${operation} (attestation: ${env.attestation}).`,
+      summary: `explicit request #${request.occurrence} recorded for ${operation} on '${selector}' (attestation: ${env.attestation}).`,
       detail:
         env.attestation === 'unknown'
           ? ['harness cannot attest explicit invocation; confirmation will require the human to echo the preview token']
@@ -281,8 +301,9 @@ function onRequest(model: GuardModel, operation: OperationName, env: GuardEnv): 
 /**
  * A preview is read-only, so it is never refused for authorization reasons —
  * it is refused only when it cannot honestly represent the scope. Minting the
- * token records the attestation that was on file, so `confirm` can tell a
- * human-requested preview from one the agent asked for itself.
+ * token records the exact request occurrence that matches its operation and
+ * selector. Ambient attestation is not authorization: a preview without that
+ * binding remains read-only even when the current invocation is explicit.
  */
 function onPreview(model: GuardModel, preview: Preview, env: GuardEnv): GuardResult {
   const restarting = model.state.phase === 'stale' || model.state.phase === 'failed' || model.state.phase === 'completed';
@@ -297,20 +318,23 @@ function onPreview(model: GuardModel, preview: Preview, env: GuardEnv): GuardRes
     });
   }
 
-  const attestation =
-    model.state.phase === 'requested' && model.state.operation === preview.operation
-      ? model.state.attestation
-      : env.attestation;
+  const request =
+    model.state.phase === 'requested' &&
+    model.state.request.operation === preview.operation &&
+    model.state.request.selector === preview.selector
+      ? model.state.request
+      : null;
 
   const fp = fingerprint(preview);
   const token: PreviewToken = {
-    id: tokenIdFor(fp),
+    id: tokenIdFor(fp, request?.occurrence ?? null),
     fingerprint: fp,
     operation: preview.operation,
     selector: preview.selector,
     transformVersion: preview.transformVersion,
     items: preview.items,
-    attestation,
+    complete: preview.complete,
+    request,
     mintedAt: env.now,
     mintedInSession: env.sessionId,
     epochAtMint: model.ledger.epoch,
@@ -327,9 +351,11 @@ function onPreview(model: GuardModel, preview: Preview, env: GuardEnv): GuardRes
       code: 'OK',
       summary: `preview ${token.id} minted: ${preview.items.length} item(s), ${countDestructive(preview.items)} destructive.`,
       detail: warnings,
-      nextAction: warnings.length
-        ? 'this preview cannot be confirmed as-is; narrow the selector or fix the scope'
-        : `confirm ${token.id} to authorize exactly this plan`,
+      nextAction: !request
+        ? `record an explicit request for ${preview.operation} on '${preview.selector}', then preview again`
+        : warnings.length
+          ? 'this preview cannot be confirmed as-is; narrow the selector or fix the scope'
+          : `confirm ${token.id} to authorize exactly this plan`,
     },
   };
 }
@@ -357,13 +383,33 @@ function onConfirm(model: GuardModel, tokenId: string, env: GuardEnv): GuardResu
     });
   }
 
-  if (token.attestation === 'model-initiated') {
+  if (!token.request) {
+    return blocked(model, {
+      verdict: 'REFUSE',
+      code: 'NO_EXPLICIT_REQUEST',
+      summary: `${token.operation} is manual-only and no matching explicit request backs this preview.`,
+      detail: [`previewed operation/scope: ${token.operation} on '${token.selector}'`],
+      nextAction: `ask the human to request ${token.operation} on '${token.selector}', then preview again`,
+    });
+  }
+
+  if (env.attestation === 'model-initiated') {
     return blocked(model, {
       verdict: 'REFUSE',
       code: 'SELF_CONFIRMED',
-      summary: `${token.operation} is manual-only and no explicit user request backs this preview.`,
-      detail: ['the agent produced both the preview and the confirmation'],
-      nextAction: `ask the human to request ${token.operation}, then preview and confirm again`,
+      summary: `${token.operation} is manual-only and the confirmation was model-initiated.`,
+      detail: [`preview ${token.id} is bound to request #${token.request.occurrence}, but the agent cannot echo it for the human`],
+      nextAction: `ask the human to confirm ${token.id}`,
+    });
+  }
+
+  if (!token.complete) {
+    return blocked(model, {
+      verdict: 'REFUSE',
+      code: 'PREVIEW_INCOMPLETE',
+      summary: 'the preview was truncated, so confirming it would authorize unseen work.',
+      detail: [`${token.items.length} item(s) shown; the planner reported more`],
+      nextAction: 'narrow the selector until the whole scope fits in one preview',
     });
   }
 
@@ -377,17 +423,7 @@ function onConfirm(model: GuardModel, tokenId: string, env: GuardEnv): GuardResu
     });
   }
 
-  if (!isComplete(token)) {
-    return blocked(model, {
-      verdict: 'REFUSE',
-      code: 'PREVIEW_INCOMPLETE',
-      summary: 'the preview was truncated, so confirming it would authorize unseen work.',
-      detail: [`${token.items.length - 1} item(s) shown; the planner reported more`],
-      nextAction: 'narrow the selector until the whole scope fits in one preview',
-    });
-  }
-
-  const degraded = token.attestation === 'unknown';
+  const degraded = token.request.attestation === 'unknown';
   return {
     model: {
       ...model,
@@ -398,8 +434,8 @@ function onConfirm(model: GuardModel, tokenId: string, env: GuardEnv): GuardResu
       code: 'OK',
       summary: `${token.id} confirmed; ${token.operation} is armed for exactly this plan.`,
       detail: degraded
-        ? ['degraded attestation: harness could not confirm the request was human-initiated (recorded in the audit trail)']
-        : [],
+        ? [`request #${token.request.occurrence}: harness could not attest human initiation (recorded as degraded)`]
+        : [`bound to explicit request #${token.request.occurrence} for ${token.request.operation} on '${token.request.selector}'`],
       nextAction: `run ${token.operation} on ${token.selector}`,
     },
   };
@@ -431,7 +467,7 @@ function onExecute(
       code: 'OPERATION_MISMATCH',
       summary: `the outstanding confirmation authorizes ${token.operation}, not ${action.operation}.`,
       detail: [`confirmed operation: ${token.operation}`, `requested operation: ${action.operation}`],
-      nextAction: `preview and confirm ${action.operation} on its own`,
+      nextAction: `record a request for ${action.operation} on '${action.selector}', then preview and confirm it`,
     });
   }
 
@@ -441,7 +477,7 @@ function onExecute(
       code: 'SELECTOR_MISMATCH',
       summary: `the confirmation covers scope '${token.selector}', not '${action.selector}'.`,
       detail: [`confirmed scope: ${token.selector}`, `requested scope: ${action.selector}`],
-      nextAction: `preview ${action.operation} on '${action.selector}' and confirm that plan`,
+      nextAction: `record a request for ${action.operation} on '${action.selector}', then preview and confirm it`,
     });
   }
 
@@ -451,7 +487,7 @@ function onExecute(
       code: 'TOKEN_SPENT',
       summary: `${token.id} has already authorized a run; confirmations are single-use.`,
       detail: ['replaying a confirmation cannot authorize a second execution'],
-      nextAction: `preview ${action.operation} again to see whether anything is still to do`,
+      nextAction: `record a fresh request for ${action.operation} on '${action.selector}', then preview again`,
     });
   }
 
@@ -461,7 +497,7 @@ function onExecute(
       code: 'SUPERSEDED_BY_ANOTHER_RUN',
       summary: 'another manual operation completed after this preview was taken.',
       detail: [`preview taken at epoch ${token.epochAtMint}`, `bundle is now at epoch ${model.ledger.epoch}`],
-      nextAction: `preview ${action.operation} again against the current bundle`,
+      nextAction: `record a fresh request for ${action.operation} on '${action.selector}', then preview again`,
       into: { phase: 'stale', operation: token.operation, code: 'SUPERSEDED_BY_ANOTHER_RUN', detail: [] },
     });
   }
@@ -472,7 +508,7 @@ function onExecute(
       code: 'SESSION_BOUNDARY',
       summary: 'the confirmation was given in a different session and does not carry over.',
       detail: [`confirmed in session ${confirmedInSession}`, `running in session ${env.sessionId}`],
-      nextAction: `preview and confirm ${action.operation} in this session`,
+      nextAction: `record a fresh request for ${action.operation} on '${action.selector}', then preview and confirm it in this session`,
       into: { phase: 'stale', operation: token.operation, code: 'SESSION_BOUNDARY', detail: [] },
     });
   }
@@ -484,7 +520,7 @@ function onExecute(
       code: 'CONFIRMATION_AGED_OUT',
       summary: `the confirmation is ${ageS}s old; the limit is ${Math.round(model.config.ttlMs / 1000)}s.`,
       detail: [`confirmed at t+${confirmedAt}`, `now t+${env.now}`],
-      nextAction: `preview ${action.operation} again and confirm the current plan`,
+      nextAction: `record a fresh request for ${action.operation} on '${action.selector}', then preview and confirm the current plan`,
       into: { phase: 'stale', operation: token.operation, code: 'CONFIRMATION_AGED_OUT', detail: [] },
     });
   }
@@ -495,7 +531,17 @@ function onExecute(
       code: 'PREVIEW_FAILED',
       summary: 'the current scope cannot be read, so the confirmation cannot be re-verified.',
       detail: [action.observed.error],
-      nextAction: 'fix the unreadable source, then preview and confirm again',
+      nextAction: 'fix the unreadable source, then run again so the confirmed plan can be freshly re-verified',
+    });
+  }
+
+  if (!action.observed.complete) {
+    return blocked(model, {
+      verdict: 'REFUSE',
+      code: 'PREVIEW_INCOMPLETE',
+      summary: 'the fresh execute-time preview is incomplete, so the confirmation cannot be re-verified.',
+      detail: [`${action.observed.items.length} current item(s) shown; the planner reported more`],
+      nextAction: 'narrow the selector until a complete preview can be computed, then request, preview, and confirm again',
     });
   }
 
@@ -508,7 +554,7 @@ function onExecute(
         `confirmed transform: ${token.transformVersion}`,
         `current transform: ${action.observed.transformVersion}`,
       ],
-      nextAction: `preview ${action.operation} under ${action.observed.transformVersion} and confirm that plan`,
+      nextAction: `record a fresh request for ${action.operation} on '${action.selector}', then preview under ${action.observed.transformVersion} and confirm it`,
       into: { phase: 'stale', operation: token.operation, code: 'TRANSFORM_CHANGED', detail: [] },
     });
   }
@@ -525,7 +571,7 @@ function onExecute(
         `observed  fingerprint ${observedFingerprint.slice(0, 12)}`,
         ...drift,
       ],
-      nextAction: `preview ${action.operation} again and confirm the current plan`,
+      nextAction: `record a fresh request for ${action.operation} on '${action.selector}', then preview and confirm the current plan`,
       into: { phase: 'stale', operation: token.operation, code: 'SCOPE_MOVED', detail: drift },
     });
   }
@@ -597,7 +643,7 @@ function onExecutionResult(model: GuardModel, ok: boolean, note: string, env: Gu
       code: 'RUN_FAILED_MIDWAY',
       summary: `${operation} failed partway; the bundle is in neither the pre- nor the post-state.`,
       detail: [note, 'the spent confirmation cannot authorize a resume'],
-      nextAction: `roll back or repair, then preview ${operation} again`,
+      nextAction: `roll back or repair, then record a fresh request and preview ${operation} again`,
     },
   };
 }
@@ -632,13 +678,6 @@ function onExternalExecution(model: GuardModel, operation: OperationName): Guard
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Truncation is carried on the token via a sentinel item count of -1 (see corpus.ts). */
-function isComplete(token: PreviewToken): boolean {
-  return !token.items.some((i) => i.path === TRUNCATION_MARKER);
-}
-
-export const TRUNCATION_MARKER = '<<preview-truncated>>';
 
 interface BlockedOutcome extends Outcome {
   into?: GuardState;
@@ -682,7 +721,7 @@ function notConfirmedOutcome(model: GuardModel, operation: OperationName): Block
         code: 'MUST_RESTART',
         summary: `the last confirmation for ${state.operation} expired (${state.code}) and was not replaced.`,
         detail: state.detail,
-        nextAction: `preview ${state.operation} again and confirm the current plan`,
+        nextAction: `record a fresh request for ${state.operation}, then preview and confirm the current plan`,
       };
     case 'executing':
       return {
@@ -698,7 +737,7 @@ function notConfirmedOutcome(model: GuardModel, operation: OperationName): Block
         code: 'TOKEN_SPENT',
         summary: `${state.operation} already completed; its confirmation is spent.`,
         detail: [],
-        nextAction: `preview ${operation} again to see whether anything is still to do`,
+        nextAction: `record a fresh request for ${operation}, then preview again to see whether anything is still to do`,
       };
     case 'failed':
       return {
@@ -706,7 +745,7 @@ function notConfirmedOutcome(model: GuardModel, operation: OperationName): Block
         code: 'RUN_FAILED_MIDWAY',
         summary: `${state.operation} failed partway and its confirmation is spent.`,
         detail: [state.note],
-        nextAction: `roll back or repair, then preview ${operation} again`,
+        nextAction: `roll back or repair, then record a fresh request and preview ${operation} again`,
       };
   }
 }
@@ -718,11 +757,16 @@ export function explainAuthorization(model: GuardModel): string[] {
     case 'idle':
       return ['no manual-only operation is authorized (no request on record)'];
     case 'requested':
-      return [`${s.operation} requested (attestation: ${s.attestation}) — no preview yet`];
+      return [
+        `${s.request.operation} on '${s.request.selector}' requested as #${s.request.occurrence} (attestation: ${s.request.attestation}) — no preview yet`,
+      ];
     case 'previewed':
       return [
         `${s.token.operation} previewed as ${s.token.id} on '${s.token.selector}' — awaiting confirmation`,
         `${s.token.items.length} item(s), ${countDestructive(s.token.items)} destructive, transform ${s.token.transformVersion}`,
+        s.token.request
+          ? `bound to request #${s.token.request.occurrence} for ${s.token.request.operation} on '${s.token.request.selector}'`
+          : 'no matching explicit request is bound; this preview cannot be confirmed',
       ];
     case 'confirmed':
       return [
