@@ -12,8 +12,10 @@ set such that:
 
 1. the budget for the **rest of the agent operation** is visibly reserved *before* anything is
    selected, not checked afterwards; and
-2. the supplied limit is **never silently overrun** — where "silently" is the load-bearing word:
-   an agent that does not know what it failed to load concludes the bundle has nothing.
+2. the supplied limit is **never silently overrun** when the injected per-document and generated-
+   output bounds are conservative — where "silently" is load-bearing: an agent that does not know
+   what it failed to load concludes the bundle has nothing. An observed size above an injected
+   bound is reported as a violation rather than presented as a valid within-budget result.
 
 Out of the question's scope, deliberately:
 
@@ -30,7 +32,7 @@ Out of the question's scope, deliberately:
 
 ```bash
 node prototypes/concept-selection/tui.ts          # drive it by hand
-node prototypes/concept-selection/walkthrough.ts  # replay the 42 hard cases + the sweep
+node prototypes/concept-selection/walkthrough.ts  # replay the 45 hard cases + the sweep
 ```
 
 Node 22.6+ (native TypeScript type stripping). No dependencies, no package manager, nothing
@@ -44,7 +46,7 @@ written to disk.
 | `corpus.ts` | Three fake bundles with made-up character counts and ground-truth token counts. | no |
 | `driver.ts` | `step(world, key)` — the one keystroke path the TUI and the walkthrough share. | no |
 | `tui.ts` | Terminal shell; re-renders the whole budget and selection after every key. | no |
-| `walkthrough.ts` | 42 cases plus a 4,312-run sweep, replayed through those same keys. | no |
+| `walkthrough.ts` | 45 cases plus a 4,312-run sweep, replayed through those same keys. | no |
 
 ## The model
 
@@ -61,17 +63,19 @@ independently and bought in escalating order, only while query terms remain unex
 | Channel | Buys | Reveals |
 | --- | --- | --- |
 | `paths` | the `glob` listing | ids and path segments — bought unconditionally |
-| `index` | a directory's `index.md` | title + description for everything it lists, in bulk |
+| `bare index` | a directory's link-only `index.md` | title only; pre-pays no allocation tier |
+| `descriptive index` | a directory's descriptive `index.md` | title + description; pre-pays LINE |
 | `scan` | that directory's frontmatter | `tags`, `type`, `status` — available nowhere else |
 | `probe` | a grep across bodies, capped like `grep -m` | words the frontmatter never mentions |
 
-The probe is priced at its **cap**, not at its result count: a real grep hands back its output
-before anything can count it, so pricing from the number of matches would be an oracle. The
-affordability test uses the bound, the ledger charges what came back, and matches beyond the cap
-are reported as unread.
+The probe is admitted and charged at an injected **cap**, not at its result count: a real grep hands
+back output before anything can count it, so pricing from matches already returned is an oracle.
+The separately injected observed size is audit-only; if it exceeds the cap, the per-line verifier
+reports the bad bound. Matches beyond `grep -m` are reported as unread.
 
-Buying an index **pre-pays the LINE tier** for every concept it lists; a scan pre-pays CARD. That
-makes the index/scan choice an investment made *before* you know what you want, not a lookup.
+A bare index reveals each title and **pre-pays no tier**. A descriptive index reveals title +
+description and **pre-pays LINE**. A scan pre-pays CARD. These are different investments made
+*before* allocation, not interchangeable index purchases.
 
 **Progressive disclosure is the unit of allocation, not a navigation sequence.** Selection picks a
 (concept, tier) pair from `LINE → CARD → SECTION → FULL`. Tiers are atomic: a half-read concept is
@@ -109,9 +113,10 @@ notice is part of the selection and is paid for out of the same budget.
 - **`context build` "returns the N most relevant concepts within a token budget" has the wrong
   unit.** N concepts at unspecified depth is not a budget decision; (concept, tier) pairs are.
   Twelve titles and one full body cost the same and answer different questions.
-- **The index is not always the cheap option.** It is cheaper *per concept* than a scan, but it
-  cannot answer a tag, type or status query at all — so the choice is not price, it is which
-  signals the query needs. §8 of the spec ("navigate one level at a time") is silent on this.
+- **An index is not one disclosure level.** A bare index buys titles but no allocation tier; a
+  descriptive index buys title + description and LINE. Neither can answer a tag, type or status
+  query, so the choice is which signal the query needs, not only price. §8 of the spec ("navigate
+  one level at a time") is silent on this.
 - **Hiding deprecated concepts is not free.** `status` lives in frontmatter, so a budget that only
   bought an index cannot filter on it — a deprecated concept then ranks and is selected. The
   prototype reports the count of concepts ranked without their status read rather than pretending
@@ -146,7 +151,7 @@ finished prototype:
   possible omission notice. Below it the selector refuses before spending a token, rather than
   spending down to an answer that cannot say what it left out.
 - **A pin that costs nothing refused the whole selection.** Reserving the *ranked fill's*
-  worst-case notice before honoring the pins meant a pin whose LINE tier an index had already
+  worst-case notice before honoring the pins meant a pin whose LINE tier a descriptive index had already
   pre-paid could be refused with tokens to spare — and the refusal was non-monotone in the budget:
   fine at 700, refused at 900, fine again at 4,000, because a larger budget bought more discovery,
   scored more candidates, and pushed the reservation up. Pins are measured against what pins owe;
@@ -163,7 +168,7 @@ finished prototype:
 
 ## Validation
 
-`walkthrough.ts` replays **42/42** named cases plus a **4,312-run sweep** (every fixture × query ×
+`walkthrough.ts` replays **45/45** named cases plus a **4,312-run sweep** (every fixture × query ×
 exact-reference set × budget × task under the ceiling estimator) with no invariant violated, and a
 separate randomised-dial fuzz — 30,000 runs under the ceiling, 4,000 per estimator — produced the
 percentages above and no budget violation under the ceiling.
@@ -174,17 +179,27 @@ the fixtures are illustrative, not the benchmark corpus
 [#13](https://github.com/artemVeduta/okf-agent-skills/issues/13) will need. Any case that behaves
 wrong under hand-driving overturns the corresponding rule above.
 
-**What the fixtures do not prove.** The densities in `corpus.ts` are invented, so "÷2.9 is a
-ceiling" is a property of these numbers and not of real bundles — the divisor that is actually
-safe is a measurement #7 owes. Two ledger lines also price their own ground truth: the notice and
-the probe charge what the dials say they cost, so the one line item that exists to prevent a
-silent overrun is the one the overrun check cannot see.
+**Narrowed guarantee.** Admission, reservation and ledger charging use injected conservative
+bounds for both `PROBE` and `NOTICE`; they never use post-result counts or rendered size. Observed
+sizes are audit-only, and regressions prove an observed probe or notice larger than its bound emits
+a per-line violation, including a silent-overrun violation when it crosses the total. Thus a clean
+plan stays within budget if every injected bound is conservative.
+
+**What the fixtures still do not prove.** The densities in `corpus.ts`, the probe cap and the
+notice-template bounds are invented. Proving them conservative for real OKF bundles requires a
+representative corpus, the actual tokenizer used by each target harness, and measurements of the
+real grep serialization and notice renderer at their configured caps. Until that calibration
+exists, this prototype proves the mechanism and failure visibility, not that its numeric bounds
+are safe in production.
 
 ## Surfaced, not resolved
 
 - Every number in `DEFAULT_DIALS` is a candidate, including the reserve fractions, the ranking
-  weights and the notice pricing. They are dials on the TUI so that none of them reads as adopted.
-  That the reserve varies *per task kind at all* is itself an assertion, not a finding.
+  weights and output caps. They are prototype inputs so that none reads as adopted. That the
+  reserve varies *per task kind at all* is itself an assertion, not a finding.
+- Which component observes and injects tokenizer-specific conservative bounds for corpus reads,
+  capped grep output and each finite notice form; how calibration rejects a bound when corpus,
+  tokenizer, grep serialization or notice templates change.
 - Two numbers are not dials and should be: the three-character minimum term length (`v2`, `P0`,
   `id` and `AI` are real queries — the selector now reports what it dropped rather than dropping
   it in silence) and the hardcoded English stopword list.

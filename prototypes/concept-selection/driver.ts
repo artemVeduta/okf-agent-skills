@@ -8,6 +8,7 @@
 import {
   CEILING,
   DEFAULT_DIALS,
+  DEFAULT_OUTPUT_PRICING,
   ESTIMATORS,
   TASKS,
   TIERS,
@@ -127,6 +128,7 @@ export function request(w: World): Request {
     budget: { total: BUDGETS[w.budget], source: w.unknownBudget ? 'unknown' : 'explicit' },
     estimator: w.estimator,
     dials: w.dials,
+    outputPricing: DEFAULT_OUTPUT_PRICING,
   };
 }
 

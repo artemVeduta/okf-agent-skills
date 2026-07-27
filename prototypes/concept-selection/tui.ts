@@ -81,6 +81,7 @@ function render(): void {
   console.log(
     `  dials      ${D}probe=${d.allowProbe} discovery=${d.exhaustiveDiscovery ? 'exhaustive' : 'satisfice'} deprecated=${d.includeDeprecated} drafts=${d.includeDraft} maxRankedTier=${d.maxRankedTier} noticeCap=${d.noticeShareCap}${R}`,
   );
+  console.log(`  bounds     ${D}probe=${req.outputPricing.bounds.probeBase}+${d.probeMaxHits}×${req.outputPricing.bounds.probeHit}; notice=${req.outputPricing.bounds.noticeBase}+named×${req.outputPricing.bounds.noticeNamed} or +${req.outputPricing.bounds.noticeCounted}${R}`);
   console.log('');
 
   const oc = plan.outcome === 'ok' ? GREEN : plan.outcome === 'degraded' ? YELLOW : RED;
@@ -89,7 +90,7 @@ function render(): void {
   console.log(
     `  ${D}▒reserve ${plan.budget.reserve}  ·discovery  █pins  ▓ranked  ─notice   spent ${plan.budget.spent}/${plan.budget.spendable}  free ${plan.budget.free}${R}`,
   );
-  console.log(`  ${D}real cost of the same selection: ${plan.budget.actualSpent} (+ reserve ${plan.budget.reserve} = ${plan.budget.actualSpent + plan.budget.reserve} of ${plan.budget.total})${R}`);
+  console.log(`  ${D}observed cost of the same selection: ${plan.budget.actualSpent} (+ reserve ${plan.budget.reserve} = ${plan.budget.actualSpent + plan.budget.reserve} of ${plan.budget.total})${R}`);
   console.log('');
 
   console.log(`${B}Ledger${R}`);

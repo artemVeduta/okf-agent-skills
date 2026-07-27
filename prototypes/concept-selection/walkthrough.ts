@@ -10,7 +10,17 @@
 
 import { drive, run } from './driver.ts';
 import { BUDGETS, EXACT_SETS, FIXTURES, QUERIES } from './corpus.ts';
-import { select, CEILING, DEFAULT_DIALS, TASKS, type Plan, type Tier, type Verdict } from './selection.ts';
+import {
+  select,
+  CEILING,
+  DEFAULT_DIALS,
+  DEFAULT_OUTPUT_PRICING,
+  TASKS,
+  type Corpus,
+  type Plan,
+  type Tier,
+  type Verdict,
+} from './selection.ts';
 
 interface Case {
   name: string;
@@ -226,14 +236,47 @@ const CASES: Case[] = [
     check: (p) => ok(p.reasons.some((r) => r.startsWith('probe skipped')), 'the probe was not skipped on a 300-token budget'),
   },
   {
-    name: 'buying an index pre-pays the LINE tier for everything it lists',
+    name: 'buying a descriptive index reveals title + description and pre-pays LINE',
     keys: 's',
-    why: 'an index is a bulk discount, not a lookup — which is why the index/scan choice is an investment, not a fact',
+    why: 'descriptive entries are a bulk LINE purchase, unlike cheaper bare title links',
     check: (p) =>
       all(
         ok(lineKinds(p).some((l) => l.startsWith('DISCOVERY:index')), 'no index was bought'),
         ok(verdict(p, 'overview') === 'SELECTED' && cost(p, 'overview') === 0, 'a LINE-tier selection was charged twice'),
       ),
+  },
+  {
+    name: 'buying a bare index reveals only title and pre-pays no tier',
+    keys: '',
+    why: 'a bare link must not unlock description scoring or make a later LINE allocation free',
+    check: () => {
+      const source = FIXTURES[0];
+      const original = source.concepts.find((c) => c.id === 'policies/revenue-recognition')!;
+      const concept = { ...original, title: 'Needle title', description: 'description must stay hidden' };
+      const corpus: Corpus = {
+        ...source,
+        concepts: [concept],
+        indexes: [{ dir: 'policies', entries: [concept.id], withDescriptions: false, chars: 50, actual: 14 }],
+        pathListChars: concept.id.length + 4,
+        pathListActual: 9,
+      };
+      const plan = select(corpus, {
+        query: 'needle',
+        task: 'feature',
+        exact: [],
+        budget: { total: 300, source: 'explicit' },
+        estimator: CEILING,
+        dials: { ...DEFAULT_DIALS, allowProbe: false },
+        outputPricing: DEFAULT_OUTPUT_PRICING,
+      });
+      const entry = plan.entries.find((e) => e.id === concept.id)!;
+      return all(
+        ok(entry.seen === 'title', `bare index exposed ${entry.seen}, not title`),
+        ok(entry.signals.some((s) => s.startsWith('title:')), 'title did not rank'),
+        ok(!entry.signals.some((s) => s.startsWith('desc:')), 'description leaked from a bare index'),
+        ok(entry.cost > 0, 'bare index silently pre-paid LINE'),
+      );
+    },
   },
 
   // --- status is not free -------------------------------------------------
@@ -327,6 +370,53 @@ const CASES: Case[] = [
     keys: 'sq---',
     why: 'the reservation must bound both notice forms — reserving the named form let the collapse itself overrun',
     check: (p) => ok(p.budget.spent <= p.budget.spendable, `spent ${p.budget.spent} > spendable ${p.budget.spendable}`),
+  },
+  {
+    name: 'an underreported probe result cannot silently overrun',
+    keys: '',
+    why: 'admission uses the injected cap; a bad cap must be exposed by the per-line audit, never hidden by result-count pricing',
+    check: () => {
+      const { req } = run(drive('q'));
+      const baseline = select(FIXTURES[0], req);
+      const plan = select(FIXTURES[0], {
+        ...req,
+        outputPricing: {
+          ...req.outputPricing,
+          observed: { ...req.outputPricing.observed, probeHit: 10_000 },
+        },
+      });
+      const probe = plan.lines.find((line) => line.label.startsWith('probe'))!;
+      return all(
+        ok(probe.cost === DEFAULT_OUTPUT_PRICING.bounds.probeBase + DEFAULT_DIALS.probeMaxHits * DEFAULT_OUTPUT_PRICING.bounds.probeHit, 'probe was not charged at its pre-result cap'),
+        ok(probe.actual > probe.cost, 'the fixture no longer underreports the observed probe size'),
+        ok(plan.budget.spent === baseline.budget.spent, 'post-result probe size changed admission or ledger charging'),
+        ok(plan.violations.some((v) => v.startsWith('LINE UNDER-ESTIMATED: probe')), 'the bad probe bound escaped the per-line check'),
+        ok(plan.violations.some((v) => v.startsWith('SILENT OVERRUN:')), 'the probe overrun was not reported'),
+      );
+    },
+  },
+  {
+    name: 'an underreported notice result cannot silently overrun',
+    keys: '',
+    why: 'notice admission and reservation use injected bounds; observed rendering size only audits their conservatism',
+    check: () => {
+      const { req } = run(drive('sq---'));
+      const baseline = select(FIXTURES[0], req);
+      const plan = select(FIXTURES[0], {
+        ...req,
+        outputPricing: {
+          ...req.outputPricing,
+          observed: { ...req.outputPricing.observed, noticeCounted: 10_000, noticeNamed: 10_000 },
+        },
+      });
+      const notice = plan.lines.find((line) => line.kind === 'NOTICE')!;
+      return all(
+        ok(notice.actual > notice.cost, 'the fixture no longer underreports the observed notice size'),
+        ok(plan.budget.spent === baseline.budget.spent, 'post-result notice size changed admission or ledger charging'),
+        ok(plan.violations.some((v) => v.startsWith('LINE UNDER-ESTIMATED: notice')), 'the bad notice bound escaped the per-line check'),
+        ok(plan.violations.some((v) => v.startsWith('SILENT OVERRUN:')), 'the notice overrun was not reported'),
+      );
+    },
   },
   {
     name: 'the collapse has two triggers: the share cap, and having no room left',
@@ -446,6 +536,7 @@ function sweep(): string | null {
               budget: { total, source: 'explicit' },
               estimator: CEILING,
               dials: DEFAULT_DIALS,
+              outputPricing: DEFAULT_OUTPUT_PRICING,
             });
             runs++;
             if (p.violations.length > 0)

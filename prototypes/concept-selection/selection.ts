@@ -7,9 +7,10 @@
  *   progressive-disclosure behavior returns a relevant concept set while visibly reserving budget
  *   for the rest of the agent operation and never silently overrunning the supplied limit?
  *
- * This module is the only part worth keeping: a pure selector over an injected corpus, an injected
- * request and an injected estimator. No I/O, no clock, no randomness, no tokenizer, no harness
- * coupling, no cache. Every number it reports is an *estimate* derived from observable characters.
+ * This module is the only part worth keeping: a pure selector over an injected corpus, request,
+ * estimator and observable output bounds. No I/O, no clock, no randomness, no tokenizer, no
+ * harness coupling, no cache. Clean plans are bounded only when those injected bounds are
+ * conservative; observed output above a bound is emitted as a verifier violation.
  *
  * Deliberately outside it:
  *   - semantic / vector retrieval (excluded by the ticket)
@@ -82,11 +83,11 @@ export interface Concept {
   actual: { LINE: number; CARD: number };
 }
 
-/** A directory `index.md`: a bulk purchase of the LINE tier for everything it lists (§ index files). */
+/** A directory `index.md`: either bare titles or descriptive LINE entries (§ index files). */
 export interface IndexDoc {
   dir: string;
   entries: string[];
-  /** Entries SHOULD carry the linked concept's `description`; real bundles ship bare link lists too. */
+  /** Descriptive entries reveal title + description and pre-pay LINE; bare entries reveal title only. */
   withDescriptions: boolean;
   chars: number;
   actual: number;
@@ -164,8 +165,6 @@ export interface Dials {
   allowProbe: boolean;
   /** Keep buying channels after every query term is explained. */
   exhaustiveDiscovery: boolean;
-  probeBaseChars: number;
-  probeHitChars: number;
   /** `grep -m`: the match cap the probe is priced at before it runs. */
   probeMaxHits: number;
   wTitle: number;
@@ -176,13 +175,30 @@ export interface Dials {
   wBody: number;
   wLinkedToPin: number;
   wSameDirAsPin: number;
-  /** Notice pricing, in tokens — the notice is generated prose, not a file on disk. */
-  noticeBase: number;
-  noticeNamed: number;
-  noticeCounted: number;
   /** Share of the spendable budget above which the notice collapses from named to counted. */
   noticeShareCap: number;
 }
+
+/** Token sizes for observable output whose bytes do not exist until a tool or renderer runs. */
+export interface OutputSizes {
+  probeBase: number;
+  probeHit: number;
+  noticeBase: number;
+  noticeNamed: number;
+  noticeCounted: number;
+}
+
+export interface OutputPricing {
+  /** Conservative bounds injected from measurements; admission and ledger charging use only these. */
+  bounds: OutputSizes;
+  /** Post-result measurements used only to audit whether the injected bounds were actually conservative. */
+  observed: OutputSizes;
+}
+
+export const DEFAULT_OUTPUT_PRICING: OutputPricing = {
+  bounds: { probeBase: 83, probeHit: 45, noticeBase: 18, noticeNamed: 12, noticeCounted: 14 },
+  observed: { probeBase: 83, probeHit: 45, noticeBase: 18, noticeNamed: 12, noticeCounted: 14 },
+};
 
 export const DEFAULT_DIALS: Dials = {
   reserveFraction: {
@@ -203,8 +219,6 @@ export const DEFAULT_DIALS: Dials = {
   stalePenalty: 20,
   allowProbe: true,
   exhaustiveDiscovery: false,
-  probeBaseChars: 240,
-  probeHitChars: 130,
   probeMaxHits: 12,
   wTitle: 30,
   wDescription: 12,
@@ -214,9 +228,6 @@ export const DEFAULT_DIALS: Dials = {
   wBody: 8,
   wLinkedToPin: 18,
   wSameDirAsPin: 6,
-  noticeBase: 18,
-  noticeNamed: 12,
-  noticeCounted: 14,
   noticeShareCap: 0.1,
 };
 
@@ -231,6 +242,7 @@ export interface Request {
   budget: Budget;
   estimator: Estimator;
   dials: Dials;
+  outputPricing: OutputPricing;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,9 +362,8 @@ export function tierChars(c: Concept, tier: Tier, matched: Section[]): number {
 }
 
 /**
- * What `tier` costs *now*, given what discovery already put in context. Buying a directory's
- * `index.md` pre-pays the LINE tier for everything it lists; a frontmatter scan pre-pays CARD.
- * This is why the index/scan choice is an investment decision and not a lookup.
+ * What `tier` costs *now*, given what discovery already put in context. A descriptive index
+ * pre-pays LINE, a bare index pre-pays no tier, and a frontmatter scan pre-pays CARD.
  */
 function chargeableChars(c: Concept, tier: Tier, matched: Section[], seen: Seen): number {
   const line = atLeast(seen, 'line') ? 0 : c.chars.LINE;
@@ -435,6 +446,7 @@ interface Candidate {
 export function select(corpus: Corpus, req: Request): Plan {
   const d = req.dials;
   const e = req.estimator;
+  const output = req.outputPricing;
   const ts = terms(req.query);
   const lines: SpendLine[] = [];
   const reasons: string[] = [];
@@ -501,10 +513,10 @@ export function select(corpus: Corpus, req: Request): Plan {
   // refused before a single token is spent, rather than spent down to a misleading answer. The
   // check sits *after* pin resolution — which is pure lookup and costs nothing — so a refusal can
   // still name a reference that resolves to nothing.
-  const floorCost = est(corpus.pathListChars, e) + d.noticeBase + d.noticeCounted;
+  const floorCost = est(corpus.pathListChars, e) + output.bounds.noticeBase + output.bounds.noticeCounted;
   if (spendable < floorCost) {
     return insufficient(corpus, req, lines, reasons, total, reserve, spendable, 0, 0, ts, unresolved, e,
-      `${spendable} spendable tokens cannot cover the path list (${est(corpus.pathListChars, e)}) plus the smallest possible omission notice (${d.noticeBase + d.noticeCounted}) — nothing can be selected honestly`);
+      `${spendable} spendable tokens cannot cover the path list (${est(corpus.pathListChars, e)}) plus the smallest possible omission notice (${output.bounds.noticeBase + output.bounds.noticeCounted}) — nothing can be selected honestly`);
   }
 
   // -- Phase DISCOVER -------------------------------------------------------
@@ -547,14 +559,15 @@ export function select(corpus: Corpus, req: Request): Plan {
   const knownNamed = () => unresolved.length + unaffordable.size;
   const noticeFloor = () =>
     pins.reduce((n, c) => n + est(chargeableChars(c, 'LINE', [], seen.get(c.id)!), e), 0) +
-    noticeReserve(d, knownNamed(), spendable);
+    noticeReserve(d, output.bounds, knownNamed(), spendable);
 
   // Buy where the free channel already points: directories whose paths carry a query term first.
   const pathScore = (dir: string) =>
     corpus.concepts.filter((c) => c.dir === dir && hits(c.id.replace(/[/-]/g, ' '), ts).length > 0).length;
   const dirs = directories(corpus).sort((a, b) => pathScore(b) - pathScore(a));
 
-  // (a) indexes — the cheap bulk purchase of title + description
+  // (a) indexes — bare entries reveal titles only; descriptive entries reveal title + description
+  // and pre-pay LINE. Both are bulk discovery purchases, but only one buys an allocation tier.
   for (const dir of dirs) {
     if (!d.exhaustiveDiscovery && unexplained().length === 0) break;
     const idx = corpus.indexes.find((i) => i.dir === dir);
@@ -602,14 +615,13 @@ export function select(corpus: Corpus, req: Request): Plan {
   // (c) the probe — the only channel that sees words the frontmatter never mentions, and the only
   // one whose cost scales with how well the query matches. Bought last, and often not at all.
   //
-  // It is priced at its **cap** rather than at its result count: a real grep hands back its output
-  // before anything can count it, so pricing from the number of matches would be an oracle. The
-  // cap is `grep -m` — the affordability test uses the bound, the ledger charges what came back,
-  // and matches beyond the cap are reported as unread rather than silently missed.
+  // It is admitted and charged at an injected **cap**, never at its result count: a real grep hands
+  // back output before anything can count it. The separately injected observed size audits whether
+  // that bound was conservative; it does not participate in admission or charging.
   let probed = false;
   const probedSections = new Set<Section>();
   if (d.allowProbe && ts.length > 0 && (d.exhaustiveDiscovery || unexplained().length > 0)) {
-    const bound = est(d.probeBaseChars + d.probeMaxHits * d.probeHitChars, e);
+    const bound = output.bounds.probeBase + d.probeMaxHits * output.bounds.probeHit;
     if (bound <= remaining() - noticeFloor()) {
       const found = corpus.concepts.flatMap((c) => c.sections.filter((s) => hits(s.heading + ' ' + s.terms.join(' '), ts).length > 0));
       const kept = found.slice(0, d.probeMaxHits);
@@ -621,9 +633,9 @@ export function select(corpus: Corpus, req: Request): Plan {
       charge({
         kind: 'DISCOVERY',
         label: `probe · ${kept.length} of at most ${d.probeMaxHits} body hits`,
-        cost: est(d.probeBaseChars + kept.length * d.probeHitChars, e),
-        actual: est(d.probeBaseChars + kept.length * d.probeHitChars, e),
-        why: `priced at the ${d.probeMaxHits}-match cap before it ran (${bound}), charged for what came back — grep output enters context line by line`,
+        cost: bound,
+        actual: output.observed.probeBase + kept.length * output.observed.probeHit,
+        why: `admitted and charged at the injected ${d.probeMaxHits}-match bound (${bound}); observed result size is audit-only`,
       });
       if (found.length > kept.length)
         reasons.push(`probe truncated at ${d.probeMaxHits} matches: ${found.length - kept.length} further body matches were not read`);
@@ -739,11 +751,11 @@ export function select(corpus: Corpus, req: Request): Plan {
     pinPlans.reduce((n, p) => n + est(chargeableChars(p.c, p.tier, p.matched, seen.get(p.c.id)!), e), 0);
   const fixedNamed = unresolved.length + undiscoveredDirs.length + unsearchedDirs.length + filtered.length;
   // Reserve only what is *already* known to be omissible. Reserving for the ranked fill's worst
-  // case as well made a pin that costs nothing — its LINE tier already pre-paid by an index —
+  // case as well made a pin that costs nothing — its LINE tier already paid by a descriptive index —
   // refuse the whole selection with tokens to spare, and made the refusal non-monotone in the
   // budget: ok at 700, refused at 900, ok again at 4,000. The ranked loop reserves for its own
   // pending clips as it goes, and the final collapse backstops both.
-  const pinBudget = remaining() - noticeReserve(d, fixedNamed, spendable);
+  const pinBudget = remaining() - noticeReserve(d, output.bounds, fixedNamed, spendable);
   // Degrade the most expensive pin first: it frees the most budget per step, so fewer pins are
   // degraded overall. The order references were typed in is not a priority signal, and letting it
   // decide which one survives at FULL would be a ranking rule the human cannot see.
@@ -827,7 +839,7 @@ export function select(corpus: Corpus, req: Request): Plan {
     for (let i = TIERS.indexOf(capped); i >= 0; i--) {
       const t = TIERS[i];
       const cost = est(chargeableChars(c, t, matched, s), e);
-      if (spent + cost + noticeReserve(d, fixedNamed + clipped.length + pending, spendable) <= spendable) {
+      if (spent + cost + noticeReserve(d, output.bounds, fixedNamed + clipped.length + pending, spendable) <= spendable) {
         placed = t;
         break;
       }
@@ -843,7 +855,7 @@ export function select(corpus: Corpus, req: Request): Plan {
         cost: 0,
         actual: 0,
         summary: `matched (${score}) but the budget is spent`,
-        detail: `cheapest tier LINE costs ${est(chargeableChars(c, 'LINE', matched, s), e)}; ${remaining() - noticeReserve(d, fixedNamed + clipped.length + pending, spendable)} spendable tokens remain after the notice`,
+        detail: `cheapest tier LINE costs ${est(chargeableChars(c, 'LINE', matched, s), e)}; ${remaining() - noticeReserve(d, output.bounds, fixedNamed + clipped.length + pending, spendable)} spendable tokens remain after the notice`,
         nextAction: 'raise the budget, narrow the query, or name it as an exact reference',
       });
       continue;
@@ -956,7 +968,7 @@ export function select(corpus: Corpus, req: Request): Plan {
     clipped.length + unresolved.length + reportedUndiscovered.length + reportedUnsearched.length + filtered.length;
   const anything = named > 0 || missed > 0 || reportedUnsearched.length > 0 || unstatused > 0;
   const notice: Notice = {
-    form: anything ? noticeForm(d, named, spendable) : 'none',
+    form: anything ? noticeForm(d, output.bounds, named, spendable) : 'none',
     clipped,
     undiscovered: reportedUndiscovered,
     unsearched: reportedUnsearched,
@@ -966,19 +978,22 @@ export function select(corpus: Corpus, req: Request): Plan {
     missed,
     cost: 0,
   };
-  notice.cost = notice.form === 'none' ? 0 : notice.form === 'named' ? d.noticeBase + named * d.noticeNamed : d.noticeBase + d.noticeCounted;
+  notice.cost = notice.form === 'none' ? 0 : notice.form === 'named' ? output.bounds.noticeBase + named * output.bounds.noticeNamed : output.bounds.noticeBase + output.bounds.noticeCounted;
   // The collapse has two triggers, not one: naming costs more than the share cap allows, or more
   // than what is physically left. The reservation guarantees the collapsed form always fits.
   if (notice.cost > remaining()) {
     notice.form = 'counted';
-    notice.cost = d.noticeBase + d.noticeCounted;
+    notice.cost = output.bounds.noticeBase + output.bounds.noticeCounted;
   }
   if (notice.cost > 0)
     charge({
       kind: 'NOTICE',
       label: `notice · ${notice.form} · ${named} named, ${missed} missed`,
       cost: notice.cost,
-      actual: notice.cost,
+      actual:
+        notice.form === 'named'
+          ? output.observed.noticeBase + named * output.observed.noticeNamed
+          : output.observed.noticeBase + output.observed.noticeCounted,
       why:
         notice.form === 'counted'
           ? 'naming every omission would cost more than the concepts it describes — collapsed to counts'
@@ -1019,12 +1034,8 @@ function directories(corpus: Corpus): string[] {
   return seen;
 }
 
-function noticeForm(d: Dials, named: number, spendable: number): 'named' | 'counted' {
-  return d.noticeBase + named * d.noticeNamed > d.noticeShareCap * spendable ? 'counted' : 'named';
-}
-
-function noticeSize(d: Dials, named: number, spendable: number): number {
-  return noticeForm(d, named, spendable) === 'named' ? d.noticeBase + named * d.noticeNamed : d.noticeBase + d.noticeCounted;
+function noticeForm(d: Dials, bounds: OutputSizes, named: number, spendable: number): 'named' | 'counted' {
+  return bounds.noticeBase + named * bounds.noticeNamed > d.noticeShareCap * spendable ? 'counted' : 'named';
 }
 
 /**
@@ -1039,14 +1050,14 @@ function noticeSize(d: Dials, named: number, spendable: number): number {
  * whichever is bigger. That makes the share cap mean exactly what it says — this much of the
  * budget, at most, may be spent describing what was left out.
  */
-function noticeReserve(d: Dials, reachable: number, spendable: number): number {
+function noticeReserve(d: Dials, bounds: OutputSizes, reachable: number, spendable: number): number {
   const cap = d.noticeShareCap * spendable;
-  const named = (k: number) => d.noticeBase + k * d.noticeNamed;
+  const named = (k: number) => bounds.noticeBase + k * bounds.noticeNamed;
   // The collapsed form is always reachable — running out of room collapses the notice too — so it
   // is the floor of every reservation, even when nothing has been omitted yet.
-  const collapsed = d.noticeBase + d.noticeCounted;
+  const collapsed = bounds.noticeBase + bounds.noticeCounted;
   if (named(reachable) <= cap) return Math.max(collapsed, named(reachable));
-  const kMax = Math.max(0, Math.floor((cap - d.noticeBase) / d.noticeNamed));
+  const kMax = Math.max(0, Math.floor((cap - bounds.noticeBase) / bounds.noticeNamed));
   return Math.max(collapsed, named(Math.min(kMax, reachable)));
 }
 
