@@ -7,7 +7,7 @@ in prose, and to record where running it disagrees with the writing.
 ```bash
 node prototypes/retrieval-runtime/tui.ts          # drive it by hand
 node prototypes/retrieval-runtime/tui.ts --once "xxS"  # render one frame from a key string
-node prototypes/retrieval-runtime/walkthrough.ts  # 93 cases + a 136,080-run sweep
+node prototypes/retrieval-runtime/walkthrough.ts  # 102 cases + a 136,080-run sweep
 ```
 
 Node 22.6+ (native TypeScript type stripping). No dependencies, nothing written to disk.
@@ -191,6 +191,19 @@ Two further problems the run surfaces:
   `retrieve`'s signature has no registry input. Either the runtime is not stateless, or quarantine
   belongs to an adapter that #13 does not give it to.
 
+### 5b. An omission's remedy cannot be guaranteed to work
+
+#28 shipped the `{summary, detail, nextAction}` triple as a *data-structure guarantee*: doing the
+named thing, with all else fixed, changes the verdict. Driving this runtime falsifies that as a
+guarantee. A concept left `UNSEARCHED` by satisficing is advised to switch breadth to exhaustive;
+doing so examines the scope and then exhausts the work envelope, so the verdict does not move.
+
+The runtime cannot know that in advance without spending the work whose absence it is reporting
+— which would be an oracle. So the enforceable invariant is weaker than #28 claimed: the advice
+must *move* the run and must never name a knob already at its limit (case J8). #13 inherits the
+five-classes-five-fixes framing from #28 without noticing that the fix is a hypothesis, not a
+promise.
+
 ### 6. The satisficing rule is undecided, not decided
 
 #13 replaces #28's "stop when every query term is explained" with *"one candidate or a coherent
@@ -203,8 +216,12 @@ resolution was choosing between:
 - `component` — any connected set. Since index files link every concept in a directory, this is
   #28's union rule under a new name.
 
-The dial (`h` in the TUI) makes the collapse visible. #13 does not decide the question; it renames
-it and hands the operating point to whoever writes the first implementation.
+The dial (`h` in the TUI) makes the collapse visible — and the sharpest version of the result is
+one the dial found by accident: on every fixture shipped here, `linked` and `component` are
+byte-identical, because index files link every concept in a directory. The middle position *is*
+the permissive extreme. That is a fixture property, not a proof, but it is what #13's own
+"coherent **linked** evidence set" would do on any bundle with §8 indexes. #13 does not decide the
+question; it renames it and hands the operating point to whoever writes the first implementation.
 
 And the rule has no notion of clause **informativeness**, while #13 bans every cheap
 discriminator by name — no stopword rule, no minimum term length, no stemming, no synonyms, no
@@ -212,7 +229,10 @@ discriminator by name — no stopword rule, no minimum term length, no stemming,
 
 The `df-weighted` dial offers document frequency as a candidate discriminator and shows the two
 rules disagreeing about what must be covered for the same query (H3). **This is a proposal, not a
-finding.** It is corpus-derived and carries its own constant (`dfCeiling`), which #7 would have
+finding** — and it arrived with the very defect this prototype exists to catch: the first
+implementation computed document frequency by grepping every body in the corpus, including bodies
+nobody had paid to read, so unread text could change a concept's score and its tier. Case J6 is
+the regression: mutating an unpurchased body must be inert under both settings. It is corpus-derived and carries its own constant (`dfCeiling`), which #7 would have
 to calibrate — the same class of thing #13 deferred. It is offered to #13 as an option, and the
 run proves only that bare clause coverage treats filler and discriminating clauses identically.
 
@@ -264,8 +284,10 @@ The query-normalization rules survive completely and are the cleanest part of th
 (cases A1–A13): one-character terms, digits, quoted phrases, paths and identifiers retained;
 identifier subterms added without replacing the original; NFC and case folding; no stopword
 deletion, no minimum length, no substring stems, no implicit stemming, no generated synonyms.
-There is deliberately no `includes()` call anywhere in `query.ts` — that single call is what made
-#28's matcher match `spec` inside `specification`.
+`query.ts` never calls `includes()` **on a string** — the four calls it makes are on `string[]` of
+whole tokens. Substring matching on raw text is what made #28's matcher match `spec` inside
+`specification`; an earlier draft of this README claimed there were no `includes()` calls at all,
+which is textually false and was caught by review.
 
 ## What this prototype does NOT prove
 
@@ -305,6 +327,31 @@ neither hides unlisted concepts nor forces linked concepts into context" — the
 unlisted concepts but no assertion about them. And the exact/profile tokenizer branch is a label:
 `EXACT` and `CONSERVATIVE` are behaviourally identical here.
 
-Validated in-session against the scripted catalogue (93 cases, 136,080-run sweep). **Not yet
+### What review found in this prototype
+
+Two independent reviewers were run against the frozen artifact at `c04ec7e`, and both found real
+defects. Recorded because the corrections are part of the result:
+
+- Finding 1 was **misattributed**: the dominant cause was a missing reservation (~1,200 worlds),
+  not the receipt's self-reference (~119, worst case 6 tokens).
+- The reproduction keys were wrong, and two figures in the seam table had been **estimated rather
+  than read from the run** (200,328 → 182,328; 269 → 372).
+- The `df-weighted` proposal was an **oracle** — it read unpaid bodies (J6).
+- A demanded concept could receive **two verdicts**, `UNDISCOVERED` and `DEMANDED` (J4).
+- An unresolved demand received **no verdict** on any non-refusing path (J5).
+- The outcome was **non-monotone in the allowance** on the in-context seam — #28's `spxt-`
+  regression, reintroduced, and invisible because the sweep sampled 7 allowances out of a
+  continuum (J1–J2).
+- The receipt's `observed` size was derived from its own bound, so every `invalid` was triggered
+  by a line the runtime generates itself rather than by document evidence (J7).
+- Four model-facing fields were charged nothing; scope summaries were uncapped and grew with the
+  bundle; a budget overrun left the outcome at `degraded`; and a dead ternary chose between two
+  identical outcomes — the `withDescriptions` pattern verbatim.
+
+The catalogue now sweeps allowance continuously and no longer holds eleven of seventeen dials at
+their defaults. **The lesson is #28's, re-learned: these breaks all lived in a dimension the sweep
+was not varying.**
+
+Validated in-session against the scripted catalogue (102 cases, 136,080-run sweep). **Not yet
 driven live at the keyboard.** Any case that behaves wrong under hand-driving overturns the
 corresponding finding above.

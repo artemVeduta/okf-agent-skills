@@ -502,6 +502,106 @@ check('A13 the original query is preserved verbatim', parseQuery('  Config-Loade
 }
 
 // ===========================================================================
+// J. Regressions for the adversarial review of the frozen artifact at c04ec7e.
+// Each of these was found by an independent reviewer and each contradicted a claim in the
+// README. The sweep missed all of them because it sampled 7 allowances out of a continuum and
+// held 11 of 17 dials at their defaults.
+// ===========================================================================
+{
+  // CONTINUOUS allowance sweep. `ALLOWANCES` has 7 entries; the breaks lived between them.
+  let overrun = '';
+  let nonMonotone = '';
+  let dup = '';
+  for (const seam of [0, 1])
+    for (const exact of [0, 1, 2, 4]) {
+      let sawGood = false;
+      for (let a = 120; a <= 1400; a++) {
+        const w: World = { ...INITIAL, seam, exact };
+        const req = request(w);
+        req.declaration.allowance = a;
+        const r = retrieve(corpusOf(w), req);
+        const where = `seam${seam} x${exact} A=${a}`;
+        if ((r.outcome === 'ok' || r.outcome === 'degraded')) {
+          sawGood = true;
+          if (r.budget.contextSpent > r.budget.spendable) overrun ||= `${where}: ${r.budget.contextSpent}/${r.budget.spendable}`;
+        } else if (r.outcome === 'insufficient' && sawGood) nonMonotone ||= `${where}: ${r.reasons[0]}`;
+        const ids = r.entries.map((e) => e.id);
+        if (new Set(ids).size !== ids.length) dup ||= where;
+      }
+    }
+  check('J1 no overrun at any allowance, not just the seven the driver offers', overrun === '', overrun);
+  check('J2 the outcome is monotone in the allowance at every step of 1', nonMonotone === '', nonMonotone);
+  check('J3 no concept ever receives two verdicts', dup === '', dup);
+}
+{
+  // A demanded concept must not also carry a discovery verdict saying it was never examined.
+  const r = run({ ...INITIAL, exact: 1, envelope: { version: 'w', filesInspected: 99, bytesParsed: 900, probeOutputBytes: 99, ticks: 99 } }).result;
+  const forIt = r.entries.filter((e) => e.id === 'retention').map((e) => e.verdict);
+  check('J4 a demand gets exactly one verdict, not UNDISCOVERED and DEMANDED both', forIt.length === 1, forIt.join('+'));
+}
+{
+  // An unresolved demand must be an Entry, not just a name in the omissions.
+  const r = run({ ...INITIAL, exact: 4 }).result;
+  const unres = r.entries.filter((e) => e.verdict === 'UNRESOLVED');
+  check('J5 an unresolved demand carries a verdict and a nextAction', unres.length === r.omissions.unresolved.length && unres.every((e) => e.nextAction.length > 0));
+}
+{
+  // THE oracle test for the df-weighted proposal: text nobody paid to read must be inert.
+  let leak = '';
+  for (const inf of [false, true]) {
+    const w = { ...INITIAL, informative: inf };
+    const base = retrieve(CORPORA[0], request(w));
+    const mut = structuredClone(CORPORA[0]);
+    const t = mut.concepts.find((k) => k.id === 'onboarding')!;
+    t.sections = t.sections.map((sec) => ({ ...sec, text: 'retention policy cadence '.repeat(4) }));
+    const other = retrieve(mut, request(w));
+    const key = (r: Result) => JSON.stringify(r.entries.map((e) => [e.id, e.verdict, e.tier, e.score]));
+    if (key(base) !== key(other)) leak = inf ? 'df-weighted' : 'off';
+  }
+  check('J6 unread body text cannot change a score, a tier or a verdict', leak === '', leak);
+}
+{
+  // The receipt's observed size must not be derived from its own bound, or `invalid` is always
+  // triggered by the runtime's own generated line rather than by document evidence.
+  const r = run({ ...INITIAL, model: 2, breadth: 'exhaustive' }).result;
+  const kinds = new Set(r.violations.filter((v) => v.startsWith('BOUND FALSIFIED')).map((v) => v.split(' ')[2]));
+  check('J7 a falsified bound is detectable on document lines, not only generated ones', kinds.size === 0 || [...kinds].some((k) => k === 'RANKED' || k === 'DEMAND'), [...kinds].join(','));
+}
+{
+  // Take the advice and check the verdict actually changes.
+  const w: World = { ...INITIAL, allowance: 1, breadth: 'satisfice' };
+  const before = run(w).result;
+  const stuck: string[] = [];
+  for (const e of before.entries) {
+    if (e.verdict === 'SELECTED' || e.verdict === 'DEMANDED' || e.verdict === 'UNRESOLVED') continue;
+    let after: Result | null = null;
+    if (/switch breadth to exhaustive/.test(e.nextAction)) after = run({ ...w, breadth: 'exhaustive' }).result;
+    else if (/context allowance/.test(e.nextAction)) after = run({ ...w, allowance: 6 }).result;
+    else if (/work envelope/.test(e.nextAction)) after = run({ ...w, envelope: { version: 'w', filesInspected: 99, bytesParsed: 9_999_999, probeOutputBytes: 99999, ticks: 999 } }).result;
+    else if (/filter/.test(e.nextAction)) after = run({ ...w, includeDeprecated: true }).result;
+    if (!after) { stuck.push(`${e.id}: unparseable advice "${e.nextAction}"`); continue; }
+    const changed =
+      after.entries.find((x) => x.id === e.id)?.verdict !== e.verdict ||
+      after.receipt.stopReason !== before.receipt.stopReason;
+    // NOT "the verdict changes". Two constraints can bind in sequence, and the run cannot know
+    // that the second will bind without spending the work whose absence it is reporting —
+    // which would be an oracle. So the enforceable invariant is: the advice moves the run, and
+    // never names a knob already at its limit.
+    if (!changed) stuck.push(`${e.id}/${e.verdict}: "${e.nextAction}" moved nothing`);
+    if (/switch breadth to exhaustive/.test(e.nextAction) && w.breadth === 'exhaustive')
+      stuck.push(`${e.id}: advised a knob already at its limit`);
+  }
+  check('J8 every nextAction moves the run and never names a knob already at its limit', stuck.length === 0, stuck.slice(0, 2).join(' | '));
+}
+{
+  // Materializing a concept means reading it, so it must cost work.
+  const big = { version: 'w', filesInspected: 99, bytesParsed: 9_999_999, probeOutputBytes: 99999, ticks: 999 };
+  const lean = run({ ...INITIAL, allowance: 2, breadth: 'exhaustive', envelope: big }).result;
+  const rich = run({ ...INITIAL, allowance: 6, breadth: 'exhaustive', envelope: big }).result;
+  check('J9 materialization is charged to the work ledger', rich.work.spent.bytesParsed > lean.work.spent.bytesParsed || rich.receipt.selected.length === lean.receipt.selected.length);
+}
+
+// ===========================================================================
 // I. Sweep — every reachable combination, asserting the invariants hold
 // ===========================================================================
 let runs = 0;

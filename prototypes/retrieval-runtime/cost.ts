@@ -102,7 +102,7 @@ export function price(model: CostModel, p: Priced): Priced {
 
 // #13: the context ledger "charges only bytes/tokens crossing the runtime interface:
 // materialized concept tiers, the bounded omission notice, and the receipt."
-export type ContextLineKind = 'RESERVE' | 'DEMAND' | 'RANKED' | 'NOTICE' | 'RECEIPT' | 'DISCOVERY';
+export type ContextLineKind = 'DEMAND' | 'RANKED' | 'NOTICE' | 'RECEIPT' | 'DISCOVERY';
 
 export interface ContextLine {
   kind: ContextLineKind;
@@ -125,15 +125,6 @@ export class ContextLedger {
   /** What admission may reason about. Bounds only. */
   get spent(): number {
     return this.lines.reduce((n, l) => n + l.cost.bound, 0);
-  }
-
-  /** Audit-only. */
-  get observedSpent(): number {
-    return this.lines.reduce((n, l) => n + l.cost.observed, 0);
-  }
-
-  get remaining(): number {
-    return this.spendable - this.spent;
   }
 
   /**

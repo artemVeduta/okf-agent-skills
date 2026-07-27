@@ -17,7 +17,6 @@ import {
   price,
   priced,
   NO_WORK,
-  WORK_DIMENSIONS,
   type CostModel,
   type Priced,
   type Work,
@@ -417,7 +416,7 @@ export function retrieve(corpus: Corpus, req: Request): Result {
     if (inContext) {
       // #28's world: discovery output is model-visible, so it competes with materialization.
       const priced_ = price(model, cost);
-      if (ctx.spent + priced_.bound + reserveForOmissions(0) + receiptReserve() > spendable) {
+      if (ctx.spent + priced_.bound + maxOmissionReserve() + receiptReserve() + demandFloor > spendable) {
         undiscoveredChannels.add(channel);
         if (!undiscoveredScopes.includes(scope)) undiscoveredScopes.push(scope);
         stopReason = 'context allowance exhausted during discovery (in-context seam)';
@@ -454,6 +453,14 @@ export function retrieve(corpus: Corpus, req: Request): Result {
     (inContext ? [...new Set(corpus.concepts.map((k) => k.dir))].length * 3 + 1 : 0) +
     2; // the notice and the receipt itself
   const receiptReserve = () => receiptBound(req, maxReachableLines);
+
+  // Upper bound on what the demands will owe at their cheapest tier, known before any of them
+  // is resolved. Only bites on the in-context seam, where discovery spends the same ledger.
+  const dearestLine = corpus.concepts.reduce(
+    (n, k) => Math.max(n, price(model, add(k.cost.locator, k.cost.titleDesc)).bound),
+    0,
+  );
+  const demandFloor = inContext ? demandNamesUpperBound * dearestLine : 0;
   const extrasCeiling =
     d.nameCap * 2 + // scope names, both classes, capped like every other named omission
     6 + // channel names, both classes
@@ -470,6 +477,11 @@ export function retrieve(corpus: Corpus, req: Request): Result {
     }
     return best + extrasCeiling * req.output.perName.bound;
   }
+  /** The largest omission reserve any continuation of this run can reach. */
+  const maxOmissionReserve = () =>
+    req.output.noticeBase.bound +
+    Math.max(req.output.collapsed.bound, d.nameCap * req.output.perName.bound) +
+    extrasCeiling * req.output.perName.bound;
 
   // 5a. Filesystem inventory. #13: "Filesystem inventory establishes what exists."
   const gotInventory = buy('inventory', corpus.key, corpus.inventory, { ...NO_WORK, filesInspected: 1, bytesParsed: corpus.inventoryBytes, ticks: 1 }, 'the inventory of what exists');
@@ -519,6 +531,7 @@ export function retrieve(corpus: Corpus, req: Request): Result {
   }
 
   // -- Phase 6: exact demands, resolved before ranking -------------------------
+  const entries: Entry[] = [];
   const resolved = new Map<string, Concept>();
   const unresolved: string[] = [];
   for (const ref of demandNames) {
@@ -530,6 +543,18 @@ export function retrieve(corpus: Corpus, req: Request): Result {
     else unresolved.push(ref);
   }
   knownOmissions += unresolved.length;
+  for (const ref of unresolved) {
+    entries.push({
+      id: ref,
+      verdict: 'UNRESOLVED',
+      score: 0,
+      observed: 'none',
+      cost: priced(0, 0),
+      summary: 'exact demand did not resolve',
+      detail: 'no concept, path or source reference in the scope snapshot matched it',
+      nextAction: 'check the reference',
+    });
+  }
 
   // -- Phase 7: filters, evidence-bound ---------------------------------------
   const filtered: string[] = [];
@@ -549,7 +574,6 @@ export function retrieve(corpus: Corpus, req: Request): Result {
     ids.filter((id) => !atLeast(observed.get(id) ?? 'none', 'card')).length;
 
   // -- Phase 8: ranking --------------------------------------------------------
-  const entries: Entry[] = [];
   const ranked: { k: Concept; score: number; matched: Section[] }[] = [];
   let missCount = 0;
 
@@ -581,10 +605,13 @@ export function retrieve(corpus: Corpus, req: Request): Result {
     }
 
     if (seen === 'none' || seen === 'locator') {
+      // A demand gets its verdict in Phase 9a. Emitting a discovery verdict here too produced
+      // a result that said "never examined" and handed over the full body in the same breath.
+      if (isDemand) continue;
       const inUnreached = undiscoveredScopes.includes(k.dir);
       entries.push({
         id: k.id,
-        verdict: inUnreached ? 'UNDISCOVERED' : unsearchedScopes.includes(k.dir) ? 'UNSEARCHED' : 'UNSEARCHED',
+        verdict: inUnreached ? 'UNDISCOVERED' : 'UNSEARCHED',
         score: 0,
         observed: seen,
         ledger: inUnreached ? (inContext ? 'context' : 'work') : undefined,
@@ -597,13 +624,15 @@ export function retrieve(corpus: Corpus, req: Request): Result {
           ? inContext
             ? 'raise the context allowance'
             : 'raise the discovery-work envelope'
-          : 'switch breadth to exhaustive, or broaden the query',
+          : breadth === 'exhaustive'
+            ? 'raise the discovery-work envelope'
+            : 'switch breadth to exhaustive',
       });
       knownOmissions += 1;
       continue;
     }
 
-    const { score, matched } = scoreConcept(k, query, seen, probed.has(k.id), d, corpus);
+    const { score, matched } = scoreConcept(k, query, seen, probed.has(k.id), d, corpus, observed, probed);
     if (score === 0 && !isDemand) {
       // MISS requires that every applicable channel was examined. Under satisfice that is
       // frequently false, so a zero-score concept read only through an index is UNSEARCHED
@@ -631,7 +660,8 @@ export function retrieve(corpus: Corpus, req: Request): Result {
           cost: priced(0, 0),
           summary: `read only to the ${seen.toUpperCase()} tier; its body was never examined`,
           detail: 'a zero score here is not evidence of a miss — the body channel was never bought',
-          nextAction: 'switch breadth to exhaustive so the body channel is bought',
+          nextAction:
+            breadth === 'exhaustive' ? 'raise the discovery-work envelope' : 'switch breadth to exhaustive',
         });
       }
       continue;
@@ -693,6 +723,7 @@ export function retrieve(corpus: Corpus, req: Request): Result {
       if (fits(cost, 0)) {
         placed = tier;
         ctx.charge('DEMAND', `${k.id}@${tier}`, cost, `exact demand ${ref}`);
+        work.charge('materialize', k.id, { ...NO_WORK, filesInspected: 1, bytesParsed: k.bytes, ticks: 1 });
         selected.push({ id: k.id, tier, sections: tier === 'SECTION' ? matched.map((s) => s.heading) : undefined });
         demandEntries.push({
           id: k.id,
@@ -751,6 +782,7 @@ export function retrieve(corpus: Corpus, req: Request): Result {
       if (fits(cost, pending + 1)) {
         placed = tier;
         ctx.charge('RANKED', `${k.id}@${tier}`, cost, `score ${score}`);
+        work.charge('materialize', k.id, { ...NO_WORK, filesInspected: 1, bytesParsed: k.bytes, ticks: 1 });
         selected.push({ id: k.id, tier, sections: tier === 'SECTION' ? matched.map((s) => s.heading) : undefined });
         entries.push({
           id: k.id,
@@ -787,10 +819,16 @@ export function retrieve(corpus: Corpus, req: Request): Result {
   }
 
   // -- Phase 10: the bounded model-facing structure ----------------------------
-  const rankedOrSelected = [...ranked.map((r) => r.k.id), ...selected.map((s) => s.id)];
+  // Materialization at CARD or above puts complete frontmatter in front of the model, so those
+  // concepts are no longer unevaluated even though discovery never scanned them.
+  const materialisedAtCard = new Set(
+    selected.filter((s) => s.tier !== 'LINE').map((s) => s.id),
+  );
+  const rankedOrSelected = [...new Set([...ranked.map((r) => r.k.id), ...selected.map((s) => s.id)])]
+    .filter((id) => !materialisedAtCard.has(id));
   for (const p of predicates) {
     if (!p.active) continue;
-    const blind = countBlind([...new Set(rankedOrSelected)]);
+    const blind = countBlind(rankedOrSelected);
     if (blind > 0) unevaluated.push({ predicate: p.name, candidates: blind });
   }
 
@@ -846,7 +884,16 @@ export function retrieve(corpus: Corpus, req: Request): Result {
   };
 
   // -- Phase 11: the receipt ---------------------------------------------------
-  const receiptCost = price(model, priced(receiptBound(req, ctx.lines.length), Math.ceil(receiptBound(req, ctx.lines.length) * 0.86)));
+  // Observed size comes from the injected fixture numbers, independently of the bound. Deriving
+  // it from the bound made the receipt the most sensitive detector in the run, so every `invalid`
+  // was triggered by the runtime's own generated line rather than by document evidence.
+  const receiptCost = price(
+    model,
+    priced(
+      receiptBound(req, ctx.lines.length),
+      req.output.receiptBase.observed + (ctx.lines.length + 2) * req.output.receiptPerLine.observed,
+    ),
+  );
   ctx.charge('RECEIPT', 'receipt', receiptCost, 'the audit record');
 
   const receipt: Receipt = {
@@ -1014,9 +1061,11 @@ function scoreConcept(
   probed: boolean,
   d: Dials,
   corpus: Corpus,
+  observedMap: Map<string, ObservedTier>,
+  probedSet: Set<string>,
 ): { score: number; matched: Section[] } {
   let score = 0;
-  const weights = corpus ? clauseWeights(corpus, query, d) : [];
+  const weights = clauseWeights(corpus, query, d, observedMap, probedSet);
   query.clauses.forEach((c, i) => {
     const w = weights[i] ?? 1;
     if (clauseMatches(c, `${k.id} ${k.path}`)) score += 2 * w;
@@ -1039,15 +1088,23 @@ function scoreConcept(
  * frequency is the one discriminator left standing: it is lexical, deterministic, needs no
  * calibration constant from #7, and it is computable from the inventory #13 already mandates.
  */
-function clauseWeights(corpus: Corpus, query: Query, d: Dials): number[] {
+function clauseWeights(
+  corpus: Corpus,
+  query: Query,
+  d: Dials,
+  observed: Map<string, ObservedTier>,
+  probed: Set<string>,
+): number[] {
   if (d.informativeness === 'off') return query.clauses.map(() => 1);
   const n = corpus.concepts.length || 1;
   return query.clauses.map((c) => {
+    // Only text the run has actually paid to observe may contribute. An earlier revision
+    // grepped every body in the corpus at zero cost, which let unread text change a
+    // concept's score and its tier — exactly the oracle class this prototype reports.
     const df = corpus.concepts.filter((k) =>
-      clauseMatches(c, `${k.id} ${k.title ?? ''} ${k.description ?? ''} ${k.preamble ?? ''} ${k.sections.map((s) => s.heading + ' ' + s.text).join(' ')}`),
+      clauseMatches(c, searchableText(k, observed.get(k.id) ?? 'none', probed.has(k.id))),
     ).length;
-    const share = df / n;
-    return share > d.dfCeiling ? 0 : 1;
+    return df / n > d.dfCeiling ? 0 : 1;
   });
 }
 
@@ -1069,7 +1126,7 @@ export function evidenceSufficient(
   probed: Set<string>,
   d: Dials,
 ): { sufficient: boolean; covered: number; required: number; by: string[] } {
-  const weights = clauseWeights(corpus, query, d);
+  const weights = clauseWeights(corpus, query, d, observed, probed);
   const required = query.clauses.map((_, i) => i).filter((i) => weights[i] > 0);
   if (required.length === 0) return { sufficient: false, covered: 0, required: 0, by: [] };
 
