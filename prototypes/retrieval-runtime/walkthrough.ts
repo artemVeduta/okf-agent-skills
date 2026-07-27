@@ -1,13 +1,15 @@
 // PROTOTYPE — throwaway. Replays the case catalogue plus a sweep.
 //   node prototypes/retrieval-runtime/walkthrough.ts
 //
-// Every case drives the runtime through `driver.step`, i.e. through exactly the keys a human
-// presses in the TUI, so nothing is reachable here that is not reachable by hand.
+// Cases named with `at("keys")` drive the runtime through `driver.step` — exactly the keys a
+// human presses in the TUI. Cases that construct a `World` literal do so because some state is
+// not reachable from a key (the `w` key cycles only three work envelopes); those are marked by
+// the explicit `envelope:` field and are NOT reproducible by hand.
 
 import { parseQuery, clauseMatches, fold, tokenize } from './query.ts';
 import { CORPORA } from './corpus.ts';
 import { WORK_DIMENSIONS } from './cost.ts';
-import { retrieve, pickProfile, evidenceSufficient, DEFAULT_DIALS, RESERVE_PROFILES, TIERS, type Result } from './retrieve.ts';
+import { retrieve, pickProfile, evidenceSufficient, DEFAULT_DIALS, DEFAULT_OUTPUT, RESERVE_PROFILES, TIERS, type Result } from './retrieve.ts';
 import {
   ALLOWANCES,
   COHERENCE,
@@ -324,11 +326,32 @@ check('A13 the original query is preserved verbatim', parseQuery('  Config-Loade
   check('F8 a policy-rejected concept is never reported as CLIPPED', asClipped === 0, `filtered ${observedFiltered}, clipped ${asClipped}`);
 }
 {
-  // the bounded structure does not grow with the corpus
+  // The bounded structure must be bounded by the CAPS, not by the corpus. Comparing two corpora
+  // is the wrong test — they can legitimately differ because one has an omission class the other
+  // does not. The invariant is a ceiling that no world exceeds.
+  const O = DEFAULT_OUTPUT;
+  const ceiling = (cap: number, demands: number) =>
+    O.noticeBase.bound + Math.max(O.collapsed.bound, cap * O.perName.bound) +
+    (cap * 2 + 6 + 2 + demands) * O.perName.bound;
+  let worst = 0;
+  let breach = '';
+  for (let c = 0; c < CORPORA.length; c++)
+    for (let q = 0; q < QUERIES.length; q++)
+      for (let x = 0; x < EXACTS.length; x++)
+        for (let a = 0; a < ALLOWANCES.length; a++)
+          for (const cap of [1, 3, 8]) {
+            const r = run({ ...INITIAL, corpus: c, query: q, exact: x, allowance: a, nameCap: cap, breadth: 'exhaustive' }).result;
+            worst = Math.max(worst, r.omissions.cost.bound);
+            if (r.omissions.cost.bound > ceiling(cap, EXACTS[x].length))
+              breach = `c${c} q${q} x${x} cap${cap}: ${r.omissions.cost.bound}`;
+          }
+  check('F9 the omission structure never exceeds its cap-derived ceiling', breach === '', breach);
   const small = run({ ...INITIAL, corpus: 1, query: 2 }).result;
-  const big = run({ ...INITIAL, corpus: 2, query: 2 }).result;
-  check('F9 the omission structure is bounded independently of corpus size', small.omissions.cost.bound === big.omissions.cost.bound);
   check('F10 MISS is count-only', small.omissions.missCount >= 0 && !('missNames' in small.omissions));
+  check('F10b scope summaries are capped, with a count beyond the cap', (() => {
+    const r = run({ ...INITIAL, corpus: 0, query: 1, nameCap: 1, breadth: 'exhaustive', envelope: { version: 'w', filesInspected: 1, bytesParsed: 999999, probeOutputBytes: 999, ticks: 99 } }).result;
+    return r.omissions.undiscovered.scopes.length <= 1 && r.omissions.undiscovered.scopeCount >= r.omissions.undiscovered.scopes.length;
+  })());
 }
 {
   // the notice reservation must never have been too small at any intermediate step
@@ -483,28 +506,51 @@ check('A13 the original query is preserved verbatim', parseQuery('  Config-Loade
 // ===========================================================================
 let runs = 0;
 const sweepFailures: string[] = [];
+// Sweeps the dials an earlier revision left at their defaults: task, breadth, provenance,
+// cost model, nameCap, declaredOutput and audit capability. Refusal and invalid paths are NOT
+// exempt from the overrun check — exempting them is how 5,940 refusals that charged an envelope
+// against a negative spendable went unreported.
 for (let c = 0; c < CORPORA.length; c++)
   for (let q = 0; q < QUERIES.length; q++)
     for (let x = 0; x < EXACTS.length; x++)
       for (let a = 0; a < ALLOWANCES.length; a++)
-        for (let s = 0; s < SEAMS.length; s++)
-          for (let h = 0; h < COHERENCE.length; h++) {
-            runs++;
-            const w: World = { ...INITIAL, corpus: c, query: q, exact: x, allowance: a, seam: s, coherence: h };
-            const r = run(w).result;
-            if (r.outcome === 'ok' || r.outcome === 'degraded') {
-              if (r.budget.contextSpent > r.budget.spendable) sweepFailures.push(`overrun @ ${c}/${q}/${x}/${a}/${s}/${h}`);
-              // exactly one verdict per concept
-              const ids = r.entries.map((e) => e.id);
-              if (new Set(ids).size !== ids.length) sweepFailures.push(`double verdict @ ${c}/${q}/${x}/${a}/${s}/${h}`);
-              // every concept in scope has a verdict
-              const covered = new Set(ids);
-              for (const k of CORPORA[c].concepts) if (!covered.has(k.id)) sweepFailures.push(`no verdict for ${k.id} @ ${c}/${q}/${x}/${a}/${s}/${h}`);
-              // per-line ceiling, never on the total
-              for (const l of r.receipt.contextLines) if (l.observed !== null && l.observed > l.bound) sweepFailures.push(`line falsified but not invalid @ ${c}/${q}/${x}/${a}/${s}/${h}`);
-            }
-            if (r.outcome === 'invalid' && r.entries.length > 0) sweepFailures.push(`invalid leaked content @ ${c}/${q}/${x}/${a}/${s}/${h}`);
-          }
+        for (let s2 = 0; s2 < SEAMS.length; s2++)
+          for (let h = 0; h < COHERENCE.length; h++)
+            for (let t = 0; t < TASKS.length; t += 3)
+              for (const br of ['satisfice', 'exhaustive'] as const)
+                for (const prov of ['explicit', 'unknown'] as const)
+                  for (const cap of [1, 8]) {
+                    runs++;
+                    const w: World = {
+                      ...INITIAL, corpus: c, query: q, exact: x, allowance: a, seam: s2,
+                      coherence: h, task: t, breadth: br, provenance: prov, nameCap: cap,
+                    };
+                    const r = run(w).result;
+                    const where = `c${c} q${q} x${x} a${ALLOWANCES[a]} ${SEAMS[s2]} ${br} ${prov} cap${cap}`;
+                    // EVERY path, refusals included. The invariant is not "never overrun" —
+                    // below the cost of the smallest refusal the runtime must overrun to say
+                    // anything at all, including "no". The invariant is never overrun SILENTLY.
+                    if (r.budget.contextSpent > Math.max(0, r.budget.spendable)) {
+                      const declared = r.violations.some((v) => v.startsWith('UNPLANNED SPEND') || v.startsWith('SILENT OVERRUN'));
+                      if (!declared) sweepFailures.push(`SILENT overrun (${r.outcome}) @ ${where}`);
+                    }
+                    if (r.outcome === 'ok' || r.outcome === 'degraded') {
+                      const ids = r.entries.map((e) => e.id);
+                      if (new Set(ids).size !== ids.length) sweepFailures.push(`double verdict @ ${where}`);
+                      const covered = new Set(ids);
+                      for (const k of CORPORA[c].concepts)
+                        if (!covered.has(k.id)) sweepFailures.push(`no verdict for ${k.id} @ ${where}`);
+                      for (const l of r.receipt.contextLines)
+                        if (l.observed !== null && l.observed > l.bound)
+                          sweepFailures.push(`line falsified but not invalid @ ${where}`);
+                    }
+                    if (r.outcome === 'invalid' && r.entries.length > 0)
+                      sweepFailures.push(`invalid leaked content @ ${where}`);
+                    // no verdict may advise a no-op
+                    for (const e of r.entries)
+                      if (e.verdict !== 'SELECTED' && e.verdict !== 'DEMANDED' && e.nextAction === 'nothing')
+                        sweepFailures.push(`no-op advice for ${e.id} @ ${where}`);
+                  }
 check(`I1 sweep of ${runs} runs holds every invariant`, sweepFailures.length === 0, sweepFailures.slice(0, 4).join(' | '));
 
 // ===========================================================================

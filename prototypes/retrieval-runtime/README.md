@@ -6,8 +6,8 @@ in prose, and to record where running it disagrees with the writing.
 
 ```bash
 node prototypes/retrieval-runtime/tui.ts          # drive it by hand
-node prototypes/retrieval-runtime/tui.ts --once "S-"   # render one frame from a key string
-node prototypes/retrieval-runtime/walkthrough.ts  # 92 cases + a 5,670-run sweep
+node prototypes/retrieval-runtime/tui.ts --once "xxS"  # render one frame from a key string
+node prototypes/retrieval-runtime/walkthrough.ts  # 93 cases + a 136,080-run sweep
 ```
 
 Node 22.6+ (native TypeScript type stripping). No dependencies, nothing written to disk.
@@ -26,24 +26,55 @@ no tokenizer, no cache. Everything else is disposable shell.
 
 ## What the run found
 
-### 1. The receipt is a second notice, and #13 reserves for only the first
+### 1. The receipt is an enumerated context item that #13 never tells anyone to reserve for
 
-#13 makes the receipt a context-ledger item — "materialized concept tiers, the bounded omission
-notice, and the receipt" — and requires it to carry twelve fields including per-line spend. Its
-size is therefore a function of how many ledger lines the run produces. **Every purchase enlarges
-the thing that must be reserved for it, and its final size is unknowable before selection.**
+#13 puts the receipt on the context ledger — "materialized concept tiers, the bounded omission
+notice, and the receipt" — and requires it to carry twelve fields. It then spells out a
+reservation discipline for exactly one of those three items. The notice gets *"the reservation
+must be the largest form still reachable"* (inherited from #28). The receipt gets nothing.
 
-That is precisely the property #28 had to fix for the notice: *"The reservation must be the
-largest notice still reachable."* #13 inherits the rule and applies it to the notice alone.
+An implementation that reserves only for the notice overruns. That is not subtle and it is not
+rare: it is every run whose free room at emission is smaller than the receipt.
 
-Reachable by hand at `S-` on the knowledge bundle: the runtime charged **206 against 200
-spendable** and returned `degraded`, not `invalid` — a silent overrun of the exact kind the whole
-resolution exists to prevent. The fix is the same discipline, extended: reserve the receipt at
-its largest *reachable* line count before discovery begins (`receiptReserve()` in `retrieve.ts`).
-Without it the 5,670-run sweep reports overruns; with it, none.
+**An earlier revision of this prototype did exactly that, and the sweep caught it.** The honest
+decomposition, measured by patching the reservation back out:
 
-**This is the finding a reader of #13 most needs.** It is not an underspecification — the
-resolution's own rules, implemented faithfully, overrun the budget.
+| cause | worlds overrunning |
+| --- | --- |
+| receipt charged but never reserved for | ~1,200 |
+| residual, from the receipt's size depending on the selection it reports | ~119, worst case 6 tokens |
+
+So the dominant defect is the missing reservation, and the self-referential part is real but
+small. An earlier draft of this README credited the whole thing to self-reference and to #13's
+rules; that was wrong, and the correction is owed to a review of the frozen artifact.
+
+Two things follow for #13, and only these two:
+
+- **State the reservation for the receipt, not only the notice.** One sentence.
+- **The receipt's size depends on the selection it reports** (`selected tiers`, and per-line spend
+  if the receipt is to evidence the per-line ceiling #13 leans on). So the same
+  *largest-reachable* rule applies to it, for the same reason.
+
+The fix has a cost that must be stated too: reserving for the largest reachable receipt
+over-reserves on most runs, and an over-broad version of it turned a demand that would have fit
+into a refusal. The reservation here is seam-aware for that reason — `DISCOVERY` ledger lines
+cannot occur on the out-of-context seam, so reserving for them is pure loss.
+
+*Caveat:* the magnitude of the residual is a function of `DEFAULT_OUTPUT`'s invented constants.
+The structural claim — an enumerated context item with no reservation rule — does not depend on
+them.
+
+### 1b. Below the cost of the smallest refusal, there is no truthful output at all
+
+A refusal is model-visible output and has to be paid for. #13's honest retrieval floor is "the
+minimum spendable allowance needed for the smallest truthful result envelope" — but the envelope
+that says *no* is never priced, and `allowance − reserve` composed with a profile minimum that a
+declared requirement "cannot reduce" permits a spendable of zero or below.
+
+The sweep of 136,080 runs finds overruns only there, and they are unavoidable: the runtime must
+overspend to say anything, including "no". So the invariant the sweep asserts is not *never
+overrun* — it is **never overrun silently**. Those runs record `UNPLANNED SPEND`, which is #13's
+own phrase for it, borrowed from a clause #13 scopes only to the falsified-bound path.
 
 ### 2. "Internal reads do not consume model context" is not a design constant
 
@@ -64,14 +95,22 @@ Both seams are executable, and the difference is the experiment (cases C1–C3).
 | seam | context spend | work spend (bytes) |
 | --- | --- | --- |
 | out-of-context, light | 161 | 20,328 |
-| out-of-context, 10× unselected | **161** | **200,328** |
-| in-context, light | 269 | 20,328 |
+| out-of-context, 10× unselected | **161** | **182,328** |
+| in-context, light | 372 | 20,328 |
 
-Under the out-of-context seam #28's headline results are **deleted, not adapted**: an index
-pre-pays nothing, "a query the paths already explain buys nothing else" stops being an economic
-claim, and the honest retrieval floor loses its dominant term. #13 says it "incorporates the
-corrected findings from #28"; on this seam it reverses them, and the map still records the old
-economics as a standing decision.
+(Figures read from the run, not computed. An earlier draft of this table carried two numbers I
+had estimated rather than measured — 200,328 and 269 — which a review of the frozen artifact
+caught. Note also that the comparison needs a work envelope wider than any the `w` key offers:
+under the shipped default the 10× corpus exhausts the byte cap, the body channel is never bought,
+and the two corpora then *differ*. The result holds where the experiment can run, not everywhere.)
+
+Under the out-of-context seam an index pre-pays nothing in context, so #28's index economics do
+not transfer as stated: "a query the paths already explain buys nothing else" stops being a claim
+about the *context* budget, and the honest retrieval floor loses the path-list term that was its
+dominant component. Whether those results survive in some other form is a calibration question.
+What is not a calibration question is that #13 says it "incorporates the corrected findings from
+#28" while this seam reverses their accounting, and the map still records the old economics as a
+standing decision.
 
 ### 3. `SECTION` is the only tier whose loss is invisible from inside context
 
@@ -90,12 +129,15 @@ tier" — shows the author was worried about exactly this and reached for the wr
 Restricting the cut to heading boundaries makes `SECTION` deterministic. It does nothing to make
 it honest.
 
-**Departure:** `SECTION` = `CARD` + the concept's **complete section manifest** + the selected
-sections. The outline is a handful of tokens and is already parsed by the time `SECTION` is
-allocable. It supplies the missing intra-concept omission evidence, makes the allocation
-self-describing, and gives `FULL` something checkable to assert against — "nothing remains
-unread" becomes "the manifest is fully covered" rather than a claim asserted at zero cost that
-nobody in context can hear.
+**The finding is the gap, not the remedy.** #13 should say how a `SECTION` allocation discloses
+what it withheld; it currently says nothing. This prototype implements one remedy — `SECTION` =
+`CARD` + the concept's complete section manifest + the selected sections — because a prototype
+has to implement *something*, and it makes the allocation self-describing and gives `FULL`
+something checkable to assert against. But it is not the only remedy and it is not free: the
+manifest is priced here from an invented constant on a fixture whose largest concept has three
+sections, and on a real document with forty headings it could exceed the sections it discloses.
+A bounded `sectionsOmitted: n` count would close the same gap at O(1). **Choosing between them is
+#13's decision, not this prototype's** — the run establishes only that the gap is real.
 
 ### 4. "Evidence-bound filtering" has no observable
 
@@ -113,7 +155,9 @@ every candidate ranked below the CARD tier, which is all a real implementation c
 predicate coverage either.
 
 **Departure:** a per-predicate, tier-derived `unevaluatedPredicates` count in the bounded
-structure. It is count-only, so it costs O(active predicates), not O(N). Case F2 is the oracle
+structure. It is count-only, so it costs O(active predicates), not O(N) — and it is priced, along
+with every other field the structure names. (An earlier revision added it for free, which is the
+same sin as Finding 1; a review of the frozen artifact caught that too.) Case F2 is the oracle
 test: hold the observation tiers fixed, flip every hidden `status` value, and the count must not
 move.
 
@@ -164,10 +208,13 @@ it and hands the operating point to whoever writes the first implementation.
 
 And the rule has no notion of clause **informativeness**, while #13 bans every cheap
 discriminator by name — no stopword rule, no minimum term length, no stemming, no synonyms, no
-`importance` field. So `the` and `a` discharge coverage as fully as `retention`. Document
-frequency is the one discriminator left standing: lexical, deterministic, calibration-free, and
-computable from the filesystem inventory #13 already mandates. Case H3 shows the two rules
-disagreeing about what must be covered for the same query.
+`importance` field. So `the` and `a` discharge coverage as fully as `retention`.
+
+The `df-weighted` dial offers document frequency as a candidate discriminator and shows the two
+rules disagreeing about what must be covered for the same query (H3). **This is a proposal, not a
+finding.** It is corpus-derived and carries its own constant (`dfCeiling`), which #7 would have
+to calibrate — the same class of thing #13 deferred. It is offered to #13 as an option, and the
+run proves only that bare clause coverage treats filler and discriminating clauses identically.
 
 ### 7. Smaller, all executable
 
@@ -204,13 +251,14 @@ Reserve carved before selection and moving with the task kind; a declared output
 raising but never lowering the profile minimum; unknown tasks taking the most conservative profile
 *evaluated at this allowance* (the profiles are not totally ordered, so "most conservative" is not
 a fixed profile); demands resolved before ranking, degraded rather than dropped, refused with a
-strictly positive shortfall and **monotone in the allowance** (#28's `spxt-` regression, case
-B15); atomic `(concept, tier)` allocation; `SECTION` unavailable on a sectionless body with
+strictly positive quantified shortfall and **monotone in the allowance** (#28's `spxt-`
+regression, case B15); atomic `(concept, tier)` allocation; `SECTION` unavailable on a sectionless body with
 allocation moving `CARD → FULL`; the five outcome classes as *names*; per-ledger-line ceilings
 rather than aggregate; work-cap-reached as a normal `degraded`; no scalar work unit; no limit
 expressed as a number of concepts; statelessness and no dedup against previously returned content;
-and every exit path emitting a complete receipt — including the refusal paths where #28 found its
-checks were dead code.
+and every exit path emitting a receipt of the full shape — including the refusal paths where #28
+found its checks were dead code, though on those paths three fields are honest placeholders
+(`allowanceSource`, `reserveProfile`, `serializerVersion` read `n/a`).
 
 The query-normalization rules survive completely and are the cleanest part of the resolution
 (cases A1–A13): one-character terms, digits, quoted phrases, paths and identifiers retained;
@@ -245,6 +293,18 @@ each honest:
 | corpus inventory completeness | the injected corpus *is* the inventory; real enumeration has symlinks, permissions and ignore rules |
 | the work envelope's timeout dimension | untested — there is no clock |
 
-Validated in-session against the scripted catalogue (92 cases, 5,670-run sweep). **Not yet driven
-live at the keyboard.** Any case that behaves wrong under hand-driving overturns the corresponding
-finding above.
+### Clauses of #13 this prototype does NOT exercise
+
+Named rather than left to be assumed covered. Alias expansion (`aliasExpansions` is initialized
+and never written). The "stop further retrieval when model-visible output already escaped" half
+of the invalid path — `UNPLANNED SPEND` is recorded, but there is no emitted/escaped state and no
+cross-call stop. Any discovery cache at all: G11/G12 assert determinism of a pure function, which
+is a weaker claim than "a cache cannot preserve authority or spend." `FULL` asserting
+nothing-unread *at zero incremental cost* — no fixture produces that state. "Curated navigation
+neither hides unlisted concepts nor forces linked concepts into context" — the fixture has
+unlisted concepts but no assertion about them. And the exact/profile tokenizer branch is a label:
+`EXACT` and `CONSERVATIVE` are behaviourally identical here.
+
+Validated in-session against the scripted catalogue (93 cases, 136,080-run sweep). **Not yet
+driven live at the keyboard.** Any case that behaves wrong under hand-driving overturns the
+corresponding finding above.

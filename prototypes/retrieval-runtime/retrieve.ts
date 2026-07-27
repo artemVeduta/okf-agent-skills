@@ -210,8 +210,8 @@ export interface Omissions {
   filtered: string[];
   filteredCount: number;
   missCount: number;
-  undiscovered: { scopes: string[]; channels: string[] };
-  unsearched: { scopes: string[]; channels: string[] };
+  undiscovered: { scopes: string[]; scopeCount: number; channels: string[] };
+  unsearched: { scopes: string[]; scopeCount: number; channels: string[] };
   unresolved: string[];
   /**
    * DEPARTURE. #13 says "Unobserved filter evidence remains incomplete discovery; never assume
@@ -292,7 +292,7 @@ export function retrieve(corpus: Corpus, req: Request): Result {
       query,
       'insufficient',
       [`no calibrated cost profile for deployment ${decl.deployment} (${decl.costModelId})`],
-      0,
+      decl.allowance,
       0,
       violations,
     );
@@ -311,7 +311,7 @@ export function retrieve(corpus: Corpus, req: Request): Result {
         query,
         'insufficient',
         ['budget provenance is unknown and no calibrated deployment fallback is registered'],
-        0,
+        decl.allowance,
         0,
         violations,
       );
@@ -331,6 +331,26 @@ export function retrieve(corpus: Corpus, req: Request): Result {
     Math.ceil(profile.fraction * allowance) + decl.declaredOutputReserve,
   );
   const spendable = allowance - reserve;
+
+  // #13 gives `allowance - reserve = spendable` and separately a profile minimum that a declared
+  // requirement "cannot reduce". Composed, those permit `reserve >= allowance` and a spendable of
+  // zero or below, and #13 says nothing about it. Nothing can be emitted truthfully there — not
+  // even a refusal, which is itself model-visible output.
+  if (spendable < req.output.invalidEnvelope.bound) {
+    return refuse(
+      corpus,
+      req,
+      query,
+      'insufficient',
+      [
+        `the ${profile.version}/${profile.kind} reserve of ${reserve} leaves ${spendable} spendable, ` +
+          `below the ${req.output.invalidEnvelope.bound} needed to emit even a refusal`,
+      ],
+      allowance,
+      reserve,
+      violations,
+    );
+  }
 
   const ctx = new ContextLedger(spendable);
   const work = new WorkLedger(req.envelope);
@@ -413,6 +433,7 @@ export function retrieve(corpus: Corpus, req: Request): Result {
   // Reserve arithmetic needs to exist before discovery under the in-context seam, so it is
   // declared here and closes over the mutable omission counters below.
   let knownOmissions = 0;
+  const demandNamesUpperBound = dedupe(req.exact).length;
 
   /**
    * FINDING. #13 makes the receipt a context-ledger item ("materialized concept tiers, the
@@ -425,9 +446,19 @@ export function retrieve(corpus: Corpus, req: Request): Result {
    * hand at `S-` on the knowledge bundle it charged 206 against 200 spendable and still called
    * itself `degraded`.
    */
+  // Seam-aware: DISCOVERY lines exist only when discovery output is model-visible, so reserving
+  // for them on the out-of-context seam over-reserves for lines that cannot occur. An earlier
+  // revision did exactly that and turned a demand that would have fit into a refusal.
   const maxReachableLines =
-    corpus.concepts.length + [...new Set(corpus.concepts.map((k) => k.dir))].length * 3 + 3;
+    corpus.concepts.length +
+    (inContext ? [...new Set(corpus.concepts.map((k) => k.dir))].length * 3 + 1 : 0) +
+    2; // the notice and the receipt itself
   const receiptReserve = () => receiptBound(req, maxReachableLines);
+  const extrasCeiling =
+    d.nameCap * 2 + // scope names, both classes, capped like every other named omission
+    6 + // channel names, both classes
+    2 + // active predicates
+    demandNamesUpperBound; // bypass warnings cannot exceed the demands
   function reserveForOmissions(pending: number): number {
     // #28: the reservation must be the largest notice still REACHABLE, floored at the collapsed
     // form — one more clipped concept can flip named->counted and make the notice SMALLER, so
@@ -437,7 +468,7 @@ export function retrieve(corpus: Corpus, req: Request): Result {
     for (let k = 0; k <= maxNamed; k++) {
       best = Math.max(best, req.output.noticeBase.bound + k * req.output.perName.bound);
     }
-    return best;
+    return best + extrasCeiling * req.output.perName.bound;
   }
 
   // 5a. Filesystem inventory. #13: "Filesystem inventory establishes what exists."
@@ -688,7 +719,10 @@ export function retrieve(corpus: Corpus, req: Request): Result {
         req,
         query,
         'insufficient',
-        [`exact demand ${ref} does not fit even at ${availableTiers(k, false)[0]}`],
+        [
+          `exact demand ${ref} does not fit even at ${availableTiers(k, false)[0]}: ` +
+            `short by ${tierCost(k, availableTiers(k, false)[0], []).bound + ctx.spent + reserveForOmissions(0) + receiptReserve() - spendable}`,
+        ],
         allowance,
         reserve,
         violations,
@@ -767,13 +801,20 @@ export function retrieve(corpus: Corpus, req: Request): Result {
     wantNamed > d.noticeShareCap * spendable ||
     wantNamed > spendable - ctx.spent - receiptReserve();
   const form: Omissions['form'] = namedTotal === 0 && missCount === 0 ? 'none' : collapse ? 'counted' : 'named';
+  // Everything the structure NAMES is priced. #28 had to learn this the hard way: unsearched
+  // directory names were printed free, and they grow with the bundle.
+  const extras =
+    omissionExtras(undiscoveredScopes, undiscoveredChannels, unsearchedScopes, unsearchedChannels, unevaluated, bypassWarnings, d.nameCap);
   const omissionCost = price(
     model,
-    form === 'none'
-      ? priced(0, 0)
-      : form === 'counted'
-        ? add(req.output.noticeBase, req.output.collapsed)
-        : add(req.output.noticeBase, mul(req.output.perName, Math.min(namedTotal, d.nameCap))),
+    add(
+      form === 'none'
+        ? priced(0, 0)
+        : form === 'counted'
+          ? add(req.output.noticeBase, req.output.collapsed)
+          : add(req.output.noticeBase, mul(req.output.perName, Math.min(namedTotal, d.nameCap))),
+      mul(req.output.perName, extras),
+    ),
   );
   ctx.charge('NOTICE', 'omissions', omissionCost, `${form} form`);
 
@@ -784,8 +825,19 @@ export function retrieve(corpus: Corpus, req: Request): Result {
     filtered: form === 'named' ? filtered.slice(0, d.nameCap) : [],
     filteredCount: filtered.length,
     missCount,
-    undiscovered: { scopes: undiscoveredScopes, channels: [...undiscoveredChannels] },
-    unsearched: { scopes: unsearchedScopes, channels: [...unsearchedChannels] },
+    // FINDING: #13 caps CLIPPED and FILTERED names but leaves UNDISCOVERED/UNSEARCHED to
+    // "summarize affected scopes and channels" uncapped — and scopes grow with the bundle, so
+    // the structure #13 calls bounded is not. They are capped here on the same rule as the rest.
+    undiscovered: {
+      scopes: undiscoveredScopes.slice(0, d.nameCap),
+      scopeCount: undiscoveredScopes.length,
+      channels: [...undiscoveredChannels],
+    },
+    unsearched: {
+      scopes: unsearchedScopes.slice(0, d.nameCap),
+      scopeCount: unsearchedScopes.length,
+      channels: [...unsearchedChannels],
+    },
     unresolved,
     unevaluatedPredicates: unevaluated,
     bypassWarnings,
@@ -842,7 +894,7 @@ export function retrieve(corpus: Corpus, req: Request): Result {
 
   let outcome: Outcome = degradedReasons.length > 0 ? 'degraded' : 'ok';
   let quarantined: string | undefined;
-  if (violations.some((v) => v.startsWith('BOUND FALSIFIED'))) {
+  if (violations.some((v) => v.startsWith('BOUND FALSIFIED') || v.startsWith('SILENT OVERRUN'))) {
     // #13: "A falsified conservative upper bound produces `invalid`, not degraded. Discard
     // content when detected before emission... quarantine the profile."
     outcome = 'invalid';
@@ -889,6 +941,22 @@ export function retrieve(corpus: Corpus, req: Request): Result {
 
 const add = (a: Priced, b: Priced): Priced => priced(a.bound + b.bound, a.observed + b.observed);
 const mul = (a: Priced, n: number): Priced => priced(a.bound * n, a.observed * n);
+function omissionExtras(
+  uScopes: string[],
+  uChannels: Set<string>,
+  sScopes: string[],
+  sChannels: Set<string>,
+  unevaluated: { predicate: string; candidates: number }[],
+  bypass: string[],
+  cap: number,
+): number {
+  return (
+    Math.min(uScopes.length, cap) + uChannels.size +
+    Math.min(sScopes.length, cap) + sChannels.size +
+    unevaluated.length + bypass.length
+  );
+}
+
 const dedupe = (xs: string[]) => [...new Set(xs.map((x) => x.trim()).filter((x) => x.length > 0))];
 
 function receiptBound(req: Request, lines: number): number {
@@ -1042,10 +1110,18 @@ function refuse(
   // the verifier and returned before demands were resolved, so a broken reference vanished from
   // a refusal that should have named it.
   const cost = req.output.invalidEnvelope;
+  const spendable = allowance - reserve;
+  // A refusal is itself model-visible output, so it is charged like everything else. When it does
+  // not fit, that is unplanned spend — #13 requires recording it ("record the unplanned spend")
+  // and this is the one path where it is unavoidable: there is no smaller way to say no.
+  const unplanned = Math.max(0, cost.bound - Math.max(0, spendable));
+  if (unplanned > 0) {
+    violations.push(`UNPLANNED SPEND: the refusal envelope costs ${cost.bound} against ${spendable} spendable`);
+  }
   return {
     outcome,
     reasons,
-    budget: { allowance, reserve, spendable: allowance - reserve, contextSpent: cost.bound, floor: 0 },
+    budget: { allowance, reserve, spendable, contextSpent: cost.bound, floor: 0 },
     work: { spent: { ...NO_WORK }, envelope: req.envelope, exhausted: [] },
     entries: unresolved.map((ref) => ({
       id: ref,
@@ -1064,8 +1140,8 @@ function refuse(
       filtered: [],
       filteredCount: 0,
       missCount: 0,
-      undiscovered: { scopes: [], channels: [] },
-      unsearched: { scopes: [], channels: [] },
+      undiscovered: { scopes: [], scopeCount: 0, channels: [] },
+      unsearched: { scopes: [], scopeCount: 0, channels: [] },
       unresolved,
       unevaluatedPredicates: [],
       bypassWarnings: [],
