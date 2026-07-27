@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Issue #13 — Agent Retrieval Runtime: End-to-End Flow</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d2991d;
+    --red: #f85149;
+    --purple: #a371f7;
+    --orange: #d18642;
+    --cyan: #39d2c0;
+    --pink: #db61a2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 24px;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+
+  h1 { font-size: 20px; color: var(--accent); margin-bottom: 4px; }
+  h2 { font-size: 16px; color: var(--purple); margin: 32px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  h3 { font-size: 14px; color: var(--cyan); margin: 20px 0 8px; }
+  .subtitle { color: var(--muted); margin-bottom: 20px; font-size: 12px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  /* Phase pipeline */
+  .pipeline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 16px 0;
+  }
+  .phase {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    min-width: 120px;
+    text-align: center;
+  }
+  .phase:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .phase.num { color: var(--muted); font-size: 10px; }
+  .phase.title { font-weight: bold; font-size: 12px; margin-top: 2px; }
+  .phase.active { border-color: var(--green); box-shadow: 0 0 12px rgba(63,185,80,0.15); }
+
+  .phase-detail {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 8px 0 16px;
+  }
+  .phase-detail.show { display: block; }
+
+  /* Architecture boxes */
+  .arch {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+  }
+  .arch-row { display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .arch-box {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 18px;
+    text-align: center;
+    position: relative;
+  }
+  .arch-box.harness { border-color: var(--purple); }
+  .arch-box.skill { border-color: var(--cyan); }
+  .arch-box.runtime { border-color: var(--accent); }
+  .arch-box.dep { border-color: var(--muted); }
+  .arch-box.output { border-color: var(--green); }
+  .arch-link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: var(--muted);
+    font-size: 10px;
+  }
+
+  /* Walkthrough */
+  .step {
+    padding: 8px 12px;
+    border-left: 3px solid var(--border);
+    margin-bottom: 4px;
+    font-size: 12px;
+  }
+  .step.pass { border-left-color: var(--green); }
+  .step.warn { border-left-color: var(--yellow); }
+  .step.fail { border-left-color: var(--red); }
+  .step.info { border-left-color: var(--accent); }
+
+  .tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    margin: 0 2px;
+  }
+  .tag.ok { background: #1b3826; color: var(--green); }
+  .tag.warn { background: #3a2e0e; color: var(--yellow); }
+  .tag.err { background: #3a1014; color: var(--red); }
+  .tag.inf { background: #0e1e33; color: var(--accent); }
+  .tag.purp { background: #1e1133; color: var(--purple); }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 12px;
+  }
+  th { background: var(--surface); color: var(--muted); font-weight: 600; }
+  td.code { font-family: inherit; color: var(--cyan); }
+
+  /* Subagent flow */
+  .subagent-flow { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin: 16px 0; }
+  .subagent {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    width: 280px;
+    text-align: center;
+  }
+  .subagent .name { font-weight: bold; color: var(--accent); margin-bottom: 8px; }
+  .subagent .entry { font-size: 11px; color: var(--muted); margin: 4px 0; }
+
+  /* Verdict grid */
+  .verdict-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+  .verdict-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+  }
+  .verdict-card .label { font-weight: bold; margin-bottom: 4px; }
+  .verdict-card .cause { color: var(--muted); font-size: 11px; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+
+  pre { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 11px; line-height: 1.5; }
+  .hl { color: var(--green); }
+  .hl2 { color: var(--accent); }
+  .hl3 { color: var(--yellow); }
+  .dim { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Issue #13 — Agent Retrieval Runtime</h1>
+<p class="subtitle">Design agent retrieval model within context window constraints. Prototype: 102 cases + 136,080-run sweep — all green.</p>
+
+<!-- ============================================================ -->
+<h2>1. Architecture Overview</h2>
+<!-- ============================================================ -->
+<div class="card">
+<div class="arch">
+  <div class="arch-box harness">
+    <strong style="color:var(--purple)">HARNESS</strong><br>
+    <span class="dim">Claude Code / Codex / OpenCode</span>
+  </div>
+  <div class="arch-link">▼ provides task kind, query, budget, seam attestation ▼</div>
+  <div class="arch-row">
+    <div class="arch-box skill">
+      <strong style="color:var(--cyan)">okf-sync</strong><br><span class="dim">skill</span>
+    </div>
+    <div class="arch-box skill">
+      <strong style="color:var(--cyan)">okf-review</strong><br><span class="dim">skill</span>
+    </div>
+    <div class="arch-box skill">
+      <strong style="color:var(--cyan)">okf-compact</strong><br><span class="dim">skill</span>
+    </div>
+    <div class="arch-box skill">
+      <strong style="color:var(--cyan)">okf-init</strong><br><span class="dim">skill</span>
+    </div>
+    <div class="arch-box skill">
+      <strong style="color:var(--cyan)">okf-validate</strong><br><span class="dim">skill</span>
+    </div>
+  </div>
+  <div class="arch-link">▼ all invoke the same pure function ▼</div>
+  <div class="arch-box runtime">
+    <strong style="color:var(--accent); font-size:16px;">retrieve(corpus, request) → Result</strong><br>
+    <span class="dim">stateless · deterministic · no I/O · no randomness</span>
+  </div>
+  <div class="arch-link">▼ injected dependencies ▼</div>
+  <div class="arch-row">
+    <div class="arch-box dep"><strong>CORPUS</strong><br><span class="dim">injected document bundle</span></div>
+    <div class="arch-box dep"><strong>COST MODEL</strong><br><span class="dim">token pricing profiles</span></div>
+    <div class="arch-box dep"><strong>QUERY ENGINE</strong><br><span class="dim">tokenizer + matcher</span></div>
+  </div>
+  <div class="arch-link">▼ 12-phase pipeline ▼</div>
+  <div class="arch-box output">
+    <strong style="color:var(--green)">{ entries[], omissions{}, receipt{}, budget{} }</strong><br>
+    <span class="dim">outcome ∈ { </span><span class="tag ok">ok</span><span class="tag warn">degraded</span><span class="tag err">insufficient</span><span class="tag purp">invalid</span><span class="dim"> }</span>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>2. 12-Phase Pipeline</h2>
+<!-- ============================================================ -->
+<div class="card">
+<p class="dim">Click a phase to see details.</p>
+<div class="pipeline" id="pipeline">
+</div>
+
+<div id="phase-1-detail" class="phase-detail">
+  <h3>Phase 1 — Cost Model Admission</h3>
+  <p>Checks that a calibrated cost profile exists for this deployment. If no tokenizer or profile is available, returns <span class="tag err">insufficient</span> immediately — there is no universal character divisor.</p>
+</div>
+<div id="phase-2-detail" class="phase-detail">
+  <h3>Phase 2 — Allowance &amp; Provenance</h3>
+  <p>Resolves the allowance from three sources:</p>
+  <div class="step info">explicit → use declared allowance (normal path)</div>
+  <div class="step warn">estimated → use declared allowance, mark degraded</div>
+  <div class="step fail">unknown + fallback → use fallback, mark degraded</div>
+  <div class="step fail">unknown + no fallback → <span class="tag err">insufficient</span></div>
+</div>
+<div id="phase-3-detail" class="phase-detail">
+  <h3>Phase 3 — Reserve Carving</h3>
+  <table>
+    <tr><th>Task Kind</th><th>Fraction</th><th>Minimum</th></tr>
+    <tr><td>exploration</td><td>20%</td><td>200</td></tr>
+    <tr><td>research</td><td>25%</td><td>240</td></tr>
+    <tr><td>review</td><td>30%</td><td>300</td></tr>
+    <tr><td>feature</td><td>35%</td><td>360</td></tr>
+    <tr><td>audit</td><td>35%</td><td>360</td></tr>
+    <tr><td>migration</td><td>40%</td><td>420</td></tr>
+    <tr><td>debugging</td><td>45%</td><td>500</td></tr>
+  </table>
+  <p>Reserve is carved before any selection. A declared output requirement may increase the reserve but never reduces the profile minimum.</p>
+  <p><strong>spendable = allowance − reserve</strong></p>
+</div>
+<div id="phase-4-detail" class="phase-detail">
+  <h3>Phase 4 — Honest Retrieval Floor</h3>
+  <p>The smallest truthful output: receipt + notice + one entry per exact demand. Below this floor, even a refusal cannot be emitted truthfully → <span class="tag err">insufficient</span>.</p>
+  <p>The floor grows with the number of demands — "never silently drop a demand" makes the smallest truthful envelope a function of the request, not a constant.</p>
+</div>
+<div id="phase-5-detail" class="phase-detail">
+  <h3>Phase 5 — Discovery</h3>
+  <p>Escalating channel purchases: <strong>inventory → index → frontmatter → body</strong></p>
+  <p>Under <span class="tag ok">satisficing</span>, stops when the evidence rule is satisfied. Under <span class="tag purp">exhaustive</span>, examines every channel in every scope.</p>
+  <p>On the <strong>in-context</strong> seam, discovery output is charged to the context ledger. On the <strong>out-of-context</strong> seam, it stays on the work ledger only.</p>
+</div>
+<div id="phase-6-detail" class="phase-detail">
+  <h3>Phase 6 — Exact Demands</h3>
+  <p>Resolved before ranking. Matches by id, path, or source reference. Unresolved references produce <span class="tag warn">UNRESOLVED</span> entries.</p>
+  <p>A demand that cannot fit even at its cheapest tier (LINE) triggers an explicit <span class="tag err">insufficient</span> refusal with a quantified shortfall.</p>
+</div>
+<div id="phase-7-detail" class="phase-detail">
+  <h3>Phase 7 — Evidence-Bound Filters</h3>
+  <p>Predicates evaluated only when the concept has been observed at the <strong>CARD</strong> tier. A predicate cannot be evaluated on unread data.</p>
+  <p><strong>Precedence rule:</strong> FILTERED (budget-independent exclusion) dominates CLIPPED (budget-dependent) — reporting a policy-rejected concept as CLIPPED would suggest "raise the allowance", which can never surface it.</p>
+</div>
+<div id="phase-8-detail" class="phase-detail">
+  <h3>Phase 8 — Ranking</h3>
+  <p>Score computed from clause matches against progressively revealed text:</p>
+  <table>
+    <tr><th>Match Location</th><th>Weight</th></tr>
+    <tr><td>id, path</td><td>2×</td></tr>
+    <tr><td>title</td><td>4×</td></tr>
+    <tr><td>description</td><td>3×</td></tr>
+    <tr><td>tags</td><td>3×</td></tr>
+    <tr><td>type</td><td>1×</td></tr>
+    <tr><td>section text</td><td>3×</td></tr>
+  </table>
+  <p><strong>strong</strong> (≥6) → asks FULL. <strong>medium</strong> (≥3) → asks SECTION or CARD. <strong>weak</strong> (&lt;3) → asks LINE.</p>
+</div>
+<div id="phase-9-detail" class="phase-detail">
+  <h3>Phase 9 — Tier Allocation</h3>
+  <p><strong>Four-tier ladder:</strong> LINE → CARD → SECTION → FULL</p>
+  <p><strong>9a. Demands first:</strong> each demand gets the highest tier that fits, degrading down the ladder. Never silently dropped.</p>
+  <p><strong>9b. Ranked fill:</strong> remaining concepts allocated by score, each at its asked tier, degrading when necessary.</p>
+  <p>Allocation is <strong>atomic</strong> — each concept gets exactly one tier. No fragment tiers.</p>
+</div>
+<div id="phase-10-detail" class="phase-detail">
+  <h3>Phase 10 — Bounded Omission Structure</h3>
+  <div class="two-col">
+    <div>
+      <strong>Named counts:</strong>
+      <div class="step info">CLIPPED — matched but no tier fit</div>
+      <div class="step warn">FILTERED — policy-rejected</div>
+      <div class="step info">MISS — all channels examined, nothing matched</div>
+      <div class="step info">UNDISCOVERED — work or context ran out before examination</div>
+      <div class="step info">UNSEARCHED — evidence rule satisfied before examination</div>
+      <div class="step fail">UNRESOLVED — exact demand had no match</div>
+    </div>
+    <div>
+      <strong>Departure fields:</strong>
+      <div class="step info">unevaluatedPredicates — "n candidates ranked without their status read"</div>
+      <div class="step info">bypassWarnings — when an exact demand passed a filter it should have failed</div>
+    </div>
+  </div>
+  <p>Form collapses to <strong>counted</strong> when names exceed nameCap or noticeShareCap.</p>
+</div>
+<div id="phase-11-detail" class="phase-detail">
+  <h3>Phase 11 — Receipt</h3>
+  <p>12+ field audit record. Per-line context spend with bound/charged/observed triples. The receipt is a context-ledger item that must be reserved for — it was the largest source of silent overruns before the fix.</p>
+  <p>Receipt size depends on the selection it reports, so it uses the same <em>largest-reachable</em> reservation rule as the omission notice.</p>
+</div>
+<div id="phase-12-detail" class="phase-detail">
+  <h3>Phase 12 — Audit</h3>
+  <p><span class="tag ok">verified</span> — deployment is audit-capable, bounds held. <span class="tag warn">unverified</span> — deployment is audit-blind, no post-emission measurement exists.</p>
+  <p>A falsified bound triggers <span class="tag purp">invalid</span>: content is discarded, the profile is quarantined, but the invalid envelope itself must be bounded by a fixed content-free literal — it cannot be bounded by the profile it just quarantined.</p>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>3. Real Example: Feature Development on payment-service</h2>
+<!-- ============================================================ -->
+<div class="card">
+<h3>Setup</h3>
+<pre><span class="dim">Project:</span>  <span class="hl2">payment-service</span>  <span class="dim">(code-backed project)</span>
+<span class="dim">Bundle:</span>   <span class="hl2">.okf/concepts/</span>
+             ├── retention-policy.md
+             ├── ledger.md
+             ├── onboarding.md         <span class="dim">[deprecated]</span>
+             └── trust-tier.md
+<span class="dim">Task:</span>     <span class="hl">feature</span>  → reserve profile: 0.35 × allowance (min 360)
+<span class="dim">Allowance:</span> <span class="hl3">2500</span> tokens → reserve = max(360, ceil(0.35×2500)) = <span class="hl3">875</span>
+                         → spendable = 2500 − 875 = <span class="hl">1625</span></pre>
+
+<h3>Request</h3>
+<pre>query:  <span class="hl">"how long is the retention window for transaction ledgers"</span>
+exact:  [<span class="hl3">"ledger"</span>]               <span class="dim">// must be included</span>
+task:   <span class="hl">"feature"</span>
+seam:   <span class="hl2">"in-context"</span>           <span class="dim">// CLI output enters model context</span>
+budget: <span class="hl3">2500</span>
+prov:   <span class="hl">"explicit"</span>
+audit:  <span class="hl">capable</span></pre>
+
+<h3>Walkthrough</h3>
+<div class="step pass"><strong>Phase 1-2:</strong> <span class="tag ok">PASS</span> cost model calibrated, provenance explicit → continue</div>
+
+<div class="step info"><strong>Phase 3:</strong> Reserve carved: 875. Spendable: 1625</div>
+
+<div class="step info"><strong>Phase 4:</strong> Floor = receipt(40) + notice(14) + collapsed(10) + 1×perName(9) = <strong>73</strong>. 1625 > 73 <span class="tag ok">✓</span></div>
+
+<div class="step info"><strong>Phase 5:</strong> Discovery (in-context seam, satisficing)
+  <pre>  [buy] inventory  →  costs 6 ctx     <span class="dim">all 4 concepts observed: locator</span>
+  [buy] index      →  costs 4 ctx     <span class="dim">titles revealed</span>
+  [buy] frontmatter→  costs 16 ctx    <span class="dim">card revealed (status, type, tags)</span>
+  [buy] body       →  costs 35 ctx    <span class="dim">sections matched against query</span>
+  <span class="tag ok">evidence rule satisfied</span> — satisficing stops</pre>
+</div>
+
+<div class="step pass"><strong>Phase 6:</strong> Exact demand "ledger" resolves → <span class="tag ok">DEMANDED</span>. Unresolved: none.</div>
+
+<div class="step info"><strong>Phase 7:</strong> Filter evaluation at CARD tier:
+  <pre>  retention-policy → status=active    <span class="tag ok">pass</span>
+  ledger           → status=active    <span class="tag ok">pass (demanded, skip)</span>
+  onboarding       → status=deprecated<span class="tag warn">FILTERED</span>
+  trust-tier       → status=active    <span class="tag ok">pass</span></pre>
+</div>
+
+<div class="step info"><strong>Phase 8:</strong> Ranking:
+  <pre>  retention-policy  → <span class="hl">score 26</span> <span class="dim">id+path(4) + title(4) + desc(3) + tags(6) + sections(6)</span>
+  (ledger is demanded, skip ranking)
+  trust-tier        → <span class="hl3">score 0</span>  <span class="dim">all channels examined, no clause matched</span></pre>
+</div>
+
+<div class="step pass"><strong>Phase 9: Allocation</strong>
+  <pre>  9a. ledger         → <span class="hl">DEMANDED at FULL</span>   <span class="dim">cost 42, fits!</span>
+  9b. retention-policy→ <span class="hl">SELECTED at FULL</span>   <span class="dim">cost 85, fits!</span>
+  9c. trust-tier      → <span class="tag warn">MISS</span>                <span class="dim">score 0, all channels examined</span></pre>
+</div>
+
+<div class="step info"><strong>Phase 10:</strong> Omissions:
+  <pre>  <span class="tag warn">FILTERED</span>  [onboarding]           <span class="dim">deprecated</span>
+  <span class="tag warn">MISS</span>      [trust-tier]            <span class="dim">no clause matched</span>
+  form → <span class="tag ok">named</span>  (<span class="dim">under nameCap 3, under 25% noticeShareCap</span>)</pre>
+</div>
+
+<div class="step info"><strong>Phase 11:</strong> Receipt — context charging:
+  <pre>  DISCOVERY  inventory          bound=6   charged=6
+  DISCOVERY  index               bound=4   charged=4
+  DISCOVERY  frontmatter         bound=16  charged=16
+  DISCOVERY  body                bound=35  charged=35
+  DEMAND     ledger@FULL         bound=42  charged=42
+  RANKED     retention-policy@FULL bound=85 charged=85
+  NOTICE     omissions           bound=26  charged=26
+  RECEIPT    receipt             bound=82  charged=82
+  ──────────────────────────────────────────────
+  <span class="hl">total context spent: 296 / 1625 spendable</span></pre>
+</div>
+
+<div class="step pass"><strong>Phase 12:</strong> Audit: <span class="tag ok">verified</span> — all observed ≤ all bounds. Outcome: <span class="tag ok">ok</span>.</div>
+
+<h3>Result Summary</h3>
+<table>
+  <tr><th>Concept</th><th>Verdict</th><th>Tier</th><th>Score</th><th>Cost (ctx)</th></tr>
+  <tr><td class="code">ledger</td><td><span class="tag purp">DEMANDED</span></td><td>FULL</td><td>22</td><td>42</td></tr>
+  <tr><td class="code">retention-policy</td><td><span class="tag ok">SELECTED</span></td><td>FULL</td><td>26</td><td>85</td></tr>
+  <tr><td class="code">onboarding</td><td><span class="tag warn">FILTERED</span></td><td>—</td><td>—</td><td>0</td></tr>
+  <tr><td class="code">trust-tier</td><td><span class="tag warn">MISS</span></td><td>—</td><td>0</td><td>0</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. Subagent Workflow</h2>
+<!-- ============================================================ -->
+<div class="card">
+<h3>Main Agent Fans Out to Specialized Subagents</h3>
+<div class="subagent-flow">
+  <div class="subagent">
+    <div class="name">okf-sync</div>
+    <div class="entry"><span class="tag ok">task:</span> exploration</div>
+    <div class="entry"><span class="tag ok">breadth:</span> satisficing</div>
+    <div class="entry"><span class="tag ok">tier:</span> CARD</div>
+    <div class="entry">compare docs ↔ code<br/>flag drift, fix stale</div>
+  </div>
+  <div class="subagent">
+    <div class="name">okf-review</div>
+    <div class="entry"><span class="tag purp">task:</span> audit</div>
+    <div class="entry"><span class="tag purp">breadth:</span> exhaustive</div>
+    <div class="entry"><span class="tag purp">tier:</span> FULL</div>
+    <div class="entry">validate all predicates<br/>check completeness</div>
+  </div>
+  <div class="subagent">
+    <div class="name">okf-compact</div>
+    <div class="entry"><span class="tag purp">task:</span> migration</div>
+    <div class="entry"><span class="tag purp">breadth:</span> exhaustive</div>
+    <div class="entry"><span class="tag purp">tier:</span> FULL</div>
+    <div class="entry">rewrite for compactness<br/>and clarity</div>
+  </div>
+</div>
+
+<h3>Subagent Lifecycle</h3>
+<pre>
+┌────────────┐  <span class="dim">read task kind, query, demands, seam</span>
+│ CONSTRUCT  │  <span class="dim">from harness session context</span>
+│ request    │
+└─────┬──────┘
+      │
+      ▼
+┌────────────┐  <span class="dim">pure function over injected corpus</span>
+│ RETRIEVE   │  <span class="dim">12-phase pipeline</span>
+│ corpus +   │  <span class="dim">outcome ∈ {ok, degraded, insufficient, invalid}</span>
+│ budget     │
+└─────┬──────┘
+      │
+      ▼
+┌────────────┐  <span class="dim">receipt.selected → which concepts at which tiers</span>
+│ EVALUATE   │  <span class="dim">receipt.contextLines → where budget went</span>
+│ receipt    │  <span class="dim">omissions.unevaluatedPredicates → blind spots</span>
+│ + entries  │  <span class="dim">entry.nextAction → concrete steps to unblock</span>
+└─────┬──────┘
+      │
+      ▼
+┌────────────┐  <span class="dim">materialise concepts into agent context</span>
+│   ACT      │  <span class="dim">execute skill purpose (write, validate, compare)</span>
+│ (write,    │  <span class="dim">emit evidence record (observed sizes, actions)</span>
+│  validate, │
+│  sync...)  │
+└────────────┘</pre>
+
+<h3>Forked Adapters Per Harness</h3>
+<table>
+  <tr><th>Harness</th><th>Subagent Mechanism</th><th>Seam</th><th>Audit Capable?</th></tr>
+  <tr><td>Claude Code</td><td>forked agent (context: fork)</td><td>in-context (CLI)</td><td>no</td></tr>
+  <tr><td>Codex (OpenAI)</td><td>sub-agent instruction</td><td>in-context (CLI)</td><td>no</td></tr>
+  <tr><td>OpenCode</td><td>subagent tool</td><td>in-context (CLI)</td><td>no</td></tr>
+  <tr><td>Library mode</td><td>pure function call</td><td>out-of-context</td><td>yes</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2>5. Two-Ledger Design</h2>
+<!-- ============================================================ -->
+<div class="card">
+<div class="two-col">
+  <div>
+    <h3>CONTEXT LEDGER</h3>
+    <p class="dim">what the model sees and is charged for</p>
+    <div class="step info">discovery output (in-context seam only)</div>
+    <div class="step info">materialized concept tiers</div>
+    <div class="step info">bounded omission notice</div>
+    <div class="step info">receipt</div>
+    <p style="margin-top:12px"><strong>One rule:</strong> charges bytes entering model context</p>
+  </div>
+  <div>
+    <h3>WORK LEDGER</h3>
+    <p class="dim">what the runtime actually does</p>
+    <div class="step info">filesInspected</div>
+    <div class="step info">bytesParsed</div>
+    <div class="step info">probeOutputBytes</div>
+    <div class="step info">ticks (execution time)</div>
+    <p style="margin-top:12px"><strong>Four dimensions:</strong> no scalar total — each is its own ceiling</p>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Seam Experiment (Cases C1-C3)</h3>
+<p><strong><code>code</code> and <code>code-heavy</code></strong> are identical in every concept the query selects and differ 10× in unselected bytes:</p>
+<table>
+  <tr><th>Seam</th><th>Context Spent</th><th>Work Spent (bytes)</th></tr>
+  <tr><td>out-of-context, light</td><td class="code">161</td><td class="code">20,328</td></tr>
+  <tr><td>out-of-context, 10× unselected</td><td class="code" style="color:var(--green)">161</td><td class="code">182,328</td></tr>
+  <tr><td>in-context, light</td><td class="code" style="color:var(--yellow)">372</td><td class="code">20,328</td></tr>
+</table>
+<p>Under the out-of-context seam, 10× more unselected data costs <strong>zero additional context tokens</strong> — the two ledgers are genuinely independent.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. Verdict Classes</h2>
+<!-- ============================================================ -->
+<div class="card">
+<div class="verdict-grid">
+  <div class="verdict-card">
+    <div class="label"><span class="tag ok">SELECTED</span></div>
+    <div class="cause">Scored, fit, admitted</div>
+    <div><span class="dim">nextAction:</span> nothing</div>
+  </div>
+  <div class="verdict-card">
+    <div class="label"><span class="tag purp">DEMANDED</span></div>
+    <div class="cause">Exact demand, honored at best available tier</div>
+    <div><span class="dim">nextAction:</span> raise allowance for FULL</div>
+  </div>
+  <div class="verdict-card">
+    <div class="label"><span class="tag warn">CLIPPED</span></div>
+    <div class="cause">Context allowance ended; no tier fit</div>
+    <div><span class="dim">nextAction:</span> raise allowance or name as exact demand</div>
+  </div>
+  <div class="verdict-card">
+    <div class="label"><span class="tag warn">FILTERED</span></div>
+    <div class="cause">Policy rejection (deprecated/draft)</div>
+    <div><span class="dim">nextAction:</span> turn off that filter</div>
+  </div>
+  <div class="verdict-card">
+    <div class="label"><span class="tag warn">MISS</span></div>
+    <div class="cause">All channels examined, nothing matched</div>
+    <div><span class="dim">nextAction:</span> change the query</div>
+  </div>
+  <div class="verdict-card">
+    <div class="label"><span class="tag inf">UNDISCOVERED</span></div>
+    <div class="cause">Work envelope or context budget ended</div>
+    <div><span class="dim">nextAction:</span> depends on ledger (work vs context)</div>
+  </div>
+  <div class="verdict-card">
+    <div class="label"><span class="tag inf">UNSEARCHED</span></div>
+    <div class="cause">Evidence rule satisfied before examination</div>
+    <div><span class="dim">nextAction:</span> switch breadth to exhaustive</div>
+  </div>
+  <div class="verdict-card">
+    <div class="label"><span class="tag err">UNRESOLVED</span></div>
+    <div class="cause">Exact demand had no match in corpus</div>
+    <div><span class="dim">nextAction:</span> check the reference</div>
+  </div>
+</div>
+
+<h3 style="margin-top:20px">Precedence Rules</h3>
+<div class="step info"><strong>FILTERED dominates CLIPPED</strong> — budget-independent exclusions win. Reporting a deprecated concept as CLIPPED would attach "raise the allowance", which can never surface it.</div>
+<div class="step info"><strong>Demands bypass ranked filters</strong> — with an explicit bypass warning in the omission structure.</div>
+<div class="step info"><strong>MISS requires body observation</strong> — a zero-score concept read only through an index is UNSEARCHED evidence wearing a MISS label. The verdict is gated on full body observation.</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>7. Key Design Resolutions</h2>
+<!-- ============================================================ -->
+<div class="card">
+<table>
+  <tr><th>Question</th><th>Resolution</th></tr>
+  <tr>
+    <td>How is the budget obtained?</td>
+    <td>Provenance declaration: explicit (harness attests), estimated (degraded), unknown (insufficient unless fallback exists)</td>
+  </tr>
+  <tr>
+    <td>Default retrieval breadth?</td>
+    <td>Task-kinded: audits/migrations/reviews are exhaustive; everything else satisficing</td>
+  </tr>
+  <tr>
+    <td>Progressive disclosure?</td>
+    <td>Four-tier ladder: LINE → CARD → SECTION → FULL. Atomic (concept+tier) allocation</td>
+  </tr>
+  <tr>
+    <td>SECTION honesty?</td>
+    <td>SECTION = CARD + complete section manifest + selected sections. Without manifest, truncated looks like full</td>
+  </tr>
+  <tr>
+    <td>Which retrieval modes?</td>
+    <td>Boolean AND (clause coverage). No stemming, no synonyms, no stopword deletion, no substring matching</td>
+  </tr>
+  <tr>
+    <td><code>importance</code> field?</td>
+    <td>No. Informativeness is document-frequency-derived, corpus-local, purely lexical</td>
+  </tr>
+  <tr>
+    <td>Standalone skill or shared runtime?</td>
+    <td>Shared pure function invoked by all skills. Harness-specific adapter attests seam, provenance, audit capability</td>
+  </tr>
+  <tr>
+    <td>Receipt reservation?</td>
+    <td>Must be reserved for. Size depends on selection it reports — same largest-reachable rule as the notice</td>
+  </tr>
+  <tr>
+    <td>Invoice envelope bounded?</td>
+    <td>Bounded by a fixed content-free literal measured once per deployment — not by the quarantined profile</td>
+  </tr>
+  <tr>
+    <td>Query normalization?</td>
+    <td>NFC case folding, identifier subterms added, original preserved. No stopword deletion, no minimum length, no substring stems</td>
+  </tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2>8. Fixture Reality &amp; Provenance Guarantees</h2>
+<!-- ============================================================ -->
+<div class="card">
+<div class="two-col">
+  <div>
+    <h3>What the Prototype Tests</h3>
+    <div class="step pass">Internal consistency of the decision procedure</div>
+    <div class="step pass">Order-correctness of the 12 phases</div>
+    <div class="step pass">No self-pricing oracles (the #28 defect class)</div>
+    <div class="step pass">No silent overruns (136,080 continuous allowance sweep)</div>
+    <div class="step pass">Monotonicity in allowance (#28 spxt- regression)</div>
+    <div class="step pass">Atomic tier allocation (no fragment tiers)</div>
+    <div class="step pass">No duplicate verdicts for any concept</div>
+    <div class="step pass">Every exit path emits a complete receipt shape</div>
+    <div class="step pass">Every non-selected verdict carries a causally sufficient nextAction</div>
+  </div>
+  <div>
+    <h3>What It Does NOT Prove</h3>
+    <div class="step warn">Absolute cost profile accuracy — no real tokenizer</div>
+    <div class="step warn">Real OKF document calibration — fixture is hand-crafted</div>
+    <div class="step warn">Real serialization overhead — no notice renderer</div>
+    <div class="step warn">Filesystem enumeration — no symlinks, permissions</div>
+    <div class="step warn">Cache behavior — pure function, no cross-call state</div>
+    <div class="step warn">Clock-based timeouts — no clock in the fixture</div>
+  </div>
+</div>
+</div>
+
+</div>
+
+<script>
+const PHASES = [
+  {n:1, t:"Cost Model Admission", cls:""},
+  {n:2, t:"Allowance & Provenance", cls:""},
+  {n:3, t:"Reserve Carving", cls:""},
+  {n:4, t:"Honest Floor", cls:""},
+  {n:5, t:"Discovery", cls:""},
+  {n:6, t:"Exact Demands", cls:""},
+  {n:7, t:"Filters", cls:""},
+  {n:8, t:"Ranking", cls:""},
+  {n:9, t:"Tier Allocation", cls:""},
+  {n:10, t:"Omissions", cls:""},
+  {n:11, t:"Receipt", cls:""},
+  {n:12, t:"Audit", cls:""},
+];
+
+const pipeline = document.getElementById('pipeline');
+
+PHASES.forEach(p => {
+  const el = document.createElement('div');
+  el.className = 'phase';
+  el.innerHTML = `<div class="num">${p.n}</div><div class="title">${p.t}</div>`;
+  el.id = `phase-${p.n}`;
+  el.addEventListener('click', () => {
+    // Toggle active
+    const wasActive = el.classList.contains('active');
+    // Close all
+    document.querySelectorAll('.phase-detail').forEach(d => d.classList.remove('show'));
+    document.querySelectorAll('.phase').forEach(ph => ph.classList.remove('active'));
+    if (!wasActive) {
+      el.classList.add('active');
+      document.getElementById(`phase-${p.n}-detail`)?.classList.add('show');
+    }
+  });
+  pipeline.appendChild(el);
+
+  // Arrow between phases
+  if (p.n < 12) {
+    const arrow = document.createElement('span');
+    arrow.style.cssText = 'color:var(--muted);padding:10px 4px;font-size:16px;';
+    arrow.textContent = '→';
+    pipeline.appendChild(arrow);
+  }
+});
+</script>
+
+</body>
+</html>
