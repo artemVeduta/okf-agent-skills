@@ -15,11 +15,11 @@ operation so that:
 1. the human can always see **why** it is blocked, and
 2. a stale confirmation can **never** authorize changed work?
 
-Out of the question's scope, deliberately: whether these operations are manual-only (settled in
-[Decide where agent initiative stops](https://github.com/artemVeduta/okf-agent-skills/issues/1)), what
-a trust tier permits ([Specify operation contracts for the skill family](https://github.com/artemVeduta/okf-agent-skills/issues/11)), and how an operation executes, backs up, or rolls back
-([Design and prototype the OKF semantic engine](https://github.com/artemVeduta/okf-agent-skills/issues/7) and
-[Specify safety and recovery policy for destructive OKF operations](https://github.com/artemVeduta/okf-agent-skills/issues/19)).
+Out of the question's scope, deliberately: whether these operations are manual-only (settled under
+[Ship a production-ready cross-harness OKF skill suite](https://github.com/artemVeduta/okf-agent-skills/issues/1)), what
+a trust tier permits ([Design operational trust tier matrix for skill operations](https://github.com/artemVeduta/okf-agent-skills/issues/11)), and how an operation executes, backs up, or rolls back
+([Define validation, growth, compaction, and approval contracts](https://github.com/artemVeduta/okf-agent-skills/issues/7) and
+[Define safe migration of existing knowledge into OKF](https://github.com/artemVeduta/okf-agent-skills/issues/19)).
 
 ## Run it
 
