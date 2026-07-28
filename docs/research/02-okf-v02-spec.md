@@ -1,5 +1,32 @@
 # OKF v0.2 Specification — Deep Analysis
 
+## How to read this document
+
+This document restructures the OKF v0.2 specification's prose into tables. That
+restructuring once invented a requirement the spec never stated, so the
+following conventions are binding on every future edit:
+
+1. **Empty stays empty.** A status cell with no corresponding RFC 2119 keyword
+   in the spec renders `—`. Never "implied", never "Optional", never "Core".
+   If most of a status column is `—`, the spec did not enumerate that section
+   and the content belongs in prose, not a table.
+2. **Normative claims carry the spec's own words.** Any row asserting normative
+   force quotes the spec verbatim with its section number. An interpretation
+   never appears without the source text beside it.
+3. **Six buckets, not two.** Normative force is one of: `MUST` · `MUST NOT` ·
+   `SHOULD` · `MAY` · *definitional* (stated without a keyword) · *not in spec*.
+   There is no "normative / editorial" binary — `SHOULD` and `RECOMMENDED` are
+   normative but not mandatory, and demoting them to "editorial" reads as
+   "ignorable".
+4. **Producer and consumer obligations are labelled, never inferred from
+   placement.** A producer `MUST` is not a consumer validation check.
+5. **Every claim is tagged by provenance**: `[SPEC §x.y]` · `[REF-IMPL]` ·
+   `[README]` · `[ANALYSIS]`. Content tagged anything other than `[SPEC]` is
+   not a requirement and must not be cited as one.
+
+Sections headed **"Analysis (not spec)"** are this document's own reasoning.
+Downstream tickets must not cite them as specification.
+
 ## Version and Status
 
 - **Version**: 0.2
@@ -12,7 +39,7 @@
 - **Primary announcement**:
   [Google Cloud, “Open Knowledge format v0.2 tackles agentic trust”](https://cloud.google.com/blog/products/data-analytics/okf-v0-2-adds-trust-signals/)
 - **License**: Apache 2.0
-- **Stability**: Pre-1.0 (`<major>.<minor>` scheme). Breaking changes are reserved for a major version bump (1.0), but as a 0.x spec, the format is still evolving. The spec says v0.2 is a "minor version bump under §12" from v0.1, though it contains two deliberate breaking changes.
+- **Stability**: Pre-1.0 (`<major>.<minor>` scheme). §12: a major version bump "**may** make breaking changes". §13: v0.2 "is a minor version bump under §12, **except for** two deliberate breaking changes called out below." See [Analysis (not spec): tension between §12 and §13](#analysis-not-spec-tension-between-12-and-13).
 - **Reference implementation**: `reference-agent` Python package (v0.1.0), a proof-of-concept producer that generates OKF bundles from BigQuery metadata plus web crawls. Also includes a `visualize` subcommand that renders bundles as interactive Cytoscape.js HTML graphs.
 
 ## Purpose and Goals
@@ -43,21 +70,23 @@ The format is explicitly designed for a world where "a knowledge corpus is ... c
 
 ## Design Principles
 
-The spec is built around explicit, restated design principles:
+Design principles, tagged by source. SPEC §1 states only four
+(Readable / Parseable / Diffable / Portable); the rest are `okf/README.md`
+framing or this document's synthesis, and are **not** specification.
 
-| Principle | How it manifests |
-|-----------|-----------------|
-| **Minimality** | One required field (`type`). No schema registry. No mandatory tooling. "If you can `cat` a file, you can read OKF." |
-| **Human- and agent-readable** | Plain markdown files with YAML frontmatter. No SDK or query language required. |
-| **Diffable in version control** | Plain text files in a directory hierarchy. Git-native workflows for PRs, blame, review. |
-| **Portable across tools, organizations, and time** | A bundle is a directory. Ship as tarball, host in repo, mount from filesystem. No proprietary API. |
-| **Minimally opinionated, freely extensible** | Unknown frontmatter keys are tolerated. Unknown `type` values are treated as generic concepts. Producers can extend freely. |
-| **Progressive disclosure** | `index.md` files let consumers navigate one level at a time instead of loading the entire bundle. |
-| **Graph-shaped, not just tree-shaped** | Markdown links between concepts express relationships richer than parent/child hierarchy. |
-| **Trust is derived, not stored** | Trust tiers derived from `verified` field. Credibility inferred from signals on `sources`, not stored as a score. Scores are "subjective, unportable, and go stale." |
-| **Structural markdown preferred** | Headings, lists, tables, fenced code blocks over freeform prose — aids both human reading and agent retrieval. |
-| **Compatibility by design** | Legacy `timestamp` and `# Citations` body list are tolerated as fallbacks for v0.1 documents (§13.1). |
-| **Composes with existing tooling** | Bundle works with Notion, Obsidian, MkDocs, Hugo, Jekyll — anything that reads markdown + YAML frontmatter. |
+| Principle | Source | How it manifests |
+|-----------|--------|-----------------|
+| **Minimality** | `[SPEC §1]` | One required field (`type`). No schema registry. No mandatory tooling. "If you can `cat` a file, you can read OKF." |
+| **Human- and agent-readable** | `[SPEC §1]` | Plain markdown files with YAML frontmatter. No SDK or query language required. |
+| **Diffable in version control** | `[SPEC §1]` | Plain text files in a directory hierarchy. `[README]` adds: "Pull requests, line-by-line diffs, blame, and review workflows just work." |
+| **Portable across tools, organizations, and time** | `[SPEC §1]` | A bundle is a directory. Ship as tarball, host in repo, mount from filesystem. No proprietary API. |
+| **Minimally opinionated, freely extensible** | `[SPEC §4.1]` | Unknown frontmatter keys are tolerated. Consumers MUST tolerate unknown `type` values gracefully, "**typically** by treating them as generic concepts". Producers MAY include any additional keys. |
+| **Progressive disclosure** | `[SPEC §8]` | `index.md` files let consumers navigate one level at a time instead of loading the entire bundle. |
+| **Graph-shaped, not just tree-shaped** | `[README]` | Markdown links between concepts express relationships richer than parent/child hierarchy. |
+| **Trust is derived, not stored** | `[SPEC §5.1]` `[SPEC §5.3]` | Trust tiers derived from `verified`. Credibility inferred from signals on `sources`, not stored as a score. Scores are "subjective, unportable, and go stale." |
+| **Structural markdown preferred** | `[SPEC §4.2]` | Headings, lists, tables, fenced code blocks over freeform prose — aids both human reading and agent retrieval. |
+| **Compatibility by design** | `[SPEC §13.1]` | Legacy `timestamp` and `# Citations` body list are tolerated as fallbacks for v0.1 documents. |
+| **Composes with existing tooling** | `[README]` | "Many knowledge tools — Notion, Obsidian, MkDocs, Hugo, Jekyll — already speak markdown plus YAML frontmatter." This phrasing is README content; SPEC.md never names these tools. |
 
 The spec explicitly says the format is "intentionally minimal" and that OKF standardizes only "the small set of structural conventions needed to make a knowledge corpus self-describing — anything beyond that is left to the producer."
 
@@ -65,14 +94,17 @@ The spec explicitly says the format is "intentionally minimal" and that OKF stan
 
 ### Core entities from §2
 
-| Term | Definition | Normative status |
-|------|-----------|-----------------|
-| **Knowledge Bundle (bundle)** | A self-contained, hierarchical collection of knowledge documents. The unit of distribution. | Core |
-| **Concept** | A single unit of knowledge within a bundle, represented as one markdown document. May describe a tangible asset, an abstract idea, or anything in between. | Core |
-| **Concept ID** | The path of the concept's file within the bundle, with the `.md` suffix removed. | Core |
-| **Frontmatter** | A YAML metadata block delimited by `---` at the top of a markdown file. | Core |
-| **Body** | Everything in the file after the frontmatter. | Core |
-| **Link** | A standard markdown link from one concept to another, expressing relationships beyond the implicit parent/child hierarchy. | Core |
+§2 is a plain list of definitions. It assigns no normative status to any term,
+so no status column appears here.
+
+| Term | Definition `[SPEC §2]` |
+|------|-----------|
+| **Knowledge Bundle (bundle)** | A self-contained, hierarchical collection of knowledge documents. The unit of distribution. |
+| **Concept** | A single unit of knowledge within a bundle, represented as one markdown document. May describe a tangible asset, an abstract idea, or anything in between. |
+| **Concept ID** | The path of the concept's file within the bundle, with the `.md` suffix removed. |
+| **Frontmatter** | A YAML metadata block delimited by `---` at the top of a markdown file. |
+| **Body** | Everything in the file after the frontmatter. |
+| **Link** | A standard markdown link from one concept to another, expressing relationships beyond the implicit parent/child hierarchy. |
 
 ### Provenance family (§5.1)
 
@@ -98,7 +130,7 @@ The spec explicitly says the format is "intentionally minimal" and that OKF stan
 | **Receipt** | The evidence a run returns, shaped by `executor.receipt`; a runtime artifact, not stored in the bundle. |
 | **Attester** | Deterministic (no-LLM) code that inspects a receipt and returns a verdict (§10.2). |
 
-**Design note**: The terminology carefully avoids over-engineering. The vocabulary is precise but not exhaustive — it names what is necessary for the spec to be self-consistent, leaving domain-specific taxonomies to producers.
+**`[ANALYSIS]`**: The terminology avoids over-engineering. The vocabulary is precise but not exhaustive — it names what is necessary for the spec to be self-consistent, leaving domain-specific taxonomies to producers.
 
 ## Bundle Structure
 
@@ -119,7 +151,7 @@ path/to/bundle/
 **Key rules**:
 - The directory structure is independent of the domain. Producers organize concepts however makes sense.
 - A bundle MAY be distributed as: a git repository (recommended), a tarball/zip, or a subdirectory within a larger repository.
-- Nesting depth is not constrained.
+- The spec does not address nesting depth.
 
 ### Reserved filenames (§3.1) — NORMATIVE
 
@@ -130,7 +162,7 @@ path/to/bundle/
 
 All other `.md` files are concept documents.
 
-**Notable omission**: There is no reserved filename for tag aggregation. The spec says "Tags remain a first-class concept through the `tags` frontmatter field. OKF does not specify a separate file format for aggregating documents by tag; a consumer that wants a tag-browsing view can synthesize one at consumption time by scanning frontmatter." This is a conscious design choice — tags are metadata, not a structural concern.
+**Notable omission**: There is no reserved filename for tag aggregation. The spec says "Tags remain a first-class concept through the `tags` frontmatter field. OKF does not specify a separate file format for aggregating documents by tag; a consumer that wants a tag-browsing view can synthesize one at consumption time by scanning frontmatter." **`[ANALYSIS]`**: this reads as a conscious design choice — tags are metadata, not a structural concern.
 
 ### The `references/` convention (§6.3)
 
@@ -156,14 +188,18 @@ Every concept is a UTF-8 markdown file with:
   
   **RECOMMENDED for producers**: Pick values that are descriptive and self-explanatory.
 
-**RECOMMENDED (editorial)**:
+**RECOMMENDED** (RFC 2119 keyword; spec heading is "Recommended:"). RECOMMENDED
+means SHOULD — normative but not mandatory. It is not editorial.
 
-| Field | Purpose | Consumer behavior |
-|-------|---------|-------------------|
-| `title` | Human-readable display name | MAY derive from filename if omitted |
-| `description` | Single sentence summary | Used by index generators, search snippets, previews |
-| `resource` | Canonical URI for underlying asset | Absent for abstract concepts (no physical resource) |
-| `tags` | YAML list of short strings | Cross-cutting categorization |
+| Field | Spec wording `[SPEC §4.1]` | Consumer behavior |
+|-------|---------------------------|-------------------|
+| `title` | "A human-readable display name." | Consumers MAY derive a title from the filename |
+| `description` | "A single sentence summarizing the concept. Used by `index.md` generators, search snippets, and previews." | — |
+| `resource` | "Absent for concepts that describe abstract ideas rather than physical resources." | — |
+| `tags` | "A YAML list of short strings for cross-cutting categorization." | — |
+
+The `title` row is the only one where the spec states consumer behavior; the
+other three cells are descriptive prose, not obligations.
 
 **Optional families** (provenance, trust, lifecycle, computation — detailed in §5 and §10).
 
@@ -173,7 +209,8 @@ Every concept is a UTF-8 markdown file with:
 
 The body is standard markdown. **RECOMMENDED**: favor structural markdown (headings, lists, tables, fenced code blocks) over freeform prose.
 
-No body sections are required. The following headings have **conventional** (non-normative) meaning:
+There are no required body sections. The following headings have
+**conventional** meaning and, per §4.2, **SHOULD be used when applicable**:
 
 | Heading | Purpose |
 |---------|---------|
@@ -287,7 +324,7 @@ usage_window: { from: 2026-06-01, to: 2026-06-30 }
 | `last_modified` | Optional (credibility signal) | When the source last changed (`YYYY-MM-DD`). A recency signal. |
 | `usage_window` | Optional sibling of `sources` | A `{from, to}` date range framing every `usage_count`. A single entry MAY carry its own `usage_window` to override the shared one. |
 
-**Key design decision**: Deeper lineage (explicit external `derived_from`, data lineage) is explicitly out of scope for v0.2. Lineage between OKF concepts is expressed through links, not a dedicated field — when a `resource` points to another OKF concept, the derivation edge already exists in the bundle graph.
+**Key design decision**: Deeper lineage (explicit external `derived_from`, data lineage) is explicitly out of scope for v0.2. Lineage between OKF concepts is expressed through links, not a dedicated field — when a `resource` points to another OKF concept, the derivation edge already exists in the bundle graph. §5.1 adds a consumer permission: a consumer **MAY** "recurse into that source's own `sources` and let credibility propagate. External leaf sources carry only their intrinsic signals."
 
 **Important caveat on `usage_count`**: The spec acknowledges this is a "coarse signal" — "comparable at the alive-versus-dead and order-of-magnitude level, and against a source's own history over time, but not as a precise cross-kind ranking." Consumers SHOULD read it as liveness and trend, not as a score.
 
@@ -312,9 +349,12 @@ verified:
 - **NORMATIVE**: A single verifier MAY be written as one `{by, at}` mapping without the list dash. Consumers MUST treat a bare mapping as a one-element list.
 - `verified` is independent of `generated.at`: content can change without re-confirmation, and facts can be re-confirmed without regeneration.
 
-### Trust tiers (§5.3) — NORMATIVE
+### Trust tiers (§5.3) — definitional; derivation is SHOULD per §11
 
-Consumers derive trust tier from `verified`, lowest to highest:
+§5.3 states the tiers declaratively, with no RFC 2119 keyword: "Consumers derive
+a trust tier from `verified`, lowest to highest". §11 is what makes the
+derivation normative, and only at SHOULD level. The one MUST in §5.3 is the
+non-rejection rule below.
 
 | Condition | Trust tier |
 |-----------|-----------|
@@ -341,7 +381,7 @@ stale_after: 2026-09-23   # absolute date
 ```
 
 - Optional. An absolute date (`YYYY-MM-DD`).
-- **NORMATIVE**: A concept is stale when `today >= stale_after`.
+- **Definitional (§5.5, no RFC keyword)**: "A concept is stale when `today >= stale_after`."
 - Design rationale: Absolute date, not relative TTL — "keeps the staleness decision a plain date comparison with no reference to when the concept was read."
 
 ## Actor Convention (§7)
@@ -384,13 +424,19 @@ attester:
   resource: references/attesters/revenue.py
 ```
 
-| Field | Status | Description |
+§10.2 is a bullet list, not a table. It marks only two of these five fields, so
+three status cells are `—`. Do not fill them.
+
+| Field | Status | Spec wording `[SPEC §10.2]` |
 |-------|--------|-------------|
-| `runtime` | **REQUIRED** for this type | How to run the computation. Defines what `parameters` mean. Examples: `bigquery`, `postgres`, `dbt`, `python`, `Looker` |
-| `parameters` | Optional (`runtime` is the only field marked REQUIRED) | List of `{name, type, required}` entries. "A list of the typed, named holes the agent may fill." Binding semantics follow `runtime` |
-| `computation` | Optional | Path to a file holding the computation. Absent ⇒ body `# Computation` fence is the computation |
-| `executor` | Optional (but core to model) | `resource` names run instructions; `receipt` declares fields a run must return |
-| `attester` | Optional (but core to model) | `resource` names deterministic code that takes receipt and returns verdict |
+| `runtime` | **REQUIRED for this type** | "The single field that says how to run the computation." Defines what `parameters` mean. Examples: `bigquery`, `postgres`, `dbt`, `python`, `Looker` |
+| `parameters` | — | "A list of the typed, named holes the agent may fill. Each entry: `{ name, type, required }`. Binding semantics follow `runtime`." |
+| `computation` | **Optional** | "A path (§6.2) to a file holding the computation." Absent ⇒ body `# Computation` fence is the computation |
+| `executor` | — | "How the computation is run. `resource` names run instructions or code… `receipt` declares the fields a run must return." |
+| `attester` | — | "The deterministic check. `resource` names code (no LLM) that takes a receipt and returns a verdict. It is meant to run consumer-side." |
+
+§12 corroborates: the v0.2 delta lists `runtime, parameters, computation,
+executor, attester` among "new **optional** keys".
 
 ### The computation (§10.3)
 
@@ -398,9 +444,21 @@ Provide in one of two ways:
 - **Inline**: fenced code block in body under `# Computation`. Best for short computations reviewed alongside the contract.
 - **File**: set `computation` to a path (§6.2) and omit the body fence. Best for long/generated computations shared with non-OKF tooling.
 
-### Security design (§10.3)
+### Parameter-only surface (§10.3)
 
 The agent MAY only supply *values* for the declared `parameters`; it MUST NOT author or edit the computation. The attester independently re-derives the same binding to compare against what actually ran. "Because the comparison is on the expanded, compiled artifact ... a rewritten query, a swapped computation file, or a mutated dependency fails the check."
+
+### How a consumer uses it (§10.5) — the spec marks this subsection INFORMATIVE
+
+§10.5 opens: "This subsection is **informative, not normative**." Its six steps
+— Discover, Load, Parameterize, Execute, Attest, Gate — are **not**
+requirements, despite containing the most imperative-sounding line in the
+document: "**Gate**: refuse to display a failing attestation; warn or refuse
+when `today >= stale_after`."
+
+Do not implement "refuse" as a requirement on the strength of §10.5. The
+normative residue is §11's much weaker obligation: consumers "SHOULD surface,
+not silently drop, a failing attestation."
 
 ### Verification vs attestation (§10.6)
 
@@ -435,7 +493,7 @@ From the "Considered and deferred" section:
 
 The footnote label (`rev-policy`) is the join key into `sources`. Consumers resolve attribution through the matching entry, not by parsing the footnote prose.
 
-## Conformance (§11) — NORMATIVE
+## Conformance (§11) — MUST / MUST NOT / SHOULD
 
 A bundle is **conformant** with OKF v0.2 if:
 
@@ -443,9 +501,10 @@ A bundle is **conformant** with OKF v0.2 if:
 2. Every frontmatter block contains a non-empty `type` field.
 3. Every reserved filename (`index.md`, `log.md`) follows the structure in §8 and §9 respectively when present.
 
-These are the three **bundle-conformance tests**. They should not be expanded
-to include every normative producer or consumer obligation elsewhere in the
-spec.
+**`[ANALYSIS]`**: These are the three **bundle-conformance tests**, and they
+should not be expanded to include every normative producer or consumer
+obligation elsewhere in the spec. The gloss is this document's; §11 states the
+three tests and the lists below without commenting on their scope.
 
 **Conditional producer obligations**:
 
@@ -459,7 +518,9 @@ spec.
 - When an optional provenance, trust, lifecycle, or computation family is
   present, producers SHOULD follow §§5–10 (§11).
 
-**NORMATIVE constraints on consumers** (MUST):
+**Constraints on consumers** (MUST). §11 scopes the first two to a condition:
+"**When the trust, lifecycle, provenance, or computation families are
+present**, producers SHOULD follow §5 through §10, and consumers:"
 
 - MUST treat a bare `verified` mapping as a one-element list (§5.2).
 - MUST NOT reject a concept for missing any optional family (§5.3).
@@ -476,12 +537,18 @@ spec.
 - SHOULD surface, not silently drop, a failing attestation (§10.5).
 - SHOULD treat all other constraints as soft guidance.
 
-**Consumer forbearance** is a separate interoperability obligation, not an
-additional condition for declaring a bundle conformant. A consumer can report
-the three bundle errors above while still preserving unknown keys and
-tolerating optional-family omissions.
+**`[ANALYSIS]`**: Consumer forbearance reads as a separate interoperability
+obligation, not an additional condition for declaring a bundle conformant — a
+consumer can report the three bundle errors above while still preserving
+unknown keys and tolerating optional-family omissions. §11 does not say this in
+so many words.
 
-## Relationship to Other Formats
+## Analysis (not spec): Relationship to Other Formats
+
+**`[ANALYSIS]`** — none of Obsidian, Notion, MkDocs, Hugo, Jekyll, DataHub, or
+OpenMetadata appears anywhere in SPEC.md. The only comparison the spec makes is
+§1's non-goal naming Avro, Protobuf, and OpenAPI. Everything in this section is
+this document's positioning, not specification, and must not be cited as such.
 
 OKF occupies a deliberate niche. It is not a replacement for metadata catalogs or data governance platforms; it is a **portable, file-based intermediate format**.
 
@@ -495,7 +562,7 @@ OKF occupies a deliberate niche. It is not a replacement for metadata catalogs o
 | **Protobuf / Avro / OpenAPI** | OKF references them but does not subsume them (§1). | Domain-specific schemas vs. general knowledge format. |
 | **Data Catalog (Dataplex, Unity Catalog, Collibra)** | OKF is positioned as an export/capture target. The reference agent already produces from BigQuery. | OKF is read-only as a format; catalogs are read-write services. |
 
-The spec and README both emphasize that OKF is "not tied to any particular agent, framework, model provider, or serving system." It is a *format specification*, not a platform.
+`[README]` states that OKF is "not tied to any particular agent, framework, model provider, or serving system." **This phrase does not appear in SPEC.md.** `[ANALYSIS]`: it is a *format specification*, not a platform.
 
 ## Versioning (§12)
 
@@ -504,17 +571,27 @@ The spec and README both emphasize that OKF is "not tied to any particular agent
 Revisions are versioned as `<major>.<minor>`:
 
 - **Minor** bump: backward-compatible additions (new optional fields, new conventional section headings).
-- **Major** bump: breaking changes (renaming required fields, changing reserved filenames).
+- **Major** bump: **may** make breaking changes (renaming required fields, changing reserved filenames). §12 does not say a breaking change *requires* a major bump.
 
 ### Bundle version declaration
 
 Bundles MAY declare the version they target with `okf_version: "0.2"` in a **bundle-root** `index.md` frontmatter block. This is the only place frontmatter is permitted in an `index.md`.
 
-**NORMATIVE for consumers**: Consumers that do not understand the declared version SHOULD attempt best-effort consumption rather than refusing the bundle.
+**SHOULD, for consumers (§12)**: "Consumers that do not understand the declared version SHOULD attempt best-effort consumption rather than refusing the bundle."
 
-### v0.2 is self-contradictory on versioning
+### Analysis (not spec): tension between §12 and §13
 
-The spec claims v0.2 is a "minor version bump under §12" from v0.1, but it introduces two deliberate breaking changes (`timestamp` → `generated.at`, `# Citations` → `sources`). Under its own versioning scheme, this should be a major bump. The spec mitigates this with explicit v0.1 fallback rules (§13.1), but this is a tension in the spec.
+§13 says v0.2 "is a minor version bump under §12, **except for** two deliberate
+breaking changes called out below." §12 says a major bump "**may** make
+breaking changes" — it does not say breaking changes require one. The spec
+therefore does not contradict itself on its own terms; it carves the two
+changes out explicitly and mitigates them with the v0.1 fallback rules (§13.1).
+
+**`[ANALYSIS]`**: the carve-out is nonetheless awkward. A reader who takes
+"minor version bump" at face value, without reading the exception clause, will
+mis-predict compatibility — which is a reason to treat the `okf_version`
+declaration conservatively when writing, even while honouring §12's
+best-effort SHOULD when reading.
 
 ## What Changed from v0.1 to v0.2
 
@@ -555,7 +632,10 @@ The worked example illustrates a fundamental shift:
 
 This reflects a deeper design shift: v0.2 decomposes the monolithic "trust bundle" into composable, independently-verifiable units. The spec explicitly says "Because each computation is its own concept, revenue can be fresh while profit is past its `stale_after`, and each attests on its own run."
 
-## Strengths and Limitations
+## Analysis (not spec): Strengths and Limitations
+
+**`[ANALYSIS]`** — this document's assessment of the spec, not the spec's own
+claims. Nothing below is a requirement.
 
 ### Strengths
 
@@ -613,7 +693,7 @@ This reflects a deeper design shift: v0.2 decomposes the monolithic "trust bundl
 
 ### 1. The permissive consumer model
 
-The most important pattern: **consumers MUST NOT reject documents for unknown content**. This is the foundation of OKF's portability. Any implementation must:
+The most important pattern: **consumers MUST NOT reject documents for the specific reasons enumerated in §4.1 and §11** — unrecognized fields, missing optional frontmatter fields, unknown `type` values, unknown additional keys, broken cross-links, and missing `index.md` files. The list is closed, not an open principle. This is the foundation of OKF's portability. Any implementation must:
 - Parse what it understands
 - Preserve what it doesn't (round-trip unknown keys)
 - Never error on unknown `type` values or broken links
@@ -666,22 +746,26 @@ From the reference implementation:
 
 ### Metadata model: what fields must a parser/skill support
 
+These headings scope **parser support**, not document requirements. §5 is
+explicit: "These frontmatter families … **All are optional.**" A concept
+carrying only `type` is fully conformant.
+
 **Required for basic conformance:**
 - `type` (string, non-empty) — the only always-required field
 
-**Required for trust/lifecycle-aware consumption:**
+**Must be supported for trust/lifecycle-aware consumption (all optional in the document):**
 - `verified` (list of `{by, at}` or bare `{by, at}` mapping) — must normalize to list
 - `generated.by`, `generated.at` — for freshness signal
 - `stale_after` — `YYYY-MM-DD` string, for staleness check
 - `status` — `draft` | `stable` | `deprecated`, default `stable`
 
-**Required for provenance:**
+**Must be supported for provenance (all optional in the document):**
 - `sources` — list of entries, each with at minimum `resource` (string)
 - `sources[].id` — for footnote-based attribution resolution
 - `sources[].author`, `sources[].usage_count`, `sources[].last_modified` — credibility signals
 - `usage_window` — `{from, to}` date range
 
-**Required for attested computations:**
+**Must be supported for attested computations (only `runtime` is REQUIRED for the type):**
 - `runtime` — string identifying the runtime (the only key the spec marks REQUIRED for this type)
 - `parameters` — optional list of `{name, type, required}`
 - `computation` — optional path
@@ -695,43 +779,67 @@ From the reference implementation:
 - `tags` — list of strings
 - `okf_version` — in bundle-root `index.md` frontmatter only
 
-**Round-trip preservation required:**
-- All unknown frontmatter keys
+**Round-trip preservation (SHOULD, §4.1):**
+- All unknown frontmatter keys. §4.1: "Consumers **SHOULD** preserve unknown
+  keys when round-tripping and **MUST NOT** reject documents with unrecognized
+  fields." The preservation is SHOULD; only the non-rejection is MUST NOT.
 
-### What validation checks are normative vs optional
+### What validation checks apply, by normative force
 
-**Normative (MUST validate or MUST NOT reject):**
+**A consumer MUST enforce** — these are the §11 bundle-conformance tests:
 
-| Check | Rule |
-|-------|------|
-| Type presence | Every concept MUST have a non-empty `type` field |
-| Reserved filenames | `index.md` and `log.md` MUST NOT be used for concepts |
-| Log date format | Log date headings MUST use `YYYY-MM-DD` |
-| Verified normalization | Bare `verified` mapping MUST be treated as one-element list |
-| Forgiving consumer | MUST NOT reject for missing optional fields, unknown types, unknown keys, broken links, missing indexes |
-| Forgiving consumer | MUST tolerate broken cross-links |
-| Actor trust prefix | Producers MUST use `human:` prefix for human-authored/confirmed content |
+| Check | Rule | Who |
+|-------|------|-----|
+| Type presence | Every concept MUST have a non-empty `type` field | Consumer |
+| Reserved filenames | `index.md` and `log.md` MUST NOT be used for concepts (§3.1) | Consumer |
+| Log date format | Log date headings MUST use `YYYY-MM-DD` (§9) | Consumer |
+| Verified normalization | Bare `verified` mapping MUST be treated as one-element list (§5.2) | Consumer |
 
-**Optional / SHOULD (editorial guidance):**
+**A consumer MUST NOT reject for** — forbearance, the mirror of the above:
 
-| Check | Rule |
-|-------|------|
-| Trust tier derivation | Consumers SHOULD derive trust only from specified fields |
-| Attestation surfacing | Consumers SHOULD surface, not silently drop, failing attestations |
-| Soft guidance | All other constraints are soft guidance |
-| Structural markdown | Producers SHOULD favor structural markdown in body |
-| Conventional headings | SHOULD use `# Schema`, `# Examples`, `# Computation` when applicable |
-| Type values | SHOULD be descriptive and self-explanatory |
-| Source IDs | `sources[].id` SHOULD be present when body cites the source |
-| Index descriptions | Entries SHOULD include descriptions from frontmatter |
-| Round-tripping | Consumers SHOULD preserve unknown keys |
+| Check | Rule | Who |
+|-------|------|-----|
+| Missing optional fields | MUST NOT reject (§11) | Consumer |
+| Unknown `type` values | MUST NOT reject; MUST tolerate gracefully (§4.1) | Consumer |
+| Unknown additional keys | MUST NOT reject documents with unrecognized fields (§4.1) | Consumer |
+| Broken cross-links | MUST tolerate (§6.1) | Consumer |
+| Missing `index.md` | MUST NOT reject (§11) | Consumer |
+
+**Producer obligations — NOT bundle-conformance conditions:**
+
+| Check | Rule | Who |
+|-------|------|-----|
+| Actor trust prefix | Producers MUST use the `human:` prefix for hand-authored or human-confirmed content (§7) | **Producer** |
+| Reserved filenames | Producers MUST NOT use `index.md`/`log.md` as concept documents (§3.1) | **Producer** |
+| Computation integrity | An agent MAY supply only declared parameter values and MUST NOT author or edit the sanctioned computation (§10.3) | **Producer** |
+
+> §11 conformance is the three bundle tests only. **A validator MUST NOT fail a
+> bundle for a missing `human:` prefix**, or for any other producer obligation
+> in this table.
+
+**SHOULD — normative but not mandatory** (this is not "editorial"; SHOULD
+carries real force, and a conforming implementation departs from it only with
+reason):
+
+| Check | Rule | Who |
+|-------|------|-----|
+| Trust tier derivation | Consumers SHOULD derive trust only from specified fields (§11) | Consumer |
+| Attestation surfacing | Consumers SHOULD surface, not silently drop, failing attestations (§11) | Consumer |
+| Round-tripping | Consumers SHOULD preserve unknown keys (§4.1) | Consumer |
+| Structural markdown | Producers SHOULD favor structural markdown in body (§4.2) | Producer |
+| Conventional headings | SHOULD use `# Schema`, `# Examples`, `# Computation` when applicable (§4.2) | Producer |
+| Type values | SHOULD be descriptive and self-explanatory (§4.1) | Producer |
+| Source IDs | `sources[].id` SHOULD be present when the body cites the source (§5.1) | Producer |
+| Index descriptions | Entries SHOULD include descriptions from frontmatter (§8) | Producer |
+| Optional families | When a family is present, producers SHOULD follow §§5–10 (§11) | Producer |
+| Everything else | Consumers SHOULD treat all other constraints as soft guidance (§11) | Consumer |
 
 ### What edge cases does the spec explicitly handle
 
 | Edge case | Resolution |
 |-----------|-----------|
 | Missing `type` | Non-conformant (§11) |
-| Unknown `type` value | Consumers MUST tolerate, treat as generic |
+| Unknown `type` value | Consumers MUST tolerate gracefully, "**typically** by treating them as generic concepts" (§4.1) — the treatment is an illustration, not the required method |
 | Unknown frontmatter keys | Consumers MUST NOT reject, SHOULD preserve on round-trip |
 | Broken cross-links | Consumers MUST tolerate |
 | Missing `index.md` | Consumers MUST NOT reject; MAY synthesize |
@@ -739,15 +847,23 @@ From the reference implementation:
 | Bare `verified` mapping | Consumers MUST treat as one-element list (§5.2) |
 | Missing `verified` | Trust tier is `unverified` |
 | Missing `status` | Implies `stable` |
-| Missing `stale_after` | Concept is never stale |
-| Unparseable `stale_after` | Not stale (reference impl returns False) |
-| v0.1 `timestamp` presence | Consumers MAY fall back when `generated` absent (§13.1) |
-| v0.1 `# Citations` body list | Consumers MAY parse when `sources` absent (§13.1) |
+| Missing `stale_after` | Not addressed directly; follows from §5.5's condition being unsatisfiable ⇒ never stale (inference) |
+| v0.1 `timestamp` presence | Consumers MAY fall back to a legacy `timestamp` when `generated` is absent (§13.1) |
+| v0.1 `# Citations` body list | Consumers SHOULD read `sources` and MAY still parse a legacy `# Citations` body list for v0.1 documents (§13.1). **No condition on `sources` being absent** — that condition applies only to `timestamp` |
 | Multiple verification events | Latest `at` determines "how recently" (§5.2) |
 | `computation` absent in Attested Computation | Body `# Computation` fence is the computation (§10.3) |
 | Agent supplies own SQL instead of parameterized query | Attester comparison against executed artifact catches this (§10.3) |
 | `resource` naming a scope descriptor, not a path | Valid (§5.1); consumer can't dereference it |
 | Single entry `usage_window` override | "A single entry MAY carry its own `usage_window` to override the shared one" (§5.1) |
+
+### Reference-implementation behavior (not spec)
+
+`[REF-IMPL]` — the `reference-agent` Python package's choices where the spec is
+silent. These are **not** requirements and must not be cited as spec.
+
+| Edge case | Reference implementation | Spec |
+|-----------|--------------------------|------|
+| Unparseable `stale_after` | Returns `False` (not stale) | Silent. §5.5 states only "A concept is stale when `today >= stale_after`" |
 
 ### What edge cases are left ambiguous
 
