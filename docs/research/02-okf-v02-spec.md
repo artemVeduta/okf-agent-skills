@@ -387,7 +387,7 @@ attester:
 | Field | Status | Description |
 |-------|--------|-------------|
 | `runtime` | **REQUIRED** for this type | How to run the computation. Defines what `parameters` mean. Examples: `bigquery`, `postgres`, `dbt`, `python`, `Looker` |
-| `parameters` | Required for this type (implied) | List of `{name, type, required}` entries |
+| `parameters` | Optional (`runtime` is the only field marked REQUIRED) | List of `{name, type, required}` entries. "A list of the typed, named holes the agent may fill." Binding semantics follow `runtime` |
 | `computation` | Optional | Path to a file holding the computation. Absent ⇒ body `# Computation` fence is the computation |
 | `executor` | Optional (but core to model) | `resource` names run instructions; `receipt` declares fields a run must return |
 | `attester` | Optional (but core to model) | `resource` names deterministic code that takes receipt and returns verdict |
@@ -682,8 +682,8 @@ From the reference implementation:
 - `usage_window` — `{from, to}` date range
 
 **Required for attested computations:**
-- `runtime` — string identifying the runtime
-- `parameters` — list of `{name, type, required}`
+- `runtime` — string identifying the runtime (the only key the spec marks REQUIRED for this type)
+- `parameters` — optional list of `{name, type, required}`
 - `computation` — optional path
 - `executor.resource`, `executor.receipt` — list of field names
 - `attester.resource` — path to deterministic checking code

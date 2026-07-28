@@ -60,15 +60,11 @@ broken OKF content without treating that content as a mutation target.
 _Avoid_: Automatic repair, conformance waiver
 
 **Suite profile**:
-Additional deterministic parsing, preservation, compatibility, and authoring
-rules imposed by `okf-agent-skills` and reported separately from OKF
-conformance.
+The two rules `okf-agent-skills` imposes beyond OKF conformance: mutation
+requires an exact `okf_version: "0.2"` bundle-root declaration, and a rewrite
+must reproduce the frontmatter's parsed semantics through the suite's own
+writer. Reported with origin `suite`, never as an OKF conformance error.
 _Avoid_: OKF conformance, product extension
-
-**Discoverability alias**:
-An explicitly authored query synonym used only to find a concept. It is not an
-alternate identity, path, redirect, tag, or precedence rule.
-_Avoid_: Identity alias, redirect, old path
 
 **Semantic preservation**:
 Retention of YAML key names, scalar types and values, sequence order, and
