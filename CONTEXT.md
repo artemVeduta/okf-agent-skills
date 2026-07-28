@@ -28,3 +28,49 @@ and maintains small, evidence-backed documentation changes while doing normal
 project work.
 _Avoid_: Automatic full sync
 
+**Trust tier**:
+An advisory classification of the verification evidence recorded for a
+concept. A trust tier does not grant authority to mutate the concept; operation
+risk and project mode determine the required safeguards.
+_Avoid_: Permission level, operator trust
+
+**OKF specification version**:
+The upstream Open Knowledge Format version, such as v0.2, that defines format
+semantics. It is independent of the suite release version.
+_Avoid_: Format release, suite version
+
+**Suite release version**:
+The version of `okf-agent-skills`, such as v0.1.0. It records which reviewed OKF
+specification revision the product implements but does not name the format.
+_Avoid_: OKF version, specification version
+
+**Bundle conformance**:
+Satisfaction of the structural tests defined by an identified OKF
+specification version. Product policy and migration fidelity are separate.
+_Avoid_: Overall validity, suite compatibility
+
+**Producer obligation**:
+An OKF requirement governing authored content or producer behavior that is not
+necessarily a bundle-conformance test.
+_Avoid_: Conformance test, product rule
+
+**Consumer tolerance**:
+Required or recommended behavior when reading optional, unknown, legacy, or
+broken OKF content without treating that content as a mutation target.
+_Avoid_: Automatic repair, conformance waiver
+
+**Suite profile**:
+Additional deterministic parsing, preservation, compatibility, and authoring
+rules imposed by `okf-agent-skills` and reported separately from OKF
+conformance.
+_Avoid_: OKF conformance, product extension
+
+**Discoverability alias**:
+An explicitly authored query synonym used only to find a concept. It is not an
+alternate identity, path, redirect, tag, or precedence rule.
+_Avoid_: Identity alias, redirect, old path
+
+**Semantic preservation**:
+Retention of YAML key names, scalar types and values, sequence order, and
+mapping structure without promising preservation of comments or formatting.
+_Avoid_: Lexical preservation, byte-for-byte round trip
