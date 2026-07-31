@@ -70,3 +70,61 @@ _Avoid_: OKF conformance, product extension
 Retention of YAML key names, scalar types and values, sequence order, and
 mapping structure without promising preservation of comments or formatting.
 _Avoid_: Lexical preservation, byte-for-byte round trip
+
+**Repository instance identity**:
+The local identity of one repository or non-repository workspace instance to
+which trust attaches. Moving an instance preserves trust; a fresh clone or
+replacement is a different instance.
+_Avoid_: Trusted path, repository lineage
+
+**Repository lineage identity**:
+The routing identity shared by clones of one logical VCS repository. It does
+not grant trust, and an independently owned fork has a different lineage.
+_Avoid_: Repository instance identity, permission
+
+**Bundle identity**:
+The identity of a knowledge bundle formed from its owner identity and its
+bundle-root path. Moving the bundle root changes its identity.
+_Avoid_: Bundle name, filesystem path alone
+
+**Federation**:
+Read-time composition of explicitly admitted bundles that retain independent
+identity and ownership. Federation does not merge concepts or grant write
+authority across repositories.
+_Avoid_: Workspace merge, shared write scope
+
+**Notional cold-work charge**:
+A versioned conservative measure of the discovery work a resolution would
+perform without cache hits. It determines the work frontier so cache state
+cannot change which scopes are examined.
+_Avoid_: Actual work, cache-adjusted budget
+
+**Observed execution work**:
+The resources actually consumed while resolving, including cache hits and
+misses. It supports telemetry and hard resource protection but never widens the
+frontier set by the notional cold-work charge.
+_Avoid_: Discovery allowance, notional work
+
+**Provenance source**:
+An authored OKF `sources` entry identifying evidence that supports a concept.
+It does not by itself assert that a change to the source makes the concept
+semantically stale.
+_Avoid_: Freshness dependency, watched file
+
+**Review dependency**:
+An operationally tracked artifact or scope whose change is evidence that a
+concept may need review. It is distinct from authored provenance and does not
+make a semantic-freshness claim.
+_Avoid_: Provenance source, proof of staleness
+
+**Review baseline**:
+The accepted content identity of a concept's review dependencies at the time of
+an evidence-backed review. Later observations are compared with this baseline;
+repository history and file timestamps do not define it.
+_Avoid_: Git baseline, last concept edit
+
+**Manual-operation guard ledger**:
+Local, uncommitted, bundle-scoped safety state that binds preview confirmations
+to a ledger generation and bundle epoch, prevents token replay, and coordinates
+manual operation execution. It is neither OKF content nor harness session state.
+_Avoid_: Bundle metadata, confirmation cache
