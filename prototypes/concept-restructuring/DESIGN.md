@@ -730,6 +730,40 @@ export declare function reduce(j: Journal, world: readonly Observed[], a: Action
 Phase names below are the *derived* phase of the journal after the action. `world` is the freshly
 observed corpus supplied with the action; the reducer never reads a filesystem.
 
+### 3.0 The table is data, and it is checked first
+
+`PHASE_ALLOWS` in `restructure.ts` is this table's `From` column, as a `Record<Phase, ActionKind[]>`,
+and `reduce` consults it before any case runs. An action outside its phase's row is
+`REFUSE PHASE_FORBIDS_ACTION`, whatever the individual case would have said.
+
+This exists because the earlier design spelled each guard out inside the case that needed it, and
+every case that forgot one became a hole with the same shape: a phase that was terminal only in the
+render, with the reducer still accepting the actions that move past it. Adversarial runs walked
+through six of them — `recheck` from `expired`, `verify` from `unknown-interrupted`, `failed-dirty`
+and `rolling-back`, `runStep` from `failed-dirty`, `reconcile` from `mutating`. Each was one
+keystroke, each returned an ALLOW-class verdict, and each ended in a phase whose own notice denied
+what the corpus showed.
+
+`observe` and `acknowledge` are legal from every phase: they record what a human saw and advance
+nothing. Every other action is legal only where the table says so.
+
+| Phase | Actions it accepts |
+| --- | --- |
+| `admitting` | `admit` `gate` `lock` `recheck` `sealManifest` `crash` |
+| `manifest-durable` | `runStep` `crash` |
+| `mutating` | `runStep` `verify` `crash` |
+| `verifying` | `crash` |
+| `rolling-back` | `runStep` `crash` |
+| `refused` `gate-blocked` `expired` `applied-*` `reverted-*` | `admit` |
+| `failed-clean` | `admit` `beginRollback` |
+| `failed-dirty` | `admit` `beginRollback` `reconcile` |
+| `rollback-failed` | `admit` `reconcile` |
+| `unknown-interrupted` | `admit` `reconcile` `recoverInterrupted` `beginRollback`\* |
+
+\* admissible only to be answered in T22/T23's own words (spent token, then "not a failed
+operation"). It has no accepting path: a crash is unresolvable by the machine (I30), so no rollback
+may be built out of a state the machine cannot describe.
+
 | # | Action | From | To | Guard | Effect |
 | --- | --- | --- | --- | --- | --- |
 | T1 | `admit` | — | `admitting` | An `ApprovedPlan` with a manifest and fingerprint is present | Runs the admission predicates (each mapped 1:1 to a `RefusalCode`) |
@@ -741,24 +775,24 @@ observed corpus supplied with the action; the reducer never reads a filesystem.
 | T7 | `recheck` | `admitting` (locked) | `admitting` | Fingerprint matches the freshly observed plan | Appends `RECHECK{ok:true}` |
 | T8 | `sealManifest` | `admitting` (rechecked) | `manifest-durable` | Manifest (lineage, ordered steps, before/after hashes, rollback steps) written durably outside every mutation target | Appends `MANIFEST_DURABLE`. `in-flight` recorded. From here the operation is reconstructible from manifest + snapshot alone |
 | T9 | `sealManifest{ok:false}` | `admitting` | `gate-blocked` | The manifest write failed | Clean terminal; no mutation occurred, so no lineage is at risk |
-| T10 | `runStep` | `manifest-durable` \| `mutating` | `mutating` | `manifestDurable`; `ordinal` is the lowest `not-started`; re-observed `observedHash === step.beforeHash`; ordinal invariants hold | Appends `INTENT{undo}`, mutates, appends `OUTCOME{ok, observedAfter}`; appends `INVALIDATION` when `classification.claimAffecting` |
+| T10 | `runStep` | `manifest-durable` \| `mutating` | `mutating` | `manifestDurable`; `ordinal` is the lowest `not-started`; `action.observedBefore === step.beforeHash` — the target re-read under the lock immediately before the write; ordinal invariants hold | Appends `INTENT{undo}`, mutates, appends `OUTCOME{ok, observedAfter}`; appends `INVALIDATION` when `classification.claimAffecting` |
 | T11 | `runStep{outcome:'ok'}` with `observedAfter !== step.afterHash` | `mutating` | `failed-dirty` | Produced bytes differ from the sealed post-image (a rewrite that also reflowed or normalized) | Appends `OUTCOME{ok:false, note:'PLAN_DEVIATION'}` + `FAILURE`. The step left the manifest-bound substitution and is rejected, not reclassified |
 | T12 | `runStep{outcome:'io-failure'}` | `mutating` | `failed-clean` | No step has a `done` observation | Appends `FAILURE`. Token unspent, epoch unadvanced, zero bytes moved. `ambiguities` legitimately empty |
 | T13 | `runStep{outcome:'io-failure'}` | `mutating` | `failed-dirty` | At least one step is `done` | Appends `FAILURE`. Token unspent, epoch unadvanced. Ambiguity set computed and **required non-empty** |
-| T14 | `runStep{outcome:'concurrent-change-detected'}` | `mutating` | `failed-dirty` | Drift detected after the pre-execution recheck | Appends `FAILURE`. `foreign-mutation-in-scope` ambiguity. Never abort-in-place once bytes have moved |
-| T15 | `verify` | `mutating` (all `done`) | `verifying` | Every step `done`, no dangling `INTENT` | Appends nothing yet; runs OKF validation plus identity, link, and dependency checks |
+| T14 | `runStep` with `observedBefore !== step.beforeHash`, or `outcome:'concurrent-change-detected'` | `manifest-durable` \| `mutating` | `failed-clean` \| `failed-dirty` | The target no longer holds the image the plan was sealed against. The reducer decides this from `observedBefore`; the caller's explicit outcome is a second, redundant route, not the only one | Appends `FAILURE`. `foreign-mutation-in-scope` ambiguity. Never abort-in-place once bytes have moved |
+| T15 | `verify` | `mutating` (all `done`) | `verifying` | Phase is `mutating` **and** every step `done`. Both halves are load-bearing: step-completeness alone is vacuously true over an empty step list and true again over a crashed or already-failed operation, which is how `verify` became an edge out of `unknown-interrupted`, `failed-dirty` and `rolling-back` | Appends nothing yet; runs OKF validation plus identity, link, and dependency checks |
 | T16 | `verify` | `verifying` | `applied-clean` | `okfValid` and all three check groups pass and every link `resolves` | Appends `EPOCH_ADVANCED` (exactly one per bundle) then `SETTLED{as:'applied'}`. Token spent, sibling confirmations invalidated, `in-flight` cleared, locks released. Emits the notice contract |
 | T17 | `verify` | `verifying` | `applied-with-known-breakage` | As T16 but every non-resolving link is `knowingly-broken-approved` and listed in `approvedBreakage` | Same commit sequence, plus a standing report of permanently broken links and every dependency now `unavailable` |
 | T18 | `verify` | `verifying` | `failed-dirty` | Validation fails, or any link is `unexpectedly-broken`, or a structural dependency invalidity or cycle was created | Appends `FAILURE`. **No `EPOCH_ADVANCED`, no `SETTLED`** — the token is still unspent |
-| T19 | `crash` | `mutating` \| `verifying` | `unknown-interrupted` | Process death with `in-flight` recorded | Appends nothing. The journal ends with a dangling `INTENT` or a complete apply with no `SETTLED` |
-| T20 | `reconcile` | `unknown-interrupted` \| `failed-dirty` | unchanged | Always permitted; read-only | Appends `RECONCILED` classifying every step `not-started` / `done` / `indeterminate` / `foreign` by comparing `world` against the journal's before/after hashes. May only narrow with evidence |
-| T21 | `recoverInterrupted` | `unknown-interrupted` | `unknown-interrupted` | Explicit human invocation only | Appends `RECOVERY_REPORT{outcome:'unknown'}` and `EPOCH_ADVANCED`; clears outstanding confirmations. Never assumes success, never rolls back. No edge to applied/failed/reverted exists |
-| T22 | `beginRollback` | `failed-dirty` \| `failed-clean` | `rolling-back` | Pre-rollback snapshot of the CURRENT state taken and hash-verified; restore lands in a disposable location; authorization holds (see T23) | Opens an inverse manifest with `revertOf` set, its own journal, `UNDO_CREATE` for creates and `RESTORE_BYTES` for everything else, `REDIRECT_RETIRE` ordinals below the restore of the identity they occupy |
-| T23 | `beginRollback` | `failed-*` | unchanged | Pre-rollback snapshot or restore verification failed, **or** any `EPOCH_ADVANCED` exists and `freshApproval === null`, **or** mode is `requires-fresh-approval` and `freshApproval === null`, **or** an inverse step's gate (e.g. `deprecated -> stable`) is not in the approved rollback steps | Verdict **BLOCK**; adds "neither applied nor rolled back" to `humanActionRequired`. Rollback never rides a spent token |
+| T19 | `crash` | `manifest-durable` \| `mutating` \| `verifying` \| `rolling-back` | `unknown-interrupted` | Process death with something in flight. A rollback segment never seals its own manifest, so **being in flight**, not `MANIFEST_DURABLE`, is the test — otherwise a process dying mid-rollback could not reach the interrupted terminal at all, in exactly the window where the corpus is half-restored under two live identities. `derivePhase` checks `INTERRUPTED` before the rollback branch for the same reason | Appends nothing. The journal ends with a dangling `INTENT` or a complete apply with no `SETTLED` |
+| T20 | `reconcile` | `unknown-interrupted` \| `failed-dirty` \| `rollback-failed` | unchanged | The phase table enforces the scope; read-only | Appends `RECONCILED` classifying every step `not-started` / `done` / `indeterminate` / `foreign` by comparing `world` against the journal's before/after hashes. It is a **snapshot of one moment**, not an override: `INTENT`/`OUTCOME` records appended after it win, and it supplies a baseline only for steps the journal has said nothing about since. Treating it as a permanent override froze the step table mid-flight and made a `mutating` operation unfinishable, unrollbackable and silent |
+| T21 | `recoverInterrupted` | `unknown-interrupted` | `unknown-interrupted` | Explicit human invocation, and no `RECOVERY_REPORT` already in the segment (`ALREADY_RECOVERED`). T21's self-loop otherwise permitted a second invocation, appending a second `EPOCH_ADVANCED` with the same `from` — a state `checkInvariants` itself rejects under I27 | Appends `RECOVERY_REPORT{outcome:'unknown'}` and `EPOCH_ADVANCED`; clears outstanding confirmations. Never assumes success, never rolls back. No edge to applied/failed/reverted exists |
+| T22 | `beginRollback` | `failed-dirty` \| `failed-clean` | `rolling-back` | Pre-rollback snapshot of the CURRENT state taken and hash-verified; restore lands in a disposable location; authorization holds (see T23) | Opens an inverse manifest with `revertOf` set, its own journal, `UNDO_CREATE` for creates and `RESTORE_BYTES` for everything else, `REDIRECT_RETIRE` ordinals below the restore of the identity they occupy. The inverse is built from **what landed**, not from `OUTCOME.ok`: a step whose bytes deviated or whose write was interrupted moved the target too, and filtering those out left the mutation applied under a `reverted-clean` terminal. Each inverse step's `beforeHash` is corrected from the sealed full-apply projection to what the partially-applied world actually holds, and there is one restore per target, not one per parent step |
+| T23 | `beginRollback` | `failed-*` | unchanged | Pre-rollback snapshot or restore verification failed, **or** any `EPOCH_ADVANCED` exists and `freshApproval === null`, **or** mode is `requires-fresh-approval` and `freshApproval === null`, **or** an inverse step's gate (e.g. `deprecated -> stable`) is not in the approved rollback steps, **or** the inverse manifest is empty (`NOTHING_TO_ROLL_BACK`: nothing landed, so the pre-operation state is already in place and the exit is a fresh preview, not a rollback) | Verdict **BLOCK**; adds "neither applied nor rolled back" to `humanActionRequired`. Rollback never rides a spent token |
 | T24 | `runStep` (inverse) | `rolling-back` | `reverted-clean` | Every inverse step done, every `restoredHash === undo.observedHash`, and no completed parent step had `escape !== 'contained'` | Appends `SETTLED{as:'reverted'}`. Snapshot verification state returns with the bytes; no re-verification runs. No spent record is created for the parent, so a fresh preview may re-authorize the identical operation |
 | T25 | `runStep` (inverse) | `rolling-back` | `reverted-with-residue` | Bytes fully restored but some completed parent step was `observable-local` or `escaped`, or an `OBSERVATION` exists for one | Appends `SETTLED{as:'reverted'}` plus permanent `Residue` entries naming what cannot be un-said |
-| T26 | `runStep` (inverse) | `rolling-back` | `rollback-failed` | An inverse step failed, or a restored hash differs from its snapshot hash | Appends `FAILURE`. Ambiguities `rollback-partially-applied` + `restore-not-byte-identical` naming every concept whose `verified` a non-identical restore would drop. Refuses to accept the restore |
-| T27 | `admit` (new operation) | `applied-*` \| `rollback-failed` \| `unknown-interrupted` | `admitting` (new journal) | Always available | The only exit from a settled or human-only terminal is a NEW operation with its own fresh preview, approval, and recovery gate. Rollback nesting is therefore bounded at one level by construction, not by fiat |
+| T26 | `runStep` (inverse) | `rolling-back` | `rollback-failed` | An inverse step failed, or a restored hash differs from its snapshot hash | Appends `FAILURE`. Ambiguities `rollback-partially-applied` + `restore-not-byte-identical` naming every concept whose `verified` a non-identical restore would drop. Refuses to accept the restore, and the terminal holds: the rejected step observes as `foreign` (bytes provably moved and match neither sealed image), so it is not the lowest `not-started` ordinal and cannot be re-run into `reverted-clean`; `runStep` is not in `rollback-failed`'s row of the phase table either |
+| T27 | `admit` (new operation) | any terminal phase | `admitting` (new segment) | Always available. `REFUSED` opens its own segment exactly as `ADMITTED` does, so a later attempt's refusal cannot overwrite the settled outcome of the operation before it | The only exit from a settled or human-only terminal is a NEW operation with its own fresh preview, approval, and recovery gate. Rollback nesting is therefore bounded at one level by construction, not by fiat |
 | T28 | `observe` | any | unchanged | An injected external signal arrives | Appends `OBSERVATION` to the append-only log. Never amends the sealed manifest. Marks outputs human-consumed so their deletion during rollback is flagged as evidence destruction |
 | T29 | `acknowledge` | `failed-dirty` \| `reverted-with-residue` \| `rollback-failed` | unchanged | A human names a specific ambiguity | Sets `acknowledgedByHuman`. Changes neither settlement nor cleanliness and authorizes nothing — acknowledgement is not approval |
 
@@ -772,10 +806,10 @@ the only code path that could produce it does not exist in the action union.
 | # | Invariant | Mechanism |
 | --- | --- | --- |
 | I1 | Merge/split outputs are always explicit `status: draft`, never verified | `CREATE_OUTPUT` admission requires `statusExplicit === true` and an empty `Verification`; `OUTPUT_NOT_EXPLICIT_DRAFT` otherwise. No function maps an input's verification into a created concept |
-| I2 | Trust is never aggregated, inherited, or majority-derived | `trustFate(before, EditClassification)` has no parameter that could carry another concept's tier, and `classifyEdit` has none either |
+| I2 | Trust is never aggregated, inherited, or majority-derived | `trustFate(before, EditClassification)` has no parameter that could carry another concept's tier, and `classifyEdit` has none either. The one call site that follows a lineage pointer — a move's write half reading `movedFrom`'s verification — is admissible only after admission has proved the move byte-identical **against the observed source** (`MOVE_AND_EDIT_NOT_SEPARATED`). Taking the planner's `byte-identical-path-move` classification on trust let a forged plan mint a new Concept ID carrying `human-reviewed` over changed content |
 | I3 | Identity continuity and trust continuity are independent axes | Identity lives in `ConceptKey` + `LineageRecord`; trust changes only via `trustFate`, whose signature cannot receive a key or a lineage record |
 | I4 | Moving or renaming changes identity; nothing claims continuity | There is no continuity field to set: `LineageRecord.continuity` is a single string literal, and `ConceptKey` has no stable-id component |
-| I5 | Any concurrent **content or verification** change aborts the entire operation | `Observed.observedHash = H(contentHash, verificationHash)` is the only unit compared, at the recheck (T6) and again at every `INTENT` (T10). A content-only fingerprint is unwritable against this type |
+| I5 | Any concurrent **content or verification** change aborts the entire operation | `Observed.observedHash = H(contentHash, verificationHash)` is the only unit compared, at the recheck (T6) and again at every `INTENT` (T10) against `action.observedBefore`. The second comparison is a reducer guard, not a convention the caller may decline: without it, every step whose post-image is fully determined by the plan (`CREATE_OUTPUT`, `INDEX_REGEN`, `RESTORE_BYTES`, a move's create half) overwrote a concurrent session's work and still settled `applied-clean`, because the `afterHash` check the reducer does perform cannot see a destroyed pre-state |
 | I6 | No partial continuation; no drop-the-changed-item-and-proceed | `recheck` has exactly two outgoing edges and neither takes a subset of the plan. There is no resume-from-ordinal action in the union |
 | I7 | Manifest-bound link substitution preserves the linking concept's `verified` | `LINK_REWRITE` classifies non-claim-affecting **only** while `observedAfter === afterHash`; a deviation is T11, a rejected step, not a reclassified one |
 | I8 | A claim-affecting edit clears `verified` and reports the invalidation as part of the edit | `CONTENT_EDIT` classifies claim-affecting and T10 appends `INVALIDATION` in the same step. No action exists for standalone verification removal, so the approval path meant for disputing evidence is unreachable from here |
@@ -797,21 +831,24 @@ the only code path that could produce it does not exist in the action union.
 | I24 | Approval binds the manifest hash and the recovery-evidence hash; amending either expires it | `manifestHash` and `recoveryEvidenceHash` are inside `ApprovedPlan`; the manifest is immutable after `MANIFEST_DURABLE` and observations append to a separate log record (T28) |
 | I25 | The guard fingerprint is not weakened; new effect kinds enter as planned actions | `FingerprintItem` keeps `{path, contentHash, action, risk}` and adds `verificationHash`; every `EffectStep` carries a `PlannedAction` from the guard's closed set |
 | I26 | REFUSE and EXPIRE stay distinct downstream of apply | Two phases (`refused`, `expired`) with two verdicts and two record kinds; `refused` always carries a closed `RefusalCode` |
-| I27 | One execution, one lock set, one epoch advance | `EPOCH_ADVANCED` is legal only between the last `OUTCOME` and `SETTLED`; a second record for the same bundle is a `checkInvariants` violation |
+| I27 | One execution, one lock set, one epoch advance | `EPOCH_ADVANCED` is legal only between the last `OUTCOME` and `SETTLED`; a second record for the same bundle is a `checkInvariants` violation. Its two producers are guarded at source: `verify` runs only from `mutating`, and `recoverInterrupted` refuses once a `RECOVERY_REPORT` exists |
 | I28 | A handled failure spends no token and advances no epoch | T12/T13/T14/T18 append `FAILURE` and no `EPOCH_ADVANCED`; `SETTLED` is the only record the spend hangs off |
-| I29 | There is no resume-from-step-N | No action carries a resume; a retry is a new `admit` whose recheck sees the partial mutation and EXPIREs |
-| I30 | A crash yields a distinct, unresolvable-by-machine terminal | `unknown-interrupted` is derived from "`in-flight` with no `SETTLED`"; `reconcile` is read-only and `recoverInterrupted` has no edge to any settled phase |
-| I31 | Rollback authorization never rests on a ledger | The rollback path reads `manifest.rollbackSteps`, `INTENT.undo`, and the snapshot — all durable before the first mutation. The ledger is read only for epoch and lock |
-| I32 | The spent record is epoch-scoped, not a fingerprint blacklist | A failed or reverted operation never appends `SETTLED{applied}`, so no spend record exists; a fresh preview re-authorizes the byte-identical plan |
+| I29 | There is no resume-from-step-N | No action carries a resume, and `runStep` appears in no failed or interrupted phase's row of the phase table; a retry is a new `admit` whose recheck sees the partial mutation and EXPIREs. `stepObservations` reads the **last** `OUTCOME` per ordinal, so a step that did run is never rendered as `not-started` — reading only the first made a recorded mutation invisible and its ordinal permanently re-runnable |
+| I30 | A crash yields a distinct, unresolvable-by-machine terminal | `unknown-interrupted` is derived from "`in-flight` with no `SETTLED`", including mid-rollback; `reconcile` is read-only and `recoverInterrupted` has no edge to any settled phase. `verify` was that edge until the phase table closed it — it read only step-completeness, which a crash leaves untouched, and would launder an indeterminate, dirty state into `applied-clean` with the ambiguity set discarded |
+| I31 | Rollback authorization never rests on a ledger | The rollback path reads `manifest.rollbackSteps` and the snapshot — both durable before the first mutation — plus the parent segment's step observations to decide which inverse steps apply and what each one's before-image now is. The ledger is read only for epoch and lock. (`INTENT.undo` is journaled per step and is what a future executor would restore from; the inverse *manifest* is built from `rollbackSteps`, so `undo` is currently carried and not read.) |
+| I32 | The spent record is epoch-scoped, not a fingerprint blacklist | A failed or reverted operation never appends `SETTLED{applied}`, so no spend record exists; a fresh preview re-authorizes the byte-identical plan. `admissionRefusal` scans **per segment** and refuses only when the segment that settled carries this same fingerprint — scanning every `SETTLED` in the journal turned the machine into a blacklist that refused every later operation, including the corrective one T27 names as the only exit |
 | I33 | `sources[]` is the only authored provenance; lineage lives only in the manifest | `ConceptView` has no derivation field; `LineageRecord` exists only inside `OperationManifest` |
 | I34 | New or retargeted review dependencies have no baseline and preview observations are never accepted | Constructed with `hasBaseline: false` and `finding: {kind:'no-baseline'}`; `capturedObservation.accepted` is the literal `false` and no action promotes it |
 | I35 | Dependency repairs are separate reviewed operations and never clear findings | `ScheduledRepair` is not an `EffectStep`; `openFindings` is copied forward untouched and `REVIEW_REPAIR_PERFORMED_INLINE` refuses a plan that tries |
 | I36 | `unchanged` / `changed` / `unavailable` / `unobservable` never collapse | Four `ReviewFinding` variants with different payloads; no function maps one to another |
 | I37 | Self-scoped or cyclic review dependencies are caught after the operation, not at first observation | `structuralInvalidity` is populated only by the `verify` action |
-| I38 | Review evidence is reported separately from trust | `Frame.reviewDependencies` and `Frame.trust` are distinct fields rendered in distinct sections |
+| I38 | Review evidence is reported separately from trust | `Frame.reviewDependencies` and `Frame.trust` are distinct fields rendered in distinct sections, and no review finding moves a tier: a tier changes only when `classifyEdit` returns `claimAffecting` |
 | I39 | Index regeneration and mechanical link repair inherit the parent approval; a broad rebuild does not | `approvalScope: 'inherited'` is admissible only for `INDEX_REGEN{indexScope:'directly-affected'}` and confined `LINK_REWRITE`; `BROAD_REBUILD_NEEDS_OWN_GATE` otherwise |
 | I40 | Knowledge is never live in zero places | Ordinal invariant checked at admission: every `CREATE_OUTPUT` ordinal is below every source `STATUS_TRANSITION`/`DELETE_CONCEPT`/`MOVE_PATH` removal ordinal, and every `MOVE_PATH` ordinal is below every `LINK_REWRITE` ordinal. `ORDERING_WOULD_UNMOOR_KNOWLEDGE` refuses |
 | I41 | Moving a bundle root is not a restructuring operation | `Plan` has no bundle-root variant; a request refuses with `BUNDLE_ROOT_SELF_ORPHANING` because it would change the `ledgerKey` its own confirmation is filed under |
+| I46 | The frame reports outcomes, never predictions dressed as outcomes | `TrustOutcome` carries the `ordinal` it belongs to and `observed`/`stepState` from the same `stepObservations` the step table renders. One Concept ID touched by two steps yields two rows that can be told apart, and a row whose step has not landed renders as *predicted*. Without this a `failed-clean` operation — zero bytes moved — reported a lost human review, and a rejected restore reported byte-identical success |
+| I47 | Inbound links are resolved against the manifest that owns them | `linkResolutions` uses the **forward** manifest even while the current segment holds the inverse, and treats a forward effect as in force until the inverse step for that target has itself completed. Resolving against the inverse made every `unexpectedly-broken` link render `resolves` the instant a rollback was admitted and no byte had moved — the panel asserting a healthy link graph over a half-applied corpus, directly above the ambiguity list contradicting it |
+| I48 | Residue belongs to the operation that produced it | `residueOf` scans the rollback segment and its parent, never the whole journal. Scanning the journal attributed an already-reverted operation's escaped effects to the next, unrelated one and pointed its `ordinal` at a step in a different manifest |
 | I42 | Every completed operation emits the notice contract | `Frame.notice` is derived from the journal and `checkInvariants` rejects a terminal phase with an empty notice |
 | I43 | **A dirty state can never be silent** | `checkInvariants` rejects any frame whose `classification.cleanliness === 'dirty'` and whose `ambiguities` is empty. `unclassified-loss` exists so an unanticipated loss becomes a loud, named finding rather than a clean report |
 | I44 | The phase can never disagree with the journal | `Phase` and `Classification` are both derived (`derive`, `classify`); neither is a stored field, and `settled ⇔ a durable SETTLED record exists` |
@@ -821,7 +858,7 @@ the only code path that could produce it does not exist in the action union.
 
 ## 5. Hard-case catalogue
 
-129 rows, one per hard case in the constraint sheet. Each row is a checkable claim about resulting
+146 rows: 129 one-per-hard-case rows from the constraint sheet, plus 17 adversarial regressions (§5.5). Each row is a checkable claim about resulting
 state; the walkthrough asserts on exactly these. `code` means the `REFUSED` record's `RefusalCode`.
 
 ### 5.1 Merge (40)
@@ -1083,6 +1120,34 @@ state; the walkthrough asserts on exactly these. `code` means the `REFUSED` reco
 
 ---
 
+### 5.5 Adversarial regressions (17)
+
+One row per defect three adversarial passes found by *running* the machine. Each failed before its
+fix. They are stated as the property that was violated, so a re-broken guard fails loudly rather
+than passing a keystroke path that happens to have moved.
+
+| ID | Property | Was |
+| --- | --- | --- |
+| A-01 | An expired approval cannot be re-rechecked, sealed and applied | `expired` was terminal only in the render; the stale token survived its own expiry and the operation applied in full under a phase reading `settlement=none, clean` |
+| A-02 | A crashed operation cannot be verified into `applied` | `verify` read only step-completeness, which a crash leaves untouched — an edge out of the terminal I30 calls unresolvable-by-machine |
+| A-03 | A concurrent write at a step target is caught by the second `observedHash` comparison | The comparison did not exist; a human-verified concept created at a planned output ID was overwritten and the operation settled `applied-clean` with an empty ambiguity set |
+| A-04 | A failure in which nothing landed has nothing to roll back | The empty inverse manifest made `rolling-back` a dead end whose only accepting action was `verify`, which settled a zero-byte failure as APPLIED and spent the token the retry needs |
+| A-05 | A byte-identical move is checked against the observed source, not asserted by the plan | A forged `afterHash` on a `byte-identical-path-move` minted a new Concept ID carrying `human-reviewed` over changed content |
+| A-06 | A failed verification cannot be re-run until it passes | `verify` was re-entrant from `failed-dirty`; the `FAILURE` stayed in the journal and the operation settled as applied |
+| A-07 | One interruption, one recovery report, one epoch advance | T21's self-loop let `recoverInterrupted` append a second `EPOCH_ADVANCED` with the same `from`, a state `checkInvariants` rejects |
+| A-08 | A step whose bytes deviated is still inverted by the rollback | The inverse was built from `OUTCOME.ok` alone, so a landed-but-deviating write was dropped from the rollback and left applied under `reverted-clean` |
+| A-09 | A rejected restore cannot be re-run into `reverted-clean` | A failed restore observed as `not-started`, so one keystroke converted `rollback-failed` into the cleanest terminal and emptied the ambiguity set |
+| A-10 | A process that dies mid-rollback reaches the interrupted terminal | `crash` required `MANIFEST_DURABLE`, which a rollback segment never has; every exit was refused and the frame reported `clean`, non-terminal, no notice, no ambiguity |
+| A-11 | A settled operation is not overwritten by a later admission attempt | `REFUSED` folded into the settled segment, so the frame reported a refusal for an operation that had mutated the corpus |
+| A-12 | There is no resume-from-step-N | `runStep` had no terminal guard, and only the first `OUTCOME` per ordinal was read: the effect landed, the journal recorded it, and `derive` denied it |
+| A-13 | `reconcile` is scoped to the phases that can use it | Accepted from `mutating`, where it froze the step table permanently |
+| A-14 | A reconcile snapshot does not freeze later journal evidence | `RECONCILED` overrode every subsequent record instead of supplying a baseline |
+| A-15 | Inbound links are resolved against the forward manifest during a rollback | Every `unexpectedly-broken` link flipped to `resolves` the instant a rollback was admitted, before a byte moved |
+| A-16 | Trust rows are predictions until their step lands | A `failed-clean` operation reported a lost human review, and one Concept ID touched by two steps printed two irreconcilable `after` tiers naming neither step |
+| A-17 | An earlier operation's residue is not attributed to a later one | `residueOf` scanned the whole journal, relabelling a later operation `reverted-with-residue` on the strength of an already-reverted one's observation |
+
+---
+
 ## 6. Injected inputs and open questions handed back
 
 Every value below is an `Injected<T>` whose `ownedBy` and `openQuestion` are rendered next to each
@@ -1120,6 +1185,28 @@ archive `deprecate-in-place`, supersede edge `none`, rollback authorization
    knows". `reverted-clean` should be read accordingly.
 4. **Ambiguity taxonomy completeness.** No design can prove its taxonomy exhaustive; this one
    degrades loudly instead of quietly, via `unclassified-loss` plus invariant I43.
-5. **Byte-identity is brittle.** Any tool that normalizes line endings or reserializes frontmatter
+5. **A `rollback-failed` corpus has no repair operation.** The terminal is loud, named, and
+   correct — and there is nothing the machine can do next except `admit` a brand-new operation with
+   its own preview and gate. Whether "repair a half-restored corpus" is an approvable operation kind
+   of its own, and what preview it would show, belongs to
+   [Define validation, growth, compaction, and approval contracts](https://github.com/artemVeduta/okf-agent-skills/issues/7).
+   This prototype refuses to invent one: the alternative it rejected — letting the rejected inverse
+   step simply be re-run — converts the loudest terminal into the quietest with one keystroke.
+6. **`rolling-back` is a clean, non-terminal window in which the corpus is at its most inconsistent.**
+   Both anti-silence devices (I42's terminal-implies-notice, I43's dirty-implies-ambiguity) are off
+   for its duration, and the same knowledge can be live under two fully-qualified identities inside
+   it. The exit for an abandoned rollback is `crash` (T19), which reaches the dirty, loud
+   `unknown-interrupted`. Whether the in-flight window itself should report, and in what vocabulary,
+   is not settled here.
+7. **A link whose old and new identity are both live has no resolution value.** `LinkResolution` is
+   three-valued (`resolves` / `unexpectedly-broken` / `knowingly-broken-approved`), and mid-rollback
+   a rewritten link can point at a new identity that is about to be retired while the old one is
+   already restored. The machine resolves against the forward manifest (I47), which is honest about
+   what the *operation* did, and says nothing about which of two live carriers a reader should
+   follow — that is
+   [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24)'s
+   decision, and the `links-split-across-old-and-new` ambiguity exists to hand it back rather than
+   settle it.
+8. **Byte-identity is brittle.** Any tool that normalizes line endings or reserializes frontmatter
    turns an ordinary rollback into `rollback-failed`. That is correct and inconvenient, and it is a
    real cost of I9 that the graduating decision should weigh.

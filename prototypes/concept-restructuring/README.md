@@ -45,7 +45,7 @@ ledger, locking and epoch from
 
 ```bash
 node prototypes/concept-restructuring/tui.ts          # drive it by hand
-node prototypes/concept-restructuring/walkthrough.ts  # replay all 129 hard cases
+node prototypes/concept-restructuring/walkthrough.ts  # replay all 146 rows
 ```
 
 Node 22.6+ (type stripping); no dependencies, no package manager, no build step, no test framework,
@@ -89,7 +89,13 @@ failed-* → rolling-back → reverted-clean | reverted-with-residue | rollback-
 **Silence is a reducer-invariant violation, not a policy.** `checkInvariants` rejects any frame whose
 `classification.cleanliness === 'dirty'` and whose `ambiguities` is empty; `unclassified-loss` exists
 so an unanticipated loss becomes a loud, named finding rather than a clean report. Every one of the
-129 walkthrough rows additionally asserts `checkInvariants` is silent.
+146 walkthrough rows additionally asserts `checkInvariants` is silent.
+
+**The phase table is the guard.** `PHASE_ALLOWS` (DESIGN.md §3.0) is the transition table's `From`
+column as data, consulted before any `reduce` case runs. Three adversarial passes found six holes
+that were all the same shape — a guard spelled out inside the one case that needed it and omitted
+from the others, leaving a phase that was terminal only in the render. Catalogue section `A-*` is one
+row per hole; each failed before its fix.
 
 **Two orderings carry the design.** The manifest, its lineage and its inverse steps are durable
 *before* the first byte moves; the token spend and the epoch advance sit only between the last
@@ -154,7 +160,24 @@ Nothing else differs.
 
 ## Things the machine names rather than closes
 
-Beyond the six gaps DESIGN.md §6 hands back, driving the code surfaced one more worth putting in
+DESIGN.md §6 now hands back eight gaps. Three of them came out of the adversarial passes and belong
+to open tickets rather than to this prototype:
+
+- **A `rollback-failed` corpus has no repair operation** (§6 gap 5). Whether "repair a half-restored
+  corpus" is an approvable operation kind of its own is
+  [Define validation, growth, compaction, and approval contracts](https://github.com/artemVeduta/okf-agent-skills/issues/7)'s
+  call. The machine refuses to invent one — the alternative, re-running the rejected inverse step,
+  turns the loudest terminal into the quietest with one keystroke.
+- **`rolling-back` is a clean, non-terminal window with the corpus at its most inconsistent** (§6
+  gap 6). Both anti-silence devices are off for its duration. The exit for an abandoned rollback is
+  `crash`, which reaches the dirty, loud `unknown-interrupted`.
+- **A link whose old and new identity are both live has no `LinkResolution` value** (§6 gap 7). The
+  machine resolves against the forward manifest and hands the "which carrier does a reader follow"
+  question to
+  [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24)
+  via the `links-split-across-old-and-new` ambiguity.
+
+Driving the code also surfaced one more worth putting in
 front of [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24):
 **this model treats a deprecation as a retirement for link-resolution purposes**, so an unrewritten
 inbound link to a deprecated concept renders `unexpectedly-broken`. Whether a deprecated concept

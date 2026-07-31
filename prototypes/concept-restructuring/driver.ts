@@ -88,6 +88,12 @@ function liveSteps(world: World): readonly EffectStep[] {
   return frameOf(world).manifest?.steps ?? [];
 }
 
+/** The target as it stands immediately before the write: I5's second reading. */
+function beforeImage(world: World, s: EffectStep): string | null {
+  const c = find(world.corpus, s.target);
+  return c ? observe(c).observedHash : null;
+}
+
 function nextPending(world: World): EffectStep | null {
   const frame = frameOf(world);
   const pending = frame.steps.find(([, o]) => o.state === 'not-started');
@@ -152,7 +158,7 @@ export function step(world: World, key: string): World {
       return dispatch(
         world,
         `run step ${s.ordinal} ${s.kind} ${ks(s.target)}`,
-        { kind: 'runStep', ordinal: s.ordinal, outcome: 'ok', observedAfter: after, undo: snapshotEntry(world.corpus, s.target) },
+        { kind: 'runStep', ordinal: s.ordinal, outcome: 'ok', observedBefore: beforeImage(world, s), observedAfter: after, undo: snapshotEntry(world.corpus, s.target) },
         next,
       );
     }
@@ -172,6 +178,7 @@ export function step(world: World, key: string): World {
         kind: 'runStep',
         ordinal: s.ordinal,
         outcome: 'io-failure',
+        observedBefore: beforeImage(world, s),
         observedAfter: null,
         undo: snapshotEntry(world.corpus, s.target),
       });
@@ -183,6 +190,7 @@ export function step(world: World, key: string): World {
         kind: 'runStep',
         ordinal: s.ordinal,
         outcome: 'concurrent-change-detected',
+        observedBefore: beforeImage(world, s),
         observedAfter: null,
         undo: snapshotEntry(world.corpus, s.target),
       });
@@ -202,7 +210,7 @@ export function step(world: World, key: string): World {
       return dispatch(
         world,
         `run step ${s.ordinal} (bytes deviate from the sealed post-image)`,
-        { kind: 'runStep', ordinal: s.ordinal, outcome: 'ok', observedAfter: after, undo: snapshotEntry(world.corpus, s.target) },
+        { kind: 'runStep', ordinal: s.ordinal, outcome: 'ok', observedBefore: beforeImage(world, s), observedAfter: after, undo: snapshotEntry(world.corpus, s.target) },
         deviated,
       );
     }
@@ -214,6 +222,7 @@ export function step(world: World, key: string): World {
         kind: 'runStep',
         ordinal: 999,
         outcome: 'ok',
+        observedBefore: null,
         observedAfter: null,
         undo: snapshotEntry(world.corpus, manifest.steps[0].target),
       });

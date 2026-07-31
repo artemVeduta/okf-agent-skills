@@ -243,9 +243,18 @@ export function trustFate(before: Verification, c: EditClassification): Verifica
 }
 
 export interface TrustOutcome {
+  /** The step this row belongs to. One Concept ID touched by two steps yields
+   *  two rows with different resulting tiers; without the ordinal the panel
+   *  printed two irreconcilable `after` values and named neither step. */
+  readonly ordinal: number;
   readonly key: ConceptKey;
   readonly before: TrustTier;
   readonly after: TrustTier;
+  /** `false` while the step has not landed: `after` is a PREDICTION, not an
+   *  outcome. A `failed-clean` operation moved zero bytes, so every row on it
+   *  is predicted and none of them happened. */
+  readonly observed: boolean;
+  readonly stepState: StepObservation['state'];
   readonly invalidationReported: boolean;
   readonly classification: EditClassification;
 }
@@ -801,6 +810,14 @@ export type Action =
       readonly kind: 'runStep';
       readonly ordinal: number;
       readonly outcome: 'ok' | 'io-failure' | 'concurrent-change-detected';
+      /**
+       * The target re-observed under the lock IMMEDIATELY BEFORE the write.
+       * `world` cannot serve here: by the time an outcome is reportable the
+       * write has already landed, so the pre-image has to be carried. Without
+       * it the reducer had no second `observedHash` comparison at all and I5
+       * was a convention the caller could decline to honour.
+       */
+      readonly observedBefore: string | null;
       readonly observedAfter: string | null;
       readonly undo: SnapshotEntry;
     }
@@ -832,7 +849,11 @@ export interface Step {
 export function segments(j: Journal): readonly (readonly JournalRecord[])[] {
   const out: JournalRecord[][] = [[]];
   for (const rec of j) {
-    if (rec.r === 'ADMITTED' && out[out.length - 1].length > 0) out.push([]);
+    // A REFUSED opens its own segment for the same reason an ADMITTED does: a
+    // later admission attempt is a DIFFERENT operation, and folding its refusal
+    // into the previous operation's segment would overwrite that operation's
+    // settled outcome in the frame and make `settled ⇔ SETTLED record` false.
+    if ((rec.r === 'ADMITTED' || rec.r === 'REFUSED') && out[out.length - 1].length > 0) out.push([]);
     out[out.length - 1].push(rec);
   }
   return out;
@@ -884,13 +905,19 @@ export function derivePhase(j: Journal): Phase {
     return knownBreakage(j).length > 0 ? 'applied-with-known-breakage' : 'applied-clean';
   }
 
+  // Checked BEFORE the rollback branch: a process that dies mid-rollback is
+  // interrupted, not "still rolling back". Ordering the rollback branch first
+  // made `unknown-interrupted` unreachable once a rollback had started, which
+  // contradicted I30 for exactly the window in which the corpus is most
+  // inconsistent (half restored, two live carriers).
+  if (has(seg, 'INTERRUPTED')) return 'unknown-interrupted';
+
   const failed = seg.some((r) => r.r === 'FAILURE');
   if (isRollback) {
     if (failed) return 'rollback-failed';
     return 'rolling-back';
   }
 
-  if (has(seg, 'INTERRUPTED')) return 'unknown-interrupted';
   if (has(seg, 'GATE') && seg.some((r) => r.r === 'GATE' && !r.ok)) return 'gate-blocked';
   if (seg.some((r) => r.r === 'RECHECK' && !r.ok)) return 'expired';
 
@@ -920,23 +947,47 @@ export function stepObservations(j: Journal): readonly (readonly [number, StepOb
   const seg = currentSegment(j);
   const manifest = findManifest(seg);
   if (!manifest) return [];
+  return observationsIn(seg, manifest);
+}
 
-  let reconciled: readonly (readonly [number, StepObservation])[] | null = null;
-  for (const r of seg) if (r.r === 'RECONCILED') reconciled = r.steps;
-  if (reconciled) return reconciled;
+/** Segment-scoped so the rollback path can read its PARENT's step outcomes. */
+export function observationsIn(
+  seg: readonly JournalRecord[],
+  manifest: OperationManifest,
+): readonly (readonly [number, StepObservation])[] {
+  // A `RECONCILED` record is a SNAPSHOT of one moment, not a permanent override
+  // of the journal. Records appended after it win; it only supplies a baseline
+  // for steps the journal has nothing to say about since it was written.
+  let cut = -1;
+  const baseline = new Map<number, StepObservation>();
+  seg.forEach((r, i) => {
+    if (r.r !== 'RECONCILED') return;
+    cut = i;
+    for (const [ordinal, o] of r.steps) baseline.set(ordinal, o);
+  });
+  const live = seg.slice(cut + 1);
 
   const out: (readonly [number, StepObservation])[] = [];
   for (const step of manifest.steps) {
-    const intent = seg.some((r) => r.r === 'INTENT' && r.ordinal === step.ordinal);
-    const outcome = seg.find((r) => r.r === 'OUTCOME' && r.ordinal === step.ordinal);
+    const intent = live.some((r) => r.r === 'INTENT' && r.ordinal === step.ordinal);
+    // The LAST outcome for an ordinal wins. Reading only the first made a
+    // recorded effect invisible forever once an earlier attempt had failed,
+    // so `derive` denied a mutation its own journal recorded.
+    let outcome: Extract<JournalRecord, { r: 'OUTCOME' }> | null = null;
+    for (const r of live) if (r.r === 'OUTCOME' && r.ordinal === step.ordinal) outcome = r;
+
     if (!intent) {
-      out.push([step.ordinal, { state: 'not-started' }]);
-    } else if (!outcome || outcome.r !== 'OUTCOME') {
+      out.push([step.ordinal, baseline.get(step.ordinal) ?? { state: 'not-started' }]);
+    } else if (!outcome) {
       out.push([step.ordinal, { state: 'indeterminate' }]);
     } else if (outcome.ok) {
       out.push([step.ordinal, { state: 'done' }]);
-    } else if (outcome.note === 'PLAN_DEVIATION') {
-      out.push([step.ordinal, { state: 'foreign', observedHash: outcome.observedAfter ?? '?' }]);
+    } else if (outcome.observedAfter !== null) {
+      // Bytes provably moved and match neither sealed image. `PLAN_DEVIATION`
+      // on the forward path and `RESTORE_NOT_BYTE_IDENTICAL` on the rollback
+      // path are the same fact; calling the second `not-started` understated
+      // the world and let the rejected restore be silently re-run.
+      out.push([step.ordinal, { state: 'foreign', observedHash: outcome.observedAfter }]);
     } else {
       out.push([step.ordinal, { state: 'not-started' }]);
     }
@@ -981,11 +1032,13 @@ function residueOf(j: Journal): readonly Residue[] {
   if (!manifest) return [];
 
   const out: Residue[] = [];
-  const doneOrdinals = new Set<number>();
-  for (const r of parent) if (r.r === 'OUTCOME' && r.ok) doneOrdinals.add(r.ordinal);
+  const landed = new Set<number>();
+  for (const [ordinal, o] of observationsIn(parent, manifest)) {
+    if (o.state !== 'not-started') landed.add(ordinal);
+  }
 
   for (const step of manifest.steps) {
-    if (!doneOrdinals.has(step.ordinal)) continue;
+    if (!landed.has(step.ordinal)) continue;
     if (step.escape === 'contained') continue;
     out.push({
       ordinal: step.ordinal,
@@ -993,7 +1046,11 @@ function residueOf(j: Journal): readonly Residue[] {
       statement: `step ${step.ordinal} ${step.kind} on ${ks(step.target)} was ${step.escape}: restoring bytes does not un-say it`,
     });
   }
-  for (const rec of j) {
+  // Scoped to the operation being reverted and to the rollback itself. Scanning
+  // the WHOLE journal attributed an earlier, already-reverted operation's
+  // escaped effects to this one — and its `ordinal` named a step in a different
+  // manifest, so the statement pointed at the wrong step.
+  for (const rec of [...parent, ...currentSegment(j)]) {
     if (rec.r !== 'OBSERVATION') continue;
     out.push({
       ordinal: rec.ordinal,
@@ -1187,18 +1244,38 @@ function ambiguitiesOf(j: Journal, world: readonly Observed[], phase: Phase): re
 
 function linkResolutions(j: Journal): readonly (readonly [LinkId, LinkResolution])[] {
   const seg = currentSegment(j);
-  const manifest = findManifest(seg) ?? (parentSegment(j) ? findManifest(parentSegment(j)!) : null);
+  const own = findManifest(seg);
+  const parent = parentSegment(j);
+  const parentManifest = parent ? findManifest(parent) : null;
+  // During a rollback the current manifest is the INVERSE, whose steps are
+  // RESTORE_BYTES / UNDO_CREATE. Resolving links against it made every link
+  // fall through to `resolves` before a single inverse step had run — the frame
+  // asserting a healthy link graph over a half-applied corpus. Links are always
+  // resolved against the FORWARD manifest that owns them.
+  const rolling = own !== null && own.revertOf !== null;
+  const manifest = rolling ? (parentManifest ?? own) : (own ?? parentManifest);
   if (!manifest) return [];
 
   let verify: PostOpChecks | null = null;
   for (const r of seg) if (r.r === 'VERIFY') verify = r.checks;
   if (verify) return verify.linkResolutions;
 
-  const obs = stepObservations(j);
+  const forwardSeg = rolling && parent ? parent : seg;
+  const obs = observationsIn(forwardSeg, manifest);
   const stateOf = (ordinal: number) => obs.find(([o]) => o === ordinal)?.[1].state ?? 'not-started';
-  const removalDone = manifest.steps
-    .filter(isRemoval)
-    .some((s) => stateOf(s.ordinal) === 'done');
+
+  // A forward effect is still IN FORCE unless the inverse step that undoes it
+  // has itself completed in the rollback segment now under way.
+  const undone = new Set<string>();
+  if (rolling && own) {
+    for (const [ordinal, o] of observationsIn(seg, own)) {
+      if (o.state !== 'done') continue;
+      const s = own.steps.find((x) => x.ordinal === ordinal);
+      if (s) undone.add(ks(s.target));
+    }
+  }
+  const inForce = (s: EffectStep) => stateOf(s.ordinal) === 'done' && !undone.has(ks(s.target));
+  const removalDone = manifest.steps.filter(isRemoval).some(inForce);
 
   return manifest.inboundLinks.links.map((link) => {
     const fate = manifest.linkFates.find((f) => f.link === link.id)?.fate ?? { fate: 'unassigned' as const };
@@ -1206,7 +1283,7 @@ function linkResolutions(j: Journal): readonly (readonly [LinkId, LinkResolution
       return [link.id, { state: 'knowingly-broken-approved', approvedInPlanAs: fate.why }] as const;
     }
     const step = manifest.steps.find((s) => s.kind === 'LINK_REWRITE' && s.link?.id === link.id);
-    if (step && stateOf(step.ordinal) === 'done') return [link.id, { state: 'resolves' }] as const;
+    if (step && inForce(step)) return [link.id, { state: 'resolves' }] as const;
     if (removalDone) {
       return [
         link.id,
@@ -1232,18 +1309,25 @@ function trustOutcomes(j: Journal): readonly TrustOutcome[] {
   const invalidated = new Set<number>();
   for (const r of seg) if (r.r === 'INVALIDATION') invalidated.add(r.ordinal);
 
+  const obs = new Map(stepObservations(j));
   const out: TrustOutcome[] = [];
   for (const step of manifest.steps) {
     // The bytes carry the verification: a move's write half reads the moved-from
-    // observation, never a lineage rule and never another concept's tier.
+    // observation, never a lineage rule and never another concept's tier. The
+    // lineage pointer is only followed because admission has already proved the
+    // move byte-identical against the observed source (MOVE_AND_EDIT_NOT_SEPARATED).
     const sourceKey = step.movedFrom ?? step.target;
     const o = before.get(ks(sourceKey));
     const beforeV: Verification = o?.view?.verification ?? { events: [] };
     const afterV = trustFate(beforeV, step.classification);
+    const state = obs.get(step.ordinal)?.state ?? 'not-started';
     out.push({
+      ordinal: step.ordinal,
       key: step.target,
       before: tierOf(beforeV),
       after: tierOf(afterV),
+      observed: state === 'done',
+      stepState: state,
       invalidationReported: invalidated.has(step.ordinal),
       classification: step.classification,
     });
@@ -1547,10 +1631,16 @@ export function admissionRefusal(
   const byBundle = new Map(m.bundles.map((b) => [b.bundle, b]));
   const byKey = new Map(world.map((o) => [ks(o.key), o]));
 
-  // A parent operation that actually SETTLED as applied spends its token; a
-  // failed or reverted one leaves no spend record (I32).
-  for (const rec of journal) {
-    if (rec.r === 'SETTLED' && rec.as === 'applied') {
+  // A parent operation that actually SETTLED as applied spends ITS OWN token; a
+  // failed or reverted one leaves no spend record (I32). The spend is scoped to
+  // the approval fingerprint, not to the journal: scanning every SETTLED made
+  // the machine a fingerprint blacklist that refused every later operation —
+  // including the corrective one T27 names as the only exit.
+  for (const s of segments(journal)) {
+    const settledApplied = s.some((r) => r.r === 'SETTLED' && r.as === 'applied');
+    if (!settledApplied) continue;
+    const prior = findApproved(s);
+    if (prior && prior.fingerprint === approved.fingerprint) {
       return { code: 'TOKEN_SPENT', detail: ['this fingerprint already settled as applied'] };
     }
   }
@@ -1840,6 +1930,27 @@ export function admissionRefusal(
         detail: [`step ${s.ordinal} claims both a path change and a content change; they need separate steps and separate trust consequences`],
       };
     }
+    // `byte-identical-path-move` is the ONE classification that lets the trust
+    // of an old identity travel to a newly minted one, via `movedFrom`. Taking
+    // the planner's word for it let a forged plan mint a `human-reviewed`
+    // identity over changed content. The premise is machine-checkable from the
+    // observed source, so it is checked: the sealed post-image of the write
+    // half must equal the observed pre-image of the identity it moves.
+    if (s.movedFrom === null || s.classification.claimAffecting) continue;
+    if (s.classification.allowlist !== 'byte-identical-path-move') continue;
+    const src = byKey.get(ks(s.movedFrom));
+    // A source that is GONE is scope drift, not a forged plan: the recheck (T6)
+    // owns that and reports `removed from scope`. Only a source that is present
+    // and disagrees proves the plan claims a move it cannot make.
+    if (src && src.exists && src.observedHash !== s.afterHash) {
+      return {
+        code: 'MOVE_AND_EDIT_NOT_SEPARATED',
+        detail: [
+          `step ${s.ordinal} claims a byte-identical move of ${ks(s.movedFrom)} to ${ks(s.target)}, but the sealed post-image (${s.afterHash ?? '(absent)'}) does not equal the observed source (${src?.observedHash ?? '(absent)'})`,
+          'trust may only follow bytes; a move whose bytes changed is a move plus an edit and needs separate steps',
+        ],
+      };
+    }
   }
 
   // Ordinal invariants (I40).
@@ -1894,15 +2005,41 @@ export function buildInverseManifest(
   parent: OperationManifest,
   parentSeg: readonly JournalRecord[],
 ): OperationManifest {
-  const done = new Set<number>();
-  for (const r of parentSeg) if (r.r === 'OUTCOME' && r.ok) done.add(r.ordinal);
+  // What is on disk now, per target. A step whose bytes provably MOVED needs
+  // inverting even when its OUTCOME was not `ok`: a deviating write and an
+  // interrupted write both left the target somewhere other than its pre-image.
+  // Filtering on `OUTCOME && ok` alone dropped exactly those inverse steps, so
+  // the mutation survived a rollback that then reported `reverted-clean`.
+  const obs = new Map(observationsIn(parentSeg, parent));
+  const landedHash = new Map<string, string | null>();
+  for (const step of parent.steps) {
+    const o = obs.get(step.ordinal);
+    if (!o || o.state === 'not-started') continue;
+    landedHash.set(
+      ks(step.target),
+      o.state === 'done' ? step.afterHash : o.state === 'foreign' ? o.observedHash : null,
+    );
+  }
 
+  // One byte restore per target, not one per parent step: RESTORE_BYTES and
+  // UNDO_CREATE replace a whole file, so a second inverse step on the same
+  // target is a no-op whose before-image can never match.
+  const claimed = new Set<string>();
   const applicable = parent.rollbackSteps.filter((s) => {
-    const forOrdinal = parent.steps.find((p) => sameKey(p.target, s.target));
-    return forOrdinal ? done.has(forOrdinal.ordinal) : false;
+    const key = ks(s.target);
+    if (!landedHash.has(key) || claimed.has(key)) return false;
+    claimed.add(key);
+    return true;
   });
 
-  const steps = applicable.map((s, i) => ({ ...s, ordinal: i }));
+  const steps = applicable.map((s, i) => ({
+    ...s,
+    ordinal: i,
+    // Sealed against the FULL post-image projection at plan time; corrected here
+    // to what the partially-applied world actually holds. `null` means the
+    // observation was indeterminate and the before-image is genuinely unknown.
+    beforeHash: landedHash.get(ks(s.target)) ?? null,
+  }));
   return {
     ...parent,
     operationId: `${parent.operationId}-revert`,
@@ -1927,10 +2064,59 @@ function result(j: Journal, world: readonly Observed[], verdict: Verdict, code: 
   return { journal: j, frame: derive(j, world), verdict, code, drift };
 }
 
+/**
+ * The transition table, as data. THE single source of truth for "may this
+ * action run from this phase" — every guard that used to be spelled out inside
+ * one `reduce` case and omitted from the others (`runStep` reading only
+ * `MANIFEST_DURABLE`, `verify` reading only step completeness, `reconcile` and
+ * `recoverInterrupted` reading nothing) is now one lookup that no case can
+ * forget. The holes those omissions opened were all the same shape: a terminal
+ * phase that was terminal only in the render, with the reducer still accepting
+ * the actions that would move past it.
+ *
+ * `observe` and `acknowledge` are legal everywhere: they only ever record what
+ * a human saw, never advance the operation.
+ */
+const PHASE_ALLOWS: Record<Phase, readonly Action['kind'][]> = {
+  admitting: ['admit', 'gate', 'lock', 'recheck', 'sealManifest', 'crash'],
+  'manifest-durable': ['runStep', 'crash'],
+  mutating: ['runStep', 'verify', 'crash'],
+  verifying: ['crash'],
+  'rolling-back': ['runStep', 'crash'],
+  // Clean terminals: the only exit is a NEW operation (T27).
+  refused: ['admit'],
+  'gate-blocked': ['admit'],
+  expired: ['admit'],
+  'applied-clean': ['admit'],
+  'applied-with-known-breakage': ['admit'],
+  'reverted-clean': ['admit'],
+  'reverted-with-residue': ['admit'],
+  // Failed terminals additionally offer the recovery path (T22).
+  'failed-clean': ['admit', 'beginRollback'],
+  'failed-dirty': ['admit', 'beginRollback', 'reconcile'],
+  // Indeterminate terminals: read-only narrowing and a new operation only.
+  'rollback-failed': ['admit', 'reconcile'],
+  // `beginRollback` is admissible-to-ATTEMPT here only so T22's guard chain
+  // answers it in its own words (spent token first, then "not a failed
+  // operation"). It has no accepting path: a crash is unresolvable by the
+  // machine (I30), so no rollback may be built from a state the machine
+  // cannot describe.
+  'unknown-interrupted': ['admit', 'reconcile', 'recoverInterrupted', 'beginRollback'],
+};
+
 export function reduce(j: Journal, world: readonly Observed[], a: Action): Step {
   const phase = derivePhase(j);
   const seg = currentSegment(j);
   const manifest = findManifest(seg);
+
+  if (a.kind !== 'observe' && a.kind !== 'acknowledge' && !PHASE_ALLOWS[phase].includes(a.kind)) {
+    return result(j, world, 'REFUSE', 'PHASE_FORBIDS_ACTION', [
+      `${a.kind} is not a transition out of ${phase}`,
+      classify(phase).terminal
+        ? 'this phase is terminal: the exit is a new operation with its own preview, approval and gate'
+        : 'the operation is in flight; this action belongs to a different phase',
+    ]);
+  }
 
   switch (a.kind) {
     // ---- T1 / T2 / T27 --------------------------------------------------
@@ -2014,6 +2200,25 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
       const lowestPending = obs.find(([, o]) => o.state === 'not-started');
       if (!lowestPending || lowestPending[0] !== a.ordinal) {
         return result(j, world, 'REFUSE', 'OUT_OF_ORDER_OR_ALREADY_RUN');
+      }
+
+      // I5's SECOND observedHash comparison, which did not exist: the target is
+      // re-read under the lock immediately before the write and must still hold
+      // the image the plan was sealed against. Without it, detection of a
+      // concurrent write at a step target was delegated entirely to the caller
+      // passing `outcome: 'concurrent-change-detected'` — a convention, not a
+      // mechanism — and every step whose post-image is fully determined by the
+      // plan silently overwrote whatever a concurrent session had put there.
+      if (a.outcome === 'ok' && a.observedBefore !== step.beforeHash) {
+        const next: Journal = [
+          ...j,
+          { r: 'INTENT', ordinal: a.ordinal, undo: a.undo },
+          { r: 'OUTCOME', ordinal: a.ordinal, ok: false, observedAfter: null, note: 'CONCURRENT_CHANGE' },
+          { r: 'FAILURE', ordinal: a.ordinal, reason: `CONCURRENT_CHANGE at step ${a.ordinal}` },
+        ];
+        return result(next, world, 'RECORDED', 'CONCURRENT_CHANGE', [
+          `${ks(step.target)} holds ${a.observedBefore ?? '(absent)'}; the plan was sealed against ${step.beforeHash ?? '(absent)'}`,
+        ]);
       }
 
       const intent: JournalRecord = { r: 'INTENT', ordinal: a.ordinal, undo: a.undo };
@@ -2126,8 +2331,13 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
 
     // ---- T19 ------------------------------------------------------------
     case 'crash': {
-      if (!has(seg, 'MANIFEST_DURABLE')) return result(j, world, 'REFUSE', 'NOTHING_IN_FLIGHT');
-      if (has(seg, 'SETTLED')) return result(j, world, 'REFUSE', 'ALREADY_SETTLED');
+      // A rollback segment never seals its own manifest, so requiring
+      // MANIFEST_DURABLE here made a process that died mid-rollback unable to
+      // reach `unknown-interrupted` — the one window in which the corpus is
+      // half-restored under two live identities. Being IN FLIGHT is the test.
+      if (phase !== 'rolling-back' && !has(seg, 'MANIFEST_DURABLE')) {
+        return result(j, world, 'REFUSE', 'NOTHING_IN_FLIGHT');
+      }
       const pending: JournalRecord[] = a.duringStep
         ? [{ r: 'INTENT', ordinal: a.duringStep.ordinal, undo: a.duringStep.undo }]
         : [];
@@ -2145,8 +2355,15 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
 
     // ---- T21 ------------------------------------------------------------
     case 'recoverInterrupted': {
-      if (phase !== 'unknown-interrupted' || !manifest) {
-        return result(j, world, 'REFUSE', 'NOT_INTERRUPTED');
+      if (!manifest) return result(j, world, 'REFUSE', 'NOT_INTERRUPTED');
+      // One execution, one lock set, one epoch advance (I27). T21 loops back to
+      // `unknown-interrupted`, so without this the same recovery could be run
+      // twice and append a second EPOCH_ADVANCED with the same `from` — a state
+      // `checkInvariants` itself rejects.
+      if (has(seg, 'RECOVERY_REPORT')) {
+        return result(j, world, 'REFUSE', 'ALREADY_RECOVERED', [
+          'this interruption has already been reported; the epoch advanced once and advances once',
+        ]);
       }
       const epochs: JournalRecord[] = manifest.bundles.map((b) => ({
         r: 'EPOCH_ADVANCED' as const,
@@ -2188,6 +2405,18 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
       }
 
       const inverse = buildInverseManifest(manifest, seg);
+      // Nothing landed, so there is nothing to invert. Admitting an empty
+      // inverse manifest put the machine in a `rolling-back` phase no action
+      // could advance, whose only accepting action was `verify` — and verify
+      // over an empty step list is vacuously complete, so a failure in which
+      // ZERO bytes moved settled as APPLIED, advanced the epoch, and spent the
+      // token that the retry needs.
+      if (inverse.steps.length === 0) {
+        return result(j, world, 'BLOCK', 'NOTHING_TO_ROLL_BACK', [
+          'no step of this operation left the corpus changed; the pre-operation state is already in place',
+          'the exit is a fresh preview of the operation you wanted, not a rollback',
+        ]);
+      }
 
       // Every inverse step that needs its own gate (e.g. deprecated -> stable)
       // must already be in the approved rollback steps.

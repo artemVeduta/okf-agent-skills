@@ -10,8 +10,8 @@
  */
 
 import { drive, frameOf, violationsOf, type World } from './driver.ts';
-import type { AmbiguityKind, Journal, RefusalCode } from './restructure.ts';
-import type { Spec } from './corpus.ts';
+import { admissionRefusal, ks, type AmbiguityKind, type Journal, type RefusalCode } from './restructure.ts';
+import { observeAll, type Spec } from './corpus.ts';
 
 type Check = (w: World) => string | null;
 
@@ -418,11 +418,15 @@ const SPLIT: Scenario[] = [
       w.fixture.approved.manifest.steps.filter((s) => s.kind === 'CREATE_OUTPUT')
         .every((s) => s.outputDraft?.statusExplicit === true && s.outputDraft.verificationEmpty))),
 
-  S('S-A-03', 'link rewrites fan out to different targets per link', split(), ADMIT,
-    check('every LINK_REWRITE carries its own link; there is no bulk kind', (w) => {
-      const rw = w.fixture.approved.manifest.steps.filter((s) => s.kind === 'LINK_REWRITE');
-      return rw.length === 2 && new Set(rw.map((s) => s.link?.id)).size === 2;
-    })),
+  // Asserted through the REDUCER, not the plan: running only the first of the
+  // two rewrites must leave the second link broken. A fixture-shape check
+  // ("two steps, two link ids") passes whatever the machine does with them.
+  S('S-A-03', 'link rewrites fan out to different targets per link', split(), K('aglkmnnnn'),
+    all(
+      check('the rewritten link resolves', (w) =>
+        frameOf(w).links.some(([id, r]) => id === 'L1' && r.state === 'resolves')),
+      check('the not-yet-rewritten link is still broken', (w) =>
+        frameOf(w).links.some(([id, r]) => id === 'L2' && r.state === 'unexpectedly-broken')))),
 
   S('S-A-04', 'one execution for N writes, M rewrites and a retirement', split(), APPLIED,
     all(recordCount('LOCKED', 1), recordCount('EPOCH_ADVANCED', 1), recordCount('SETTLED', 1))),
@@ -447,8 +451,13 @@ const SPLIT: Scenario[] = [
 
   S('S-C-01', 'source edited between preview and recheck', split(), K('a1glk'),
     all(phase('expired'),
-      check('the machine holds hashes, never pre-edit bytes', (w) =>
-        w.fixture.approved.manifest.steps.every((s) => typeof s.beforeHash === 'string' || s.beforeHash === null)))),
+      // `typeof s.beforeHash === 'string' || s.beforeHash === null` was a
+      // tautology over its own declared type. The real property: the pre-edit
+      // BODY the concurrent session overwrote appears nowhere in the journal.
+      check('the machine holds hashes, never pre-edit bytes', (w) => {
+        const pre = w.fixture.pre.find((c) => ks(c.key) === 'okf::concepts/big')!;
+        return pre.body.length > 20 && !JSON.stringify(w.journal).includes(pre.body);
+      }))),
 
   S('S-C-02', 'a concurrent session creates a concept at a planned output ID', split(), K('a3glk'),
     all(phase('expired'), driftContains('added to scope'), noRecord('INTENT'))),
@@ -652,9 +661,17 @@ const MOVE: Scenario[] = [
           .some((d) => d.finding.kind === 'unobservable' && d.finding.reason.length > 0)))),
 
   S('V-V-05', 'operational review evidence separate from trust', move(), APPLIED,
-    all(check('reviewDependencies and trust are distinct fields', (w) => {
+    // Reference-inequality between two arrays of different element types can
+    // never be false. The claim being made is causal, so assert the cause:
+    // a broken review dependency moves no trust tier. Only a claim-affecting
+    // edit does.
+    all(check('an unavailable review dependency lowers no trust tier', (w) => {
       const f = frameOf(w);
-      return f.reviewDependencies.length > 0 && f.trust.length > 0 && (f.reviewDependencies as unknown) !== (f.trust as unknown);
+      return (
+        f.reviewDependencies.some((d) => d.finding.kind === 'unavailable') &&
+        f.trust.length > 0 &&
+        f.trust.every((t) => t.before === t.after || t.classification.claimAffecting)
+      );
     }),
       noticeContains('review evidence (reported separately from trust)'))),
 
@@ -873,10 +890,130 @@ const SUPERSEDE: Scenario[] = [
 ];
 
 // ===========================================================================
+// 5.5 Adversarial regressions (A)
+//
+// One row per defect three adversarial passes found by RUNNING the machine.
+// Every row here failed before its fix. They are stated as the property that
+// was violated, not as the keystroke path, so a re-broken guard fails loudly.
+// ===========================================================================
+
+const forbidden = (label: string): Check =>
+  all(
+    verdict('REFUSE'),
+    lastCode('PHASE_FORBIDS_ACTION'),
+    check(label, () => true),
+  );
+
+const ADVERSARIAL: Scenario[] = [
+  S('A-01', 'an expired approval cannot be re-rechecked, sealed and applied', merge(), K('agl1kk'),
+    all(phase('expired'), forbidden('recheck is not a transition out of expired'),
+      noRecord('MANIFEST_DURABLE'))),
+
+  S('A-02', 'a crashed operation cannot be verified into `applied`', merge(), K('aglkmnxv'),
+    all(phase('unknown-interrupted'), forbidden('verify is not a transition out of unknown-interrupted'),
+      noRecord('SETTLED'), noRecord('EPOCH_ADVANCED'))),
+
+  S('A-03', 'a concurrent write at a step target is caught by the second observedHash comparison',
+    merge(), K('aglkm3n'),
+    all(phase('failed-clean'), lastCode('CONCURRENT_CHANGE'),
+      check('no step ran', (w) => frameOf(w).steps.every(([, o]) => o.state === 'not-started')),
+      check('the refusal names both images', (w) =>
+        (w.last?.drift ?? []).some((d) => d.includes('the plan was sealed against'))))),
+
+  S('A-04', 'a failure in which nothing landed has nothing to roll back', merge(), K('aglkmfB'),
+    all(phase('failed-clean'), verdict('BLOCK'), lastCode('NOTHING_TO_ROLL_BACK'),
+      noRecord('SETTLED'), noRecord('EPOCH_ADVANCED'))),
+
+  S('A-05', 'a byte-identical move is checked against the observed source, not asserted by the plan',
+    move(), ADMIT,
+    check('a forged post-image on a byte-identical move is refused', (w) => {
+      const ap = w.fixture.approved;
+      const i = ap.manifest.steps.findIndex((s) => s.movedFrom !== null);
+      const forged = {
+        ...ap,
+        manifest: {
+          ...ap.manifest,
+          steps: ap.manifest.steps.map((s, k) => (k === i ? { ...s, afterHash: 'forged00' } : s)),
+        },
+      };
+      return admissionRefusal(forged, observeAll(w.fixture.pre), []).code === 'MOVE_AND_EDIT_NOT_SEPARATED';
+    })),
+
+  S('A-06', 'a failed verification cannot be re-run until it passes', merge(), K('aglkmNVv'),
+    all(phase('failed-dirty'), forbidden('verify is not a transition out of failed-dirty'),
+      recordCount('SETTLED', 0))),
+
+  S('A-07', 'one interruption, one recovery report, one epoch advance', merge(), K('aglkmnxRR'),
+    all(phase('unknown-interrupted'), verdict('REFUSE'), lastCode('ALREADY_RECOVERED'),
+      recordCount('RECOVERY_REPORT', 1), recordCount('EPOCH_ADVANCED', 1))),
+
+  S('A-08', 'a step whose bytes deviated is still inverted by the rollback', merge(), K('aglkmnpBN'),
+    all(phase('reverted-clean'),
+      check('the deviating target is restored to its pre-operation bytes', (w) => {
+        const pre = w.fixture.pre.find((c) => ks(c.key) === 'okf::concepts/auth')!;
+        const now = w.corpus.find((c) => ks(c.key) === 'okf::concepts/auth')!;
+        return now.body === pre.body && now.status === pre.status;
+      }))),
+
+  S('A-09', 'a rejected restore cannot be re-run into `reverted-clean`', merge(), K('aglkmnfBpn'),
+    all(phase('rollback-failed'), ambiguity('restore-not-byte-identical'),
+      stepState(0, 'foreign'), recordCount('SETTLED', 0))),
+
+  S('A-10', 'a process that dies mid-rollback reaches the interrupted terminal', move(),
+    K('aglkmnnfBnx'),
+    all(phase('unknown-interrupted'), hasRecord('INTERRUPTED'),
+      check('the indeterminate terminal is dirty, so anti-silence applies', (w) =>
+        frameOf(w).classification.cleanliness === 'dirty' && frameOf(w).ambiguities.length > 0))),
+
+  S('A-11', 'a settled operation is not overwritten by a later admission attempt', merge(),
+    K('aglkmNva'),
+    all(phase('refused'), code('TOKEN_SPENT'),
+      check('the applied segment still holds its SETTLED record', (w) =>
+        w.journal.some((r) => r.r === 'SETTLED' && r.as === 'applied')))),
+
+  S('A-12', 'there is no resume-from-step-N after a failure', merge(), K('aglkmnfn'),
+    all(phase('failed-dirty'), forbidden('runStep is not a transition out of failed-dirty'),
+      check('the step table matches the journal', (w) =>
+        frameOf(w).steps.filter(([, o]) => o.state === 'done').length === 1))),
+
+  S('A-13', 'reconcile is scoped to the phases that can use it', merge(), K('aglkmnr'),
+    all(phase('mutating'), forbidden('reconcile is not a transition out of mutating'),
+      noRecord('RECONCILED'))),
+
+  S('A-14', 'a reconcile snapshot does not freeze later journal evidence', merge(), K('aglkmnfrn'),
+    all(hasRecord('RECONCILED'),
+      check('the step observed at reconcile time is still reported done', (w) =>
+        frameOf(w).steps.some(([o, s]) => o === 0 && s.state === 'done')))),
+
+  S('A-15', 'inbound links are resolved against the forward manifest during a rollback', merge(),
+    K('aglkmnnnfB'),
+    all(phase('rolling-back'),
+      linkState('L1', 'unexpectedly-broken'), linkState('L2', 'unexpectedly-broken'))),
+
+  S('A-16', 'trust rows are predictions until their step lands', merge({ editSource: true }),
+    K('aglkmf'),
+    all(phase('failed-clean'),
+      check('no trust row claims an observed outcome after a zero-byte failure', (w) =>
+        frameOf(w).trust.length > 0 && frameOf(w).trust.every((t) => !t.observed)),
+      // This fixture touches concepts/auth TWICE with different consequences.
+      // Without an ordinal the panel printed two irreconcilable `after` tiers
+      // for one Concept ID and named neither step.
+      check('the two rows for one Concept ID are told apart by their ordinal', (w) => {
+        const rows = frameOf(w).trust.filter((t) => t.key.id === 'concepts/auth');
+        return rows.length === 2 && rows[0].ordinal !== rows[1].ordinal && rows[0].after !== rows[1].after;
+      }))),
+
+  S('A-17', 'an earlier operation’s residue is not attributed to a later one', move(),
+    K('aglkmnOfBnna'),
+    all(phase('admitting'),
+      check('the new operation carries no residue', (w) => frameOf(w).residue.length === 0))),
+];
+
+// ===========================================================================
 // Run.
 // ===========================================================================
 
-const SCENARIOS = [...MERGE, ...SPLIT, ...MOVE, ...SUPERSEDE];
+const SCENARIOS = [...MERGE, ...SPLIT, ...MOVE, ...SUPERSEDE, ...ADVERSARIAL];
 
 const B = '\x1b[1m';
 const D = '\x1b[2m';
@@ -892,7 +1029,7 @@ for (const s of SCENARIOS) {
   const next = s.id.split('-')[0];
   if (next !== section) {
     section = next;
-    const name = { M: 'MERGE', S: 'SPLIT', V: 'MOVE', P: 'SUPERSEDE' }[section] ?? section;
+    const name = { M: 'MERGE', S: 'SPLIT', V: 'MOVE', P: 'SUPERSEDE', A: 'ADVERSARIAL REGRESSIONS' }[section] ?? section;
     console.log(`${B}── ${name} ${'─'.repeat(Math.max(0, 60 - name.length))}${R}`);
   }
   let problem: string | null;

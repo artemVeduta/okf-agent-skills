@@ -122,7 +122,8 @@ function render(): void {
     `${B}LINK GRAPH${R} ${D}inbound set complete=${f.linkSetComplete}${m.inboundLinks.incompleteness.length ? ` (${m.inboundLinks.incompleteness.join(', ')})` : ''}${R}`,
   );
   const res = new Map(f.links);
-  for (const l of m.inboundLinks.links.slice(0, 4)) {
+  const links = m.inboundLinks.links;
+  for (const l of links.slice(0, 4)) {
     const fate = m.linkFates.find((x) => x.link === l.id)?.fate.fate ?? 'unassigned';
     const state = res.get(l.id)?.state ?? '—';
     const colour = state === 'resolves' ? GREEN : state === 'unexpectedly-broken' ? RED : YELLOW;
@@ -131,6 +132,7 @@ function render(): void {
         `fate=${fate.padEnd(26)} ${colour}${state}${R}`,
     );
   }
+  if (links.length > 4) out(`  ${D}${more(4, links.length).trim()}${R}`);
   const redirect = m.policies.redirects.value;
   out(
     `  ${field('redirects', redirect.mode === 'off' ? 'off' : `candidate ${redirect.artifact} followable=${redirect.followable} ${RED}${redirect.authorization}${R}`)}` +
@@ -139,11 +141,17 @@ function render(): void {
 
   // --- trust / review ------------------------------------------------------
   out('');
-  out(`${B}TRUST${R} ${D}evidence, never authority — no reducer guard reads it${R}`);
+  out(
+    `${B}TRUST${R} ${D}evidence, never authority — no reducer guard reads it · per STEP, and predicted until the step lands${R}`,
+  );
   for (const t of f.trust.slice(0, 4)) {
+    // A row is a PREDICTION until its step is `done`. Rendering every row as an
+    // outcome made a `failed-clean` operation — zero bytes moved — report a lost
+    // human review, and made a rejected restore report byte-identical success.
     const moved = t.before !== t.after;
     out(
-      `  ${ks(t.key).padEnd(34)} ${t.before} ${moved ? RED : D}->${R} ${t.after} ` +
+      `  ${String(t.ordinal).padStart(2)} ${ks(t.key).padEnd(31)} ${t.before} ${moved && t.observed ? RED : D}->${R} ${t.after} ` +
+        `${t.observed ? `${GREEN}observed${R}` : `${D}predicted (${t.stepState})${R}`} ` +
         `${D}${t.classification.claimAffecting ? `claim-affecting: ${t.classification.reason}` : t.classification.allowlist}${R}` +
         `${t.invalidationReported ? ` ${RED}INVALIDATION reported${R}` : ''}`,
     );
@@ -170,8 +178,11 @@ function render(): void {
   for (const a of f.ambiguities.slice(0, 3)) {
     out(`  ${RED}${B}AMBIGUITY${R} ${a.kind}${a.acknowledgedByHuman ? ` ${D}(acknowledged — acknowledgement is not approval)${R}` : ''}: ${a.statement}`);
   }
+  if (f.ambiguities.length > 3) out(`    ${D}${more(3, f.ambiguities.length).trim()}${R}`);
   for (const r of f.residue.slice(0, 2)) out(`  ${YELLOW}${B}RESIDUE${R} ${r.escape}: ${r.statement}`);
+  if (f.residue.length > 2) out(`    ${D}${more(2, f.residue.length).trim()}${R}`);
   for (const hline of f.humanActionRequired.slice(0, 2)) out(`  ${YELLOW}${B}HUMAN${R} ${hline}`);
+  if (f.humanActionRequired.length > 2) out(`    ${D}${more(2, f.humanActionRequired.length).trim()}${R}`);
   const violations = violationsOf(world);
   for (const v of violations) out(`  ${RED}${B}INVARIANT VIOLATED${R} ${v}`);
   if (f.ambiguities.length + f.residue.length + f.humanActionRequired.length + violations.length === 0) {
@@ -185,7 +196,9 @@ function render(): void {
     const v = world.last.verdict;
     const colour = v === 'ALLOW' ? GREEN : v === 'RECORDED' ? CYAN : RED;
     out(`  ${colour}${B}${v}${R} ${D}${world.last.code}${R}`);
-    for (const d of [...world.last.drift, ...(f.refusal?.detail ?? [])].slice(0, 2)) out(`    ${D}· ${d}${R}`);
+    const detail = [...world.last.drift, ...(f.refusal?.detail ?? [])];
+    for (const d of detail.slice(0, 2)) out(`    ${D}· ${d}${R}`);
+    if (detail.length > 2) out(`    ${D}${more(2, detail.length).trim()}${R}`);
   }
   if (f.notice.length > 0) out(`  ${D}notice: ${f.notice[0]}${more(1, f.notice.length)}${R}`);
   out(`  ${D}open questions handed back: ${f.openQuestions.length} (every injected value renders its owning ticket)${R}`);
