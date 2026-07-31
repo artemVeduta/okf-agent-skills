@@ -1,0 +1,161 @@
+# Prototype — concept restructuring and rollback
+
+**Throwaway.** Lives on `prototype/concept-restructuring`, never on `main`. It exists to make one
+candidate model drivable for wayfinder ticket
+[Prototype concept restructuring and rollback behavior](https://github.com/artemVeduta/okf-agent-skills/issues/30);
+the validated decision is what graduates, not this code. The adopted model is `DESIGN.md` in this
+directory — read that first; this README only records how the code realises it and where it
+deliberately does not.
+
+## The question
+
+When a user drives merge, split, move, and supersede operations through preview, apply, partial
+failure, concurrent edit, verification, and rollback, which state, operation-manifest, redirect, and
+inbound-link transitions preserve identity, provenance, trust, source relationships, and
+recoverability **without permitting an ambiguous or silently lossy state**?
+
+The machine starts **at apply**. The explicit request, the complete preview, the confirmation
+binding, and the fresh recheck are already-satisfied inputs consumed from the guard prototyped under
+[Prototype the portable manual-operation guard state machine](https://github.com/artemVeduta/okf-agent-skills/issues/29).
+They are never re-derived here.
+
+## Out of the question's scope, deliberately
+
+Nothing below is decided by this prototype. Each enters the machine as an `Injected<T>` carrying its
+owning ticket and its open question, and is rendered verbatim at every use site.
+
+| Not decided here | Owner |
+| --- | --- |
+| What a redirect *is* and whether it is followable; which split output inherits which inbound link; how `sources[]` unions and partitions; whether sources are deprecated or deleted; the inbound-link discovery contract | [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24) |
+| Archive representation, archive metadata, retention, whether deprecated concepts are hidden from retrieval | [Design archive lifecycle and discoverability](https://github.com/artemVeduta/okf-agent-skills/issues/14) |
+| Manifest serialization and storage, the validation check set, every numeric threshold, the snapshot mechanism, whether a documented rollback needs a fresh approval | [Define validation, growth, compaction, and approval contracts](https://github.com/artemVeduta/okf-agent-skills/issues/7) |
+| Everything before apply: request matching, preview completeness, confirmation binding | [Prototype the portable manual-operation guard state machine](https://github.com/artemVeduta/okf-agent-skills/issues/29) |
+
+Binding inputs it consumes without re-litigating: the authorization matrix, approval fingerprint,
+recovery gate and the claim-affecting-edit rule from
+[Design operational trust tier matrix for skill operations](https://github.com/artemVeduta/okf-agent-skills/issues/11);
+identity, routing and precedence from
+[Define concept identity, cross-bundle routing, precedence, and workspace trust](https://github.com/artemVeduta/okf-agent-skills/issues/22);
+provenance and freshness from
+[Design concept-source traceability and freshness detection](https://github.com/artemVeduta/okf-agent-skills/issues/12);
+ledger, locking and epoch from
+[Decide where manual-operation guard state persists and how concurrent sessions coordinate](https://github.com/artemVeduta/okf-agent-skills/issues/31).
+
+## Run it
+
+```bash
+node prototypes/concept-restructuring/tui.ts          # drive it by hand
+node prototypes/concept-restructuring/walkthrough.ts  # replay all 129 hard cases
+```
+
+Node 22.6+ (type stripping); no dependencies, no package manager, no build step, no test framework,
+nothing written to disk.
+
+In the TUI, `[` and `]` cycle 15 fixtures; the whole frame — concept occupancy, the operation
+manifest with per-step observation, the inbound-link graph with redirects, trust, recovery evidence,
+ambiguity, residue, and the notice — is re-rendered after every keystroke.
+
+## Files
+
+| File               | Keep?                                                                   |
+| ------------------ | ----------------------------------------------------------------------- |
+| `restructure.ts`   | **yes** — the pure reducer; zero imports, zero I/O, no terminal coupling |
+| `DESIGN.md`        | **yes** — the adopted model this code realises                          |
+| `corpus.ts`        | no — fake multi-bundle corpus, crude planner, fault switches             |
+| `driver.ts`        | no — keystroke glue shared by the two shells                            |
+| `tui.ts`           | no — terminal shell                                                     |
+| `walkthrough.ts`   | no — scripted replay of the hard-case catalogue                         |
+
+## The model, in one screen
+
+**The journal is the truth.** `Phase` and `Classification` are derived from it by `derive` and
+`classify` and are never stored, so the phase can never disagree with the record. `settled` means
+exactly "a durable `SETTLED` record exists". The journal is segmented on `ADMITTED`; a rollback
+appends a second `ADMITTED` carrying an inverse manifest whose `revertOf` names its parent, so the
+parent's escapes and observations stay readable while the rollback runs.
+
+**Terminals are settlement × cleanliness**, not a single success/failure axis:
+
+```
+admitting → refused | gate-blocked | expired          (clean, nothing moved)
+          → manifest-durable → mutating → verifying → applied-clean
+                                                    → applied-with-known-breakage
+                                        ↘ failed-clean   (handled, zero bytes moved)
+                                        ↘ failed-dirty   (ambiguity set REQUIRED non-empty)
+                                        ↘ unknown-interrupted (indeterminate; human-only)
+failed-* → rolling-back → reverted-clean | reverted-with-residue | rollback-failed
+```
+
+**Silence is a reducer-invariant violation, not a policy.** `checkInvariants` rejects any frame whose
+`classification.cleanliness === 'dirty'` and whose `ambiguities` is empty; `unclassified-loss` exists
+so an unanticipated loss becomes a loud, named finding rather than a clean report. Every one of the
+129 walkthrough rows additionally asserts `checkInvariants` is silent.
+
+**Two orderings carry the design.** The manifest, its lineage and its inverse steps are durable
+*before* the first byte moves; the token spend and the epoch advance sit only between the last
+`OUTCOME` and `SETTLED`, so a verification failure leaves the token unspent and a rollback can never
+ride a spent token.
+
+**Trust cannot see identity.** `trustFate(before, EditClassification)` has no parameter that could
+carry a key, a lineage record, another concept's tier, or a count — and neither does `classifyEdit`,
+which sees only an effect kind and two byte-level facts. A move's write half reads the verification
+of the bytes it moved, never a continuity rule.
+
+**Illegal operations are unconstructible where the type system can carry it.** `MergePlan` and
+`SplitPlan` hold one `BundleId`; there is no bundle-root plan variant; `ScheduledRepair` is not an
+`EffectStep`, so no `runStep` ordinal can execute a dependency repair; `restoreFrom` accepts only a
+`SnapshotEntry` of bytes, so nothing can reconstruct a file from a parsed view. Where the type system
+cannot, admission refuses by name from a closed 29-member `RefusalCode` enum.
+
+## Divergences from `DESIGN.md`
+
+Everything below was implemented differently because the design was underspecified or wrong there.
+Nothing else differs.
+
+1. **`crash` appends an `INTERRUPTED` record** (T19 says it appends nothing). Liveness — "the lock
+   holder is gone" — is not a journal fact, but I44 requires the phase to be derivable from the
+   journal alone. `INTERRUPTED` stands for the *next* process's observation that the journal is
+   in-flight, has no `SETTLED`, and has no live holder. `crash` also takes an optional `duringStep`
+   so death between a write landing and its journal append (a dangling `INTENT`) is reachable.
+2. **`acknowledge` appends an `ACKNOWLEDGED` record.** The design gave it an action but no record;
+   an acknowledgement that is not durable is not an acknowledgement.
+3. **`ADMITTED` carries the whole `ApprovedPlan`, not just its manifest, plus a snapshot of the
+   observed world.** The recheck must compare against the items the human actually saw, and
+   `identityDiff` needs a "before". Both are facts of the admission, so both belong on its record.
+4. **`Observed` carries `status` beside the render-only `view`.** Two admission guards genuinely need
+   status (`REANIMATES_RETIRED_IDENTITY`, and planned-action drift `MODIFY -> KEEP`). Splitting it
+   out keeps I23 mechanical: no guard in `restructure.ts` reads `view`, only `derive` does.
+5. **`EffectStep` gained `outputDraft` and `movedFrom`.** The design asserts I1, `EMPTY_OUTPUT` and
+   `NOT_A_SPLIT_RECLASSIFY_AS_MOVE` without giving the step any field those refusals could read;
+   `movedFrom` is what lets a move's write half be a path move rather than a fresh authoring, which
+   is what makes V-V-01 (identity changes, `verified` survives) true without a continuity field.
+6. **`NonClaimAllowlist` gained `index-regeneration` and `byte-identical-restore`.** Regenerating an
+   index and restoring bytes must not clear `verified`, and the three-member allowlist had no member
+   that honestly covered either.
+7. **`OperationManifest` gained `supersedeChain`.** P-P-04 requires a cycle refusal and a rendered
+   chain depth; neither is derivable from the fields the design listed.
+8. **`reverted-with-residue` classifies as `clean`, not `dirty`.** Its bytes *are* restored. Its
+   loudness comes from a mandatory non-empty `residue` list enforced by `checkInvariants`, rather
+   than from stretching the ambiguity taxonomy over a case it has no member for.
+9. **A retry over this operation's own partial write reaches the recheck instead of being refused.**
+   An occupant whose bytes are exactly a step's sealed post-image (for a step that expected absence),
+   and a source whose deprecation is exactly this operation's own sealed post-image, are not
+   `DESTINATION_OCCUPIED` / `REANIMATES_RETIRED_IDENTITY`; they route to `expired` with named drift.
+   This is what I29 already says should happen, and refusing at admission would have hidden it.
+10. **The cross-bundle merge/split check reads only write and removal steps.** A link rewrite or an
+    index regeneration in another bundle is ordinary collateral, not a cross-bundle merge.
+11. **`REVIEW_REPAIR_PERFORMED_INLINE` only fires for baselined third-party dependencies.** A
+    no-baseline mapping proposed for an output of this very operation is not a repair target, so
+    editing that output is an ordinary planned edit (this is what makes "move plus content edit"
+    admissible at all).
+12. **The inverse of a relocation is `UNDO_CREATE` + `RESTORE_BYTES`, not a `MOVE_PATH`.** P-R-03
+    calls it "a reverse move", which it is; expressing it as two bytes-only inverse steps is what
+    keeps I9's "restore sees only bytes" guarantee intact.
+
+## Things the machine names rather than closes
+
+Beyond the six gaps DESIGN.md §6 hands back, driving the code surfaced one more worth putting in
+front of [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24):
+**this model treats a deprecation as a retirement for link-resolution purposes**, so an unrewritten
+inbound link to a deprecated concept renders `unexpectedly-broken`. Whether a deprecated concept
+still satisfies an inbound link is that ticket's call, and the frame is where the consequence shows.
