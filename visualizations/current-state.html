@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>okf-agent-skills — Current Specified State</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d2991d;
+    --red: #f85149;
+    --purple: #a371f7;
+    --orange: #d18642;
+    --cyan: #39d2c0;
+    --pink: #db61a2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 24px;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+
+  h1 { font-size: 20px; color: var(--accent); margin-bottom: 4px; }
+  h2 { font-size: 16px; color: var(--purple); margin: 32px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  h3 { font-size: 14px; color: var(--cyan); margin: 20px 0 8px; }
+  h4 { font-size: 12px; color: var(--text); margin: 14px 0 6px; }
+  .subtitle { color: var(--muted); margin-bottom: 20px; font-size: 12px; }
+  p { margin-bottom: 8px; }
+  ul { margin: 4px 0 8px 18px; }
+  li { font-size: 12px; margin-bottom: 3px; }
+  a { color: var(--accent); }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  /* Pipeline chips (static, no JS) */
+  .pipeline { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0; align-items: stretch; }
+  .phase {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    min-width: 120px;
+    text-align: center;
+  }
+  .phase .num { color: var(--muted); font-size: 10px; }
+  .phase .title { font-weight: bold; font-size: 12px; margin-top: 2px; }
+  .arrow { color: var(--muted); align-self: center; font-size: 12px; }
+
+  /* Architecture boxes */
+  .arch { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .arch-row { display: flex; gap: 12px; align-items: stretch; justify-content: center; flex-wrap: wrap; }
+  .arch-box {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 18px;
+    text-align: center;
+  }
+  .arch-box.harness { border-color: var(--purple); }
+  .arch-box.skill { border-color: var(--cyan); }
+  .arch-box.runtime { border-color: var(--accent); }
+  .arch-box.dep { border-color: var(--muted); }
+  .arch-box.output { border-color: var(--green); }
+  .arch-link { display: flex; flex-direction: column; align-items: center; color: var(--muted); font-size: 10px; }
+
+  .step {
+    padding: 8px 12px;
+    border-left: 3px solid var(--border);
+    margin-bottom: 4px;
+    font-size: 12px;
+  }
+  .step.pass { border-left-color: var(--green); }
+  .step.warn { border-left-color: var(--yellow); }
+  .step.fail { border-left-color: var(--red); }
+  .step.info { border-left-color: var(--accent); }
+
+  .tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    margin: 0 2px;
+    white-space: nowrap;
+  }
+  .tag.ok { background: #1b3826; color: var(--green); }
+  .tag.warn { background: #3a2e0e; color: var(--yellow); }
+  .tag.err { background: #3a1014; color: var(--red); }
+  .tag.inf { background: #0e1e33; color: var(--accent); }
+  .tag.purp { background: #1e1133; color: var(--purple); }
+
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; font-size: 12px; vertical-align: top; }
+  th { background: var(--surface); color: var(--muted); font-weight: 600; }
+  td.code { font-family: inherit; color: var(--cyan); }
+
+  .verdict-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+  .verdict-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px; }
+  .verdict-card .label { font-weight: bold; margin-bottom: 4px; }
+  .verdict-card .cause { color: var(--muted); font-size: 11px; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+
+  pre { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 11px; line-height: 1.5; }
+  .hl { color: var(--green); }
+  .hl2 { color: var(--accent); }
+  .hl3 { color: var(--yellow); }
+  .dim { color: var(--muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>okf-agent-skills — Current Specified State</h1>
+<p class="subtitle">
+Snapshot 2026-08-01 · branch <code>main</code>, clean · 45 Markdown files, zero source files.
+30 of 35 Wayfinder issues closed; the design phase is complete and the repository sits at the boundary before
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/8">#8 Write the implementation-ready product specification</a>.
+Everything below is <em>specified</em>, none of it is <em>implemented</em>.
+</p>
+
+<div class="card">
+<h3>Reading key</h3>
+<div class="legend">
+  <span><span class="tag ok">adopted</span> a closed Wayfinder issue decided it</span>
+  <span><span class="tag warn">proposed</span> research candidate / candidate default — not decided</span>
+  <span><span class="tag err">uncalibrated</span> the number shown is invented or unset</span>
+  <span><span class="tag inf">OKF spec</span> comes from OKF v0.2 itself</span>
+  <span><span class="tag purp">product convention</span> the suite's own choice, not an OKF requirement</span>
+</div>
+<div class="step info" style="margin-top:12px">
+  <strong>The suite's OKF baseline</strong> <span class="tag inf">OKF spec</span> <span class="tag ok">adopted</span> —
+  suite <code>v0.1.0</code> implements OKF v0.2 as reviewed at upstream commit
+  <code>3fcbb9f828c2f23d109c855ee403c3a4c81f3a96</code> of
+  <code>GoogleCloudPlatform/knowledge-catalog/okf/SPEC.md</code>.
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/21">#21 Choose the OKF conformance baseline, compatibility, and extension policy</a>
+</div>
+<div class="step fail">
+  <strong>No number in this page is calibrated.</strong> Every threshold, reserve fraction, ranking weight,
+  notice cap, token divisor and work envelope in the adopted contracts is explicitly <em>unset</em> and owned by
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/7">#7 Define validation, growth, compaction, and approval contracts</a>,
+  which states they "remain unset until the required deterministic calibration record exists". Numbers that do
+  appear come from prototype fixtures whose densities, caps and bounds were invented.
+</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>1. Example OKF documents the suite will generate</h2>
+<!-- ============================================================ -->
+<div class="card">
+
+<p>
+OKF v0.2 conformance is exactly three bundle tests <span class="tag inf">OKF spec</span> (§11):
+every non-reserved <code>.md</code> file has a parseable YAML frontmatter block; every such block has a
+non-empty <code>type</code>; and <code>index.md</code> / <code>log.md</code>, <em>when present</em>, follow §8 and §9.
+Everything else in the frontmatter is optional. The documents below use the optional families because the suite
+chooses to, not because the format demands it.
+</p>
+
+<h3>1.1 A generated bundle, literal tree</h3>
+<pre><span class="dim">worker-manager/                       # git repository root</span>
+├── .okf-active                       <span class="dim">zero-byte activation marker</span>  <span class="hl3">[product convention]</span>
+└── okf/                              <span class="dim">bundle root</span>                 <span class="hl3">[product convention: `okf/` is the only default name]</span>
+    ├── <span class="hl2">index.md</span>                       <span class="dim">reserved (§8) — carries okf_version</span>
+    ├── <span class="hl2">log.md</span>                         <span class="dim">reserved (§9) — newest first</span>
+    ├── decisions/
+    │   ├── <span class="hl2">index.md</span>                   <span class="dim">reserved, NO frontmatter permitted here</span>
+    │   ├── <span class="hl">0001-event-driven-over-monolith.md</span>
+    │   └── <span class="hl">0002-shared-auth-service.md</span>
+    ├── glossary/
+    │   ├── <span class="hl2">index.md</span>
+    │   └── <span class="hl">settlement-window.md</span>
+    ├── constraints/
+    │   ├── <span class="hl2">index.md</span>
+    │   └── <span class="hl">pci-scope-boundary.md</span>
+    └── references/                   <span class="dim">§6.3 naming convention, not a requirement</span>
+        ├── <span class="hl2">index.md</span>
+        └── rfcs/
+            └── <span class="hl">2026-03-dispatch.md</span>
+</pre>
+
+<div class="step warn">
+  <strong>Marked as convention, not spec:</strong> the directory name <code>okf/</code>
+  <span class="tag warn">proposed</span> (research recommends treating it as the only default and requiring explicit
+  configuration for alternates — no closed issue fixes it); the <code>0001-</code> filename numbering
+  <span class="tag purp">product convention</span>; the <code>type</code> values <code>Decision</code>,
+  <code>Term</code>, <code>Constraint</code> <span class="tag purp">product convention</span> — OKF §4.1 has no
+  fixed <code>type</code> taxonomy and consumers MUST tolerate unknown values.
+</div>
+
+<h3>1.2 Bundle-root <code>index.md</code></h3>
+<p class="dim" style="font-size:12px">
+The <strong>only</strong> place in a bundle where an <code>index.md</code> may carry frontmatter, and the only
+key permitted there is <code>okf_version</code> <span class="tag inf">OKF spec</span> (§12).
+The suite's writer emits <code>okf_version: "0.2"</code> on any real mutation <span class="tag ok">adopted</span>
+(<a href="https://github.com/artemVeduta/okf-agent-skills/issues/21">#21</a>).
+</p>
+<pre>---
+<span class="hl2">okf_version</span>: <span class="hl">"0.2"</span>
+---
+
+# Decision
+* [Event-driven dispatch over in-process monolith](decisions/0001-event-driven-over-monolith.md) - Records why worker-manager dispatches jobs through an event bus instead of direct in-process calls.
+* [Shared auth service](decisions/0002-shared-auth-service.md) - Records why authentication is one service rather than per-app middleware.
+
+# Term
+* [Settlement window](glossary/settlement-window.md) - The interval during which a captured payment may still be reconciled against the ledger.
+
+# Constraint
+* [PCI scope boundary](constraints/pci-scope-boundary.md) - Which services may hold primary account numbers and which may not.
+
+# Subdirectories
+* [decisions](decisions/index.md) - Architectural decisions binding the whole platform.
+* [glossary](glossary/index.md) - Domain terms shared by every app in this monorepo.
+* [constraints](constraints/index.md) - Compliance and operational limits.
+* [references](references/index.md) - Source material mirrored as first-class concepts.
+</pre>
+<div class="step info">
+  §8 requires only "one or more sections grouping concepts under headings" and SHOULDs the linked concept's
+  <code>description</code> in each entry. <strong>Grouping by the <code>type</code> value</strong> and the
+  <strong><code># Subdirectories</code> heading</strong> are the reference implementation's convention
+  <span class="tag purp">product convention</span>, mirrored here for diffability — not spec.
+</div>
+
+<h3>1.3 Subdirectory <code>index.md</code> — <code>okf/decisions/index.md</code></h3>
+<pre><span class="dim">(no frontmatter — a non-root index.md carrying frontmatter has no specified consumer behaviour)</span>
+
+# Decision
+* [Event-driven dispatch over in-process monolith](0001-event-driven-over-monolith.md) - Records why worker-manager dispatches jobs through an event bus instead of direct in-process calls.
+* [Shared auth service](0002-shared-auth-service.md) - Records why authentication is one service rather than per-app middleware.
+</pre>
+
+<h3>1.4 Concept — <code>okf/decisions/0001-event-driven-over-monolith.md</code></h3>
+<p class="dim" style="font-size:12px">
+Human-reviewed, stable, with two provenance sources and footnote-keyed per-claim attribution.
+Frontmatter key order follows the reference implementation's canonical order
+<span class="tag purp">product convention</span> — the spec mandates no order.
+</p>
+<pre>---
+<span class="hl2">type</span>: Decision
+<span class="hl2">title</span>: Event-driven dispatch over in-process monolith
+<span class="hl2">description</span>: Records why worker-manager dispatches jobs through an event bus instead of direct in-process calls.
+<span class="hl2">tags</span>: [architecture, dispatch, scheduler]
+<span class="hl2">status</span>: stable
+<span class="hl2">generated</span>: { by: okf-agent-skills/0.1.0, at: 2026-07-14T09:12:04Z }
+<span class="hl2">verified</span>:
+  - { by: <span class="hl">human:aveduta</span>, at: 2026-07-16T11:40:00Z }
+<span class="hl2">stale_after</span>: 2027-01-14
+<span class="hl2">sources</span>:
+  - id: rfc-dispatch
+    <span class="hl3">resource</span>: ../references/rfcs/2026-03-dispatch.md
+    title: RFC 2026-03 — Dispatch topology
+    author: human:aveduta
+    last_modified: 2026-03-09
+  - id: incident-441
+    <span class="hl3">resource</span>: https://incidents.internal.example/441
+    title: Incident 441 — scheduler head-of-line blocking
+    author: team:platform-oncall
+    usage_count: 12
+    last_modified: 2026-02-28
+---
+
+The scheduler dispatches every job through the event bus. Direct in-process calls
+were rejected because one slow consumer blocked the whole scheduler tick.[^incident-441]
+
+# Alternatives rejected
+
+| Alternative | Reason rejected |
+|---|---|
+| In-process dispatch | Head-of-line blocking under a slow consumer.[^incident-441] |
+| Per-app cron | No shared retry semantics; drifts per deployment.[^rfc-dispatch] |
+
+# Constraints this decision inherits
+
+Dispatch payloads must not carry primary account numbers — see
+[PCI scope boundary](../constraints/pci-scope-boundary.md).
+
+[^rfc-dispatch]: RFC 2026-03 — Dispatch topology
+[^incident-441]: Incident 441 — scheduler head-of-line blocking
+</pre>
+<div class="step pass">
+  <strong>Trust tier: <code>human-reviewed</code></strong> <span class="tag inf">OKF spec</span> — §5.3 derives the
+  tier from the <code>human:</code> prefix inside <code>verified</code>. The suite treats a tier as
+  <em>evidence only, never mutation authority</em> <span class="tag ok">adopted</span>
+  (<a href="https://github.com/artemVeduta/okf-agent-skills/issues/11">#11 Design operational trust tier matrix for skill operations</a>).
+</div>
+<div class="step info">
+  <strong>Footnote labels are the join key.</strong> §5.1 keys per-claim attribution to <code>sources[].id</code>
+  precisely so attribution survives an agent reordering the list. The suite leans on this hard: restructuring
+  derives each output's provenance from the footnotes its retained body carries, and an uncited source entry is
+  <em>underivable</em> and must be assigned explicitly or the operation refuses with
+  <code>PROVENANCE_UNASSIGNED</code> <span class="tag ok">adopted</span>
+  (<a href="https://github.com/artemVeduta/okf-agent-skills/issues/24">#24 Design concept merge, split, redirect, and inbound-link semantics</a>).
+</div>
+<div class="step warn">
+  <code># Alternatives rejected</code> and <code># Constraints this decision inherits</code> are free-form headings.
+  §4.2 names only <code># Schema</code>, <code># Examples</code> and <code># Computation</code> as conventional,
+  "SHOULD be used when applicable"; it requires no sections at all.
+</div>
+
+<h3>1.5 Concept — <code>okf/glossary/settlement-window.md</code></h3>
+<p class="dim" style="font-size:12px">
+The shape every <em>agent-authored</em> concept starts in: <code>status: draft</code>, no <code>verified</code> key,
+trust tier <code>unverified</code>.
+</p>
+<pre>---
+<span class="hl2">type</span>: Term
+<span class="hl2">title</span>: Settlement window
+<span class="hl2">description</span>: The interval during which a captured payment may still be reconciled against the ledger.
+<span class="hl2">tags</span>: [billing, glossary]
+<span class="hl2">status</span>: <span class="hl3">draft</span>
+<span class="hl2">generated</span>: { by: okf-agent-skills/0.1.0, at: 2026-07-28T16:03:51Z }
+<span class="hl2">sources</span>:
+  - id: billing-settlement
+    <span class="hl3">resource</span>: /references/billing/settlement.md
+    title: billing-core settlement notes
+    author: human:aveduta
+    last_modified: 2026-07-20
+---
+
+A **settlement window** is the interval between capture and ledger close during which
+a captured payment may still be reconciled.[^billing-settlement]
+
+The window is a business rule, not a configuration value: the number of hours lives in
+`billing-core`, but the reason a window exists at all — and what happens to a payment
+that misses it — is not recoverable from that constant.
+
+See also [Event-driven dispatch over in-process monolith](../decisions/0001-event-driven-over-monolith.md).
+
+[^billing-settlement]: billing-core settlement notes
+</pre>
+<div class="step pass">
+  <strong>No <code>resource</code> key.</strong> §4.1: <code>resource</code> is "absent for concepts that describe
+  abstract ideas rather than physical resources". Missing optional metadata stays <em>visibly absent</em> and is
+  never synthesized as authored content <span class="tag ok">adopted</span>
+  (<a href="https://github.com/artemVeduta/okf-agent-skills/issues/13">#13 Design agent retrieval model within context window constraints</a>).
+</div>
+<div class="step pass">
+  <strong>Agent output is always draft and unverified.</strong> Agent-created and synthesized concepts explicitly
+  start <code>status: draft</code> with no <code>verified</code>, so the absent-status default cannot silently
+  publish generated content as <code>stable</code>. Trust tiers are always <em>recomputed from events</em>, never
+  written or promoted directly <span class="tag ok">adopted</span> (<a href="https://github.com/artemVeduta/okf-agent-skills/issues/11">#11</a>).
+</div>
+
+<h3>1.6 <code>okf/log.md</code></h3>
+<pre># Directory Update Log
+
+## <span class="hl">2026-07-28</span>
+* **Creation**: Added [settlement window](glossary/settlement-window.md) as a draft term
+  after the billing-core reconciliation work.
+
+## <span class="hl">2026-07-16</span>
+* **Update**: Recorded human verification for
+  [event-driven dispatch](decisions/0001-event-driven-over-monolith.md).
+
+## <span class="hl">2026-07-14</span>
+* **Initialization**: Established the worker-manager root bundle with two decisions,
+  one term, and one constraint.
+</pre>
+<div class="step info">
+  Date headings <strong>MUST</strong> use ISO 8601 <code>YYYY-MM-DD</code>, newest first
+  <span class="tag inf">OKF spec</span> (§9). The leading bold keyword
+  (<code>**Update**</code> / <code>**Creation**</code> / <code>**Initialization**</code>) is a convention, not a
+  requirement. The suite appends <strong>only for accepted knowledge mutations</strong> — never for reads, no-ops,
+  declined writes, retrieval receipts, guard state, recovery manifests, or Git history
+  <span class="tag ok">adopted</span>
+  (<a href="https://github.com/artemVeduta/okf-agent-skills/issues/6">#6 Specify the OKF knowledge model and automatic developer lifecycle</a>).
+</div>
+
+<h3>1.7 Fields the suite deliberately does <em>not</em> write</h3>
+<table>
+  <tr><th>Field or construct</th><th>Status</th><th>Why</th></tr>
+  <tr><td class="code">source_files, derived_from</td><td><span class="tag ok">declined</span></td>
+    <td>Standard <code>sources</code> is the only authored provenance representation; review dependencies live in a separate operational record, not in frontmatter. <a href="https://github.com/artemVeduta/okf-agent-skills/issues/12">#12 Design concept-source traceability and freshness detection</a></td></tr>
+  <tr><td class="code">superseded_by, deprecation_reason, retain_until</td><td><span class="tag ok">declined</span></td>
+    <td>Only standard <code>status: deprecated</code> is used. A known successor gets a <em>visible ordinary Markdown successor notice</em> — navigation, not a redirect or machine-parsed relationship. <a href="https://github.com/artemVeduta/okf-agent-skills/issues/14">#14 Design archive lifecycle and discoverability</a></td></tr>
+  <tr><td class="code">importance, priority</td><td><span class="tag ok">declined</span></td>
+    <td>Not added for <code>v0.1.0</code>; reconsidered only if fixtures show a failure query evidence, exact demands and curated navigation cannot solve. <a href="https://github.com/artemVeduta/okf-agent-skills/issues/13">#13</a></td></tr>
+  <tr><td class="code">discoverability aliases</td><td><span class="tag ok">declined</span></td>
+    <td>#13 permitted them contingent on #21 approving a representation; #21 approved none. Accepted consequence: with no stemming and no stopword rule, a query sharing no token with a concept's title, description or body will not reach it. Upgrade path is a frontmatter key, never a body section. <a href="https://github.com/artemVeduta/okf-agent-skills/issues/21">#21</a></td></tr>
+  <tr><td class="code">okf_id / UUID concept identity</td><td><span class="tag ok">declined</span></td>
+    <td>Concept ID keeps the OKF definition — bundle-relative path without <code>.md</code>. Moving or renaming <em>changes identity</em>; no suite UUID claims continuity. (Research #23 had proposed UUID v7; #22 overrode it.) <a href="https://github.com/artemVeduta/okf-agent-skills/issues/22">#22 Define concept identity, cross-bundle routing, precedence, and workspace trust</a></td></tr>
+  <tr><td class="code">## Migration residue</td><td><span class="tag purp">product convention</span></td>
+    <td>The one body section the suite writes: textual material that cannot be safely represented as OKF semantics is retained visibly and inertly under this heading. It is not active concept meaning. <a href="https://github.com/artemVeduta/okf-agent-skills/issues/19">#19 Define safe migration of existing knowledge into OKF</a></td></tr>
+</table>
+
+<div class="step info">
+  <strong>Round-tripping third-party frontmatter</strong> <span class="tag ok">adopted</span> — key names, scalar
+  types and values, sequence order and mapping structure survive. Comments, mapping order, quote style, scalar
+  spelling and formatting do <em>not</em>. The suite proves this by <strong>re-parsing its own output and
+  comparing parse trees</strong>; unequal trees abort the write. <a href="https://github.com/artemVeduta/okf-agent-skills/issues/21">#21</a>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>2. The same bundles inside a real monorepo</h2>
+<!-- ============================================================ -->
+<div class="card">
+
+<h3>2.1 Literal tree — turbo/pnpm workspace plus a sibling repository</h3>
+<pre><span class="dim">~/work/</span>
+├── worker-manager/                       <span class="hl2">&lt;- git repository root · HARNESS CWD</span>
+│   ├── .git/
+│   ├── <span class="hl">.okf-active</span>                       <span class="dim">zero-byte file at the GIT WORKTREE ROOT — one per repo</span>
+│   ├── <span class="hl">.okf-workspace.json</span>               <span class="dim">federation manifest (schema_version: 1)</span>
+│   ├── turbo.json                        <span class="dim">monorepo manager manifest</span>
+│   ├── pnpm-workspace.yaml               <span class="dim">declares members: apps/*, packages/*</span>
+│   ├── package.json
+│   ├── <span class="hl3">okf/</span>                              <span class="hl3">ROOT BUNDLE — cross-cutting concerns</span>
+│   │   ├── index.md  log.md
+│   │   ├── decisions/   glossary/   constraints/   references/
+│   ├── apps/
+│   │   ├── scheduler/
+│   │   │   ├── package.json              <span class="dim">declared workspace member = project root</span>
+│   │   │   ├── src/
+│   │   │   └── <span class="hl3">okf/</span>                      <span class="hl3">CHILD BUNDLE — scheduler domain</span>
+│   │   │       ├── index.md  log.md
+│   │   │       └── retry-backoff-rationale.md
+│   │   └── dispatcher/
+│   │       ├── package.json
+│   │       └── src/                      <span class="dim">no okf/  =&gt;  sees ONLY the root bundle</span>
+│   └── packages/
+│       ├── shared-utils/
+│       │   └── package.json              <span class="dim">pure library, self-documenting =&gt; may need no bundle</span>
+│       └── billing-core/
+│           ├── package.json
+│           └── <span class="hl3">okf/</span>                      <span class="hl3">CHILD BUNDLE</span>
+│               ├── index.md  log.md
+│               └── proration-rules.md    <span class="dim"># type: Constraint</span>
+└── ui-components/                        <span class="hl2">&lt;- SIBLING standalone repository</span>
+    ├── .git/
+    ├── <span class="hl">.okf-active</span>                       <span class="dim">its own marker, at its own worktree root</span>
+    ├── package.json
+    └── <span class="hl3">okf/</span>                              <span class="hl3">FEDERATED PEER — read-only to worker-manager</span>
+        ├── index.md
+        └── token-naming.md
+</pre>
+
+<h3>2.2 <code>.okf-workspace.json</code> <span class="tag ok">adopted</span></h3>
+<p class="dim" style="font-size:12px">
+Exact-versioned schema. Portable federation declaration only — <strong>trust records, harness permissions,
+caches and canonical machine paths never enter it</strong>. One manifest is active; manifests never merge or
+import one another in <code>v0.1.0</code>.
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/22">#22</a>
+</p>
+<pre>{
+  <span class="hl2">"schema_version"</span>: 1,
+  <span class="hl2">"workspace_id"</span>: "8f14e45f-ceea-467a-9f22-2b3d1f0a71c4",
+  <span class="hl2">"repositories"</span>: [
+    { "name": "worker-manager", "path": ".",
+      "canonical_remote": "github.com/acme/worker-manager",
+      "aliases": ["gitlab.acme.internal/platform/worker-manager"] },
+    { "name": "ui-components", "path": "../ui-components",
+      "canonical_remote": "github.com/acme/ui-components",
+      "revision": "9c7f2ab1e4d5c8b60f3a2e19d47c5b8a3f6019de" }
+  ],
+  <span class="hl2">"bundles"</span>: [
+    { "alias": "platform",  "repository": "worker-manager", "root": "okf",
+      "required": true,  "mode": <span class="hl">"source"</span> },
+    { "alias": "scheduler", "repository": "worker-manager", "root": "apps/scheduler/okf",
+      "required": true,  "mode": <span class="hl">"source"</span> },
+    { "alias": "billing",   "repository": "worker-manager", "root": "packages/billing-core/okf",
+      "required": true,  "mode": <span class="hl">"source"</span> },
+    { "alias": "ui",        "repository": "ui-components",  "root": "okf",
+      "required": false, "mode": <span class="hl3">"vendored"</span> }
+  ]
+}
+</pre>
+<div class="step warn">
+  Unknown keys, duplicate names, malformed identities, unsupported schema versions, absolute paths, <code>..</code>
+  and invalid field combinations <strong>reject federation while preserving current-repository local operation</strong>.
+  The canonical remote is normalized to <code>host/path</code> — SSH and HTTPS forms compare equally; credentials,
+  query strings, fragments, default ports, trailing slashes and a terminal <code>.git</code> are removed.
+  Verification reads <strong>local Git configuration only</strong> and never contacts a network.
+</div>
+<div class="step info">
+  <strong>The manifest was a proposal, and is now adopted.</strong>
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/20">#20 Research workspace topology, autodiscovery, and cross-repository knowledge routing</a>
+  explicitly left <code>.okf-workspace.json</code>, its location, its schema and nearest-bundle write routing as
+  "proposals only". <a href="https://github.com/artemVeduta/okf-agent-skills/issues/22">#22</a> then fixed the schema
+  above. The <em>whether a manifest is required per topology</em> table (recommended for monorepos, required for
+  connected repos and multi-bundle) is still research-side <span class="tag warn">proposed</span>.
+</div>
+
+<h3>2.3 Who owns what</h3>
+<table>
+  <tr><th>Bundle</th><th>Owns</th><th>Mode</th><th>Writable from worker-manager?</th></tr>
+  <tr><td class="code">worker-manager/okf/</td><td>cross-cutting decisions, shared glossary, compliance constraints. A concept referencing two or more children belongs here, never duplicated into both.</td><td>code-backed</td><td><span class="tag ok">yes</span></td></tr>
+  <tr><td class="code">apps/scheduler/okf/</td><td>scheduler-specific domain and rationale</td><td>code-backed</td><td><span class="tag ok">yes</span></td></tr>
+  <tr><td class="code">packages/billing-core/okf/</td><td>billing invariants and proration rules</td><td>code-backed</td><td><span class="tag ok">yes</span></td></tr>
+  <tr><td class="code">apps/dispatcher/</td><td>nothing — no bundle; sees the root bundle only</td><td>—</td><td>n/a</td></tr>
+  <tr><td class="code">ui-components/okf/</td><td>design-token naming; owned by a different repository</td><td>federated, <code>vendored</code></td><td><span class="tag err">no — read-only</span></td></tr>
+</table>
+<p class="dim" style="font-size:12px">
+Project mode is evaluated <strong>per affected bundle</strong>; a mixed repository may contain bundles of different
+modes; <strong>repository presence alone never determines mode</strong>; unknown mode permits read, validation and
+analysis but blocks all mutation including index and log maintenance <span class="tag ok">adopted</span>
+(<a href="https://github.com/artemVeduta/okf-agent-skills/issues/11">#11</a>,
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/6">#6</a>).
+Turborepo bans nested packages and the suite matches it: <strong>no nested child bundles</strong>
+<span class="tag warn">proposed</span>.
+</p>
+
+<h3>2.4 Routing — where a read federates, where a write lands</h3>
+<pre><span class="dim">Agent is editing  worker-manager/apps/scheduler/src/queue.ts</span>
+
+<span class="hl2">READ — unqualified exact reference "settlement-window"</span>
+  resolution order (adopted, #22):
+    1. explicit target                         <span class="dim">none given</span>
+    2. nearest admitted bundle                 apps/scheduler/okf/     <span class="hl3">miss</span>
+    3. current-repository ancestors, nearest-first
+                                               worker-manager/okf/     <span class="hl">HIT</span>
+    4. explicitly federated bundles, manifest order
+                                               ui-components/okf/      <span class="dim">not reached</span>
+  result: platform/glossary/settlement-window
+          <span class="dim">+ the selected result DISCLOSES lower-precedence matches</span>
+
+<span class="hl2">READ — broad search "retry backoff"</span>
+  examines <span class="hl">EVERY</span> admitted bundle: platform, scheduler, billing, ui
+  routing order is a deterministic TIE-BREAKER, never permission to discard a relevant result
+  <span class="dim">ui/ is inactive or optional? -&gt; results must state they are NON-EXHAUSTIVE</span>
+
+<span class="hl2">WRITE — create a new Decision concept</span>
+  target = nearest admitted bundle at or above CWD <span class="hl">inside the current repository</span>
+         = apps/scheduler/okf/decisions/0003-...md
+  <span class="dim">widening READ scope can never silently redirect a WRITE</span>
+
+<span class="hl2">WRITE — update platform/glossary/settlement-window</span>
+  target = the <span class="hl">OWNING</span> bundle (worker-manager/okf/), NOT the nearest bundle
+
+<span class="hl2">WRITE — anything in ui-components/okf/</span>
+  <span class="hl3">REFUSED</span> — federated peers and non-repository workspace-root bundles are read-only.
+  Cross-bundle moves are explicit identity-changing migrations with link rewriting,
+  never ordinary updates.
+</pre>
+
+<div class="two-col">
+  <div>
+    <h4>Links inside a bundle</h4>
+    <div class="step pass">Standard Markdown links resolve <strong>only inside their source bundle</strong> and never fall through to another bundle.</div>
+    <div class="step pass">A link resolves <strong>iff its target file exists</strong>. <code>status</code> is never an input, so an inbound link to a deprecated concept resolves. (This corrected #30's assumption. <a href="https://github.com/artemVeduta/okf-agent-skills/issues/24">#24</a>)</div>
+  </div>
+  <div>
+    <h4>Links across bundles</h4>
+    <div class="step info">Authored cross-bundle links use <code>okf-workspace://&lt;bundle-alias&gt;/&lt;concept-id&gt;</code>. The active manifest is the only resolver.</div>
+    <div class="step warn">Missing or inactive aliases stay broken with diagnostics. Links <strong>never</strong> widen discovery, trust, access or write authority.</div>
+  </div>
+</div>
+
+<h3>2.5 The admission ladder — <code>REACH → PRESENCE → {TRUST, ACCESS}</code> <span class="tag ok">adopted</span></h3>
+<pre>  <span class="hl2">REACH</span>      git root · workspace containment · symlink policy · exclusions   fix: widen scope EXPLICITLY
+     │        <span class="hl3">short-circuits and STAYS SILENT</span> for anything outside authorized scope
+     ▼        (ABOVE_GIT_ROOT · SIDEWAYS_SIBLING · OUTSIDE_WORKSPACE · SYMLINK_ESCAPE · CWD_NOT_A_WORKSPACE)
+  <span class="hl2">PRESENCE</span>   absent · not a repository · no bundle                            fix: clone, or run init
+     │
+     ▼
+  <span class="hl2">TRUST</span> ─┬─ <span class="hl2">ACCESS</span>   human decision on canonical identity | harness configuration
+        │            <span class="hl">evaluated together, BOTH failures reported at once</span>
+        ▼
+     active | inactive  + composable findings:
+     DECLARED_MISSING · NOT_A_REPOSITORY · BUNDLE_MISSING · IDENTITY_MISMATCH
+     UNTRUSTED · ACCESS_DENIED · INVALID
+
+  <span class="dim">Four different fixes, so collapsing any two produces an unactionable message.</span>
+  <span class="dim">access is not authority, in BOTH directions: reading a path never widens what is</span>
+  <span class="dim">looked at, and declaring a path never grants permission to read it.</span>
+</pre>
+<p class="dim" style="font-size:12px">
+Only three things widen scope past a repository boundary: a user-selected workspace root, a manifest at or below
+the discovery ceiling, or a manifest supplied out of band. Not CWD. Not a <code>projects/</code> folder. Not a
+dependency symlink. Not a harness grant.
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/27">#27 Prototype workspace discovery, trust, and routing state transitions</a>
+(52/52 replayed cases, validated in-session, <em>not driven live at the keyboard</em>; topologies are analytical
+rather than real filesystems).
+Whether a harness-native multi-root bootstrap signal itself authorizes discovery <strong>remains open</strong>
+<span class="tag warn">proposed</span>.
+</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>3. Skills flow — four skills, one router, three adapters</h2>
+<!-- ============================================================ -->
+<div class="card">
+
+<div class="arch">
+  <div class="arch-row">
+    <div class="arch-box harness"><strong style="color:var(--purple)">CLAUDE CODE</strong><br><span class="dim">.claude/skills/</span></div>
+    <div class="arch-box harness"><strong style="color:var(--purple)">CODEX</strong><br><span class="dim">.agents/skills/</span></div>
+    <div class="arch-box harness"><strong style="color:var(--purple)">OPENCODE</strong><br><span class="dim">.opencode/skills/ + compat</span></div>
+  </div>
+  <div class="arch-link">▼ each installs a thin native adapter from the same release tag ▼</div>
+  <div class="arch-box dep" style="border-color:var(--yellow)">
+    <strong style="color:var(--yellow)">.okf-active</strong> — zero-byte regular file at the Git worktree root<br>
+    <span class="dim">passive project-local behavior selector · not authority, trust, permission, ownership, or approval</span>
+  </div>
+  <div class="arch-link">▼ marker present ⇒ adapter provides automatic OKF behavior ▼</div>
+  <div class="arch-box skill" style="border-color:var(--purple)">
+    <strong style="color:var(--purple)">okf</strong> — router skill (user-invoked)<br>
+    <span class="dim">dispatches to the four sub-skills; the cure for cognitive load when user-invoked skills multiply</span>
+  </div>
+  <div class="arch-link">▼ ▼ ▼ ▼</div>
+  <div class="arch-row">
+    <div class="arch-box skill"><strong style="color:var(--cyan)">okf-read</strong><br><span class="dim">safe inspection</span></div>
+    <div class="arch-box skill"><strong style="color:var(--cyan)">okf-write</strong><br><span class="dim">bundle mutations</span></div>
+    <div class="arch-box skill"><strong style="color:var(--cyan)">okf-lifecycle</strong><br><span class="dim">init · sync · migrate · compact<br>(manual-gated)</span></div>
+    <div class="arch-box skill"><strong style="color:var(--cyan)">okf-review</strong><br><span class="dim">trust tiers · baselines<br>guard confirmation</span></div>
+  </div>
+  <div class="arch-link">▼ every skill is a thin adapter over the same modules ▼</div>
+  <div class="arch-box runtime">
+    <strong style="color:var(--accent); font-size:15px;">scripts/lib/ — library only</strong><br>
+    <span class="dim">retrieval runtime · guard state machine · discovery resolver</span><br>
+    <span class="dim">pure functions · Node stdlib only · zero dependencies · <strong>no CLI binary, no npm package</strong></span>
+  </div>
+</div>
+
+<div class="step pass" style="margin-top:12px">
+  <strong>Skill composition, repository topology, runtime shape, installation boundaries, dependencies and release
+  boundaries</strong> — six decisions, validated with the human
+  <span class="tag ok">adopted</span>
+  (<a href="https://github.com/artemVeduta/okf-agent-skills/issues/5">#5 Choose the skill bundle, runtime, and distribution architecture</a>).
+  Rejected: a six-skill split adding <code>okf-guard</code>/<code>okf-retrieve</code> (they are code modules, not
+  skills); separate repos per skill; CLI binary delivery; per-project plugin bootstrap; a <code>yaml</code> dependency.
+</div>
+<div class="step warn">
+  <strong>The five-skill lineup drawn in the issue-13 visualization is stale.</strong> That page shows
+  <code>okf-sync · okf-review · okf-compact · okf-init · okf-validate</code>; #5 replaced it with the four skills
+  above plus a router. <code>sync</code>, <code>init</code>, <code>migrate</code> and <code>compact</code> are now
+  operations inside <code>okf-lifecycle</code>, not separate skills.
+</div>
+
+<h3>3.1 Discovery and invocation per harness</h3>
+<table>
+  <tr><th></th><th>Claude Code</th><th>Codex</th><th>OpenCode</th></tr>
+  <tr><td>Project discovery path</td><td class="code">.claude/skills/&lt;name&gt;/SKILL.md</td><td class="code">.agents/skills/&lt;name&gt;/SKILL.md</td><td class="code">.opencode/skills/ (primary), .claude/ and .agents/ as compat</td></tr>
+  <tr><td>Walk-up</td><td>parent dirs to repo root</td><td>CWD to repo root</td><td>CWD to git worktree root</td></tr>
+  <tr><td>Explicit invocation</td><td class="code">/okf</td><td class="code">$okf (CLI) · @okf (ChatGPT)</td><td><span class="tag err">none per-skill</span> — only a global <code>/skills</code> browse</td></tr>
+  <tr><td>Model invocation</td><td>description resident in context</td><td>description in a listing capped at 2% of context or 8,000 chars</td><td><code>skill({name})</code> tool call from an <code>&lt;available_skills&gt;</code> XML block</td></tr>
+  <tr><td>Explicit-only enforcement</td><td class="code">disable-model-invocation: true</td><td class="code">agents/openai.yaml → policy.allow_implicit_invocation: false</td><td><span class="tag err">no equivalent</span></td></tr>
+  <tr><td>Session-entry seam</td><td>marker-gated <code>SessionStart</code> hook in a native plugin bundle</td><td>marker-gated <code>SessionStart</code> hook in a native plugin bundle; hook trust stays user-controlled</td><td>marker-gated <strong>prompt-time system transformation</strong> — fire-and-forget session events are not treated as reliable startup injection</td></tr>
+  <tr><td>Skill-scoped hooks</td><td><span class="tag ok">yes</span> (<code>hooks</code> frontmatter, <code>once: true</code>)</td><td><span class="tag err">no</span> — no matcher, input field or metadata binds firing to an active skill</td><td><span class="tag err">no</span> — no <code>skill.load</code>/<code>skill.execute</code> event exists</td></tr>
+  <tr><td class="code">allowed-tools</td><td>mature</td><td>unsupported / unverified — the generic spec marks it experimental and Codex docs do not state runtime support</td><td>silently ignored</td></tr>
+</table>
+
+<h3>3.2 Non-parity, stated plainly</h3>
+<div class="step fail">
+  <strong>OpenCode has no <code>disable-model-invocation</code> and no third state.</strong>
+  A repo-wide search for the field returned zero matches; OpenCode <em>ignores</em> it, which means the skill stays
+  discoverable, model-visible and loadable. <code>permission.skill: "allow"</code> and <code>"ask"</code> both keep
+  it model-invocable; <code>"deny"</code> hides it from everyone including the human; <code>tools: { skill: false }</code>
+  kills the whole skill system for that agent; and under <code>opencode --auto</code>, <code>ask</code> degrades to
+  <code>allow</code>. <span class="tag ok">adopted answer: no equivalent</span>
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/17">#17 Does OpenCode have a disable-model-invocation equivalent for skills?</a>
+</div>
+<div class="step fail">
+  <strong>Codex hooks cannot be scoped to a skill.</strong> Codex hooks have configuration scopes — user, trusted
+  project, plugin — but no <em>activation</em> scope. No event input field or matcher exposes an active skill name.
+  Per-skill lifecycle behavior must come from deterministic in-skill steps or a broader project hook whose scope is
+  acceptable. <span class="tag ok">adopted answer: no</span>
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/16">#16 Can Codex hooks be scoped to specific skills?</a>
+</div>
+<div class="step warn">
+  <strong>OpenCode symlink following is source-verified, not documented.</strong> The audited source passes
+  <code>symlink: true</code> to skill globbing and dereferences in its directory checks, so a
+  <code>.claude/skills/&lt;name&gt;</code> symlink into <code>.agents/skills/</code> loads. There is no
+  <code>DISABLE_SYMLINKS</code> switch and no documentation. This does <strong>not</strong> guarantee every
+  <code>npx skills</code> topology, broken or cyclic links, links escaping trusted roots, sibling-repository access,
+  or future versions — installation fixtures must still test this repository's exact layout.
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/18">#18 Does OpenCode follow symlinks when scanning skill directories?</a>
+</div>
+<div class="step info">
+  <strong>The portable answer to all three:</strong> destructive operations carry their own in-body confirmation
+  gate, and the guard treats invocation attestation as a <em>three-valued injected input</em> —
+  <code>explicit</code> proceeds, <code>model-initiated</code> may preview but can never confirm, and
+  <code>unknown</code> (OpenCode) proceeds through an echoed token and is recorded as <strong>degraded, not
+  blocked</strong>. Refusing <code>unknown</code> would make the operations unreachable on OpenCode; the guard
+  cannot stop a lying agent, only make the requirement legible and auditable.
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/29">#29 Prototype the portable manual-operation guard state machine</a>
+</div>
+
+<h3>3.3 Shared runtime versus harness adapter</h3>
+<div class="two-col">
+  <div>
+    <h4 style="color:var(--accent)">Shared — one implementation, authoritative</h4>
+    <div class="step info">The retrieval runtime: discovery, ranking, tier allocation, materialization, verification.</div>
+    <div class="step info">The manual-operation guard state machine and its ledger protocol.</div>
+    <div class="step info">The discovery / trust / containment resolver and write routing.</div>
+    <div class="step info">Authority, trust, ownership, approval and manual-operation rules — <strong>not overridable</strong> by local configuration.</div>
+    <div class="step info">Request, preview, confirmation, plan binding, execution checks and outcome semantics for migration are identical on all harnesses.</div>
+  </div>
+  <div>
+    <h4 style="color:var(--purple)">Adapter — harness-specific, capability-honest</h4>
+    <div class="step warn">Discovery paths, install layout, invocation syntax, permission model, hook or plugin registration.</div>
+    <div class="step warn">The session-entry seam and how orientation is presented.</div>
+    <div class="step warn">Budget attestation, the model-visible discovery seam, tokenizer identity, serializer version, exact post-emission audit capability.</div>
+    <div class="step warn">Local overrides may change <strong>presentation, admitted bundle selection and adapter capabilities only</strong>.</div>
+    <div class="step fail">Adapters <strong>fail closed</strong> where a required safeguard is unavailable and never claim an unverified control. Unsupported seams are reported as <code>degraded</code>, never presented as equivalent behavior.</div>
+  </div>
+</div>
+<p class="dim" style="font-size:12px">
+"Cross-harness consistency" means <strong>equal shared-runtime decisions and safety outcomes</strong>, not identical
+native triggers or presentation <span class="tag ok">adopted</span>
+(<a href="https://github.com/artemVeduta/okf-agent-skills/issues/35">#35 Specify the harness plugin architecture and .okf-active opt-in contract</a>,
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/26">#26 Adopt a combined skill-authoring contract for the OKF skill suite</a>).
+</p>
+
+<h3>3.4 The <code>.okf-active</code> gate and session-entry orientation <span class="tag ok">adopted</span></h3>
+<pre>  session starts / resumes / clears / compacts / forks / re-enters at prompt time
+                     │
+                     ▼
+        <span class="hl2">recheck .okf-active at the git worktree root</span>
+                     │
+        ┌────────────┴─────────────┬──────────────────────┐
+        ▼                          ▼                      ▼
+   <span class="hl3">MISSING</span>                    <span class="hl">VALID + admitted</span>        <span class="hl3">MALFORMED</span>
+   silent automatic no-op      bundle                  diagnostic
+   explicit reads report       ▼                       inactive behavior
+   <span class="hl3">not-configured</span>              at most ONE bounded,     mutation blocked
+   mutation blocked            read-only ORIENTATION
+                               result
+                                    │
+                                    ▼
+                          navigation and status only
+                          <span class="hl3">NO</span> task inference · <span class="hl3">NO</span> retrieval
+                          <span class="hl3">NO</span> lifecycle maintenance
+                          <span class="hl3">NO</span> state initialization · <span class="hl3">NO</span> mutation
+
+  <span class="dim">Installation and session start NEVER create or modify the marker.</span>
+  <span class="dim">Marker creation is a separate explicit setup step.</span>
+  <span class="dim">ALL automatic hooks remain read-only. Every mutation requires explicit user</span>
+  <span class="dim">intent and the shared manual-operation guard, regardless of native invocation controls.</span>
+</pre>
+<p class="dim" style="font-size:12px">
+The base install (<code>npx skills add 'artemVeduta/okf-agent-skills#v0.1.0'</code>) provides the four skills,
+the router and the library-only runtime. Three thin native adapters ship separately from the same tag. Exact
+compatible suite versions are required; missing, partial or mismatched installations <strong>fail closed</strong>
+for OKF behavior. <a href="https://github.com/artemVeduta/okf-agent-skills/issues/35">#35</a>
+</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. Retrieval — the budget-aware runtime</h2>
+<!-- ============================================================ -->
+<div class="card">
+
+<div class="step info">
+  <strong>This section summarizes.</strong> The full end-to-end walkthrough — twelve pipeline phases with detail
+  panels, a worked numeric example spending 296 of 1,625 tokens, the eight verdict classes, and the seam
+  experiment — lives in the companion page
+  <a href="issue-13-retrieval-runtime-flow.html"><code>visualizations/issue-13-retrieval-runtime-flow.html</code></a>
+  and its Markdown twin. Read that for the mechanics; read this for what the contract <em>is</em> and what it still owes.
+  Note that the companion page predates <a href="https://github.com/artemVeduta/okf-agent-skills/issues/5">#5</a>
+  and draws a five-skill lineup that no longer exists.
+</div>
+
+<h3>4.1 One interface</h3>
+<pre><span class="hl2">retrieve</span>(scope snapshot, query, exact references, task kind,
+         budget attestation, breadth and filters)
+  -&gt; bounded materialized context package + omissions + receipt
+
+  <span class="dim">stateless per call · deterministic · every call has a fresh allowance and an</span>
+  <span class="dim">immutable scope snapshot · assumes NOTHING returned earlier survives compaction</span>
+</pre>
+
+<h3>4.2 Two ledgers <span class="tag ok">adopted</span></h3>
+<div class="two-col">
+  <div>
+    <h4 style="color:var(--accent)">Context ledger</h4>
+    <p class="dim" style="font-size:12px">Charges only bytes/tokens crossing into model context.</p>
+    <div class="step info">materialized concept tiers</div>
+    <div class="step info">the bounded omission notice</div>
+    <div class="step info">the receipt</div>
+    <div class="step pass"><strong>Per-ledger-<em>line</em> ceilings, never an aggregate.</strong> Aggregate slack hides per-document deficits.</div>
+  </div>
+  <div>
+    <h4 style="color:var(--accent)">Discovery-work ledger</h4>
+    <p class="dim" style="font-size:12px">Bounds internal work with a versioned multi-dimensional envelope.</p>
+    <div class="step info">concepts / files inspected</div>
+    <div class="step info">bytes read or parsed · probe output</div>
+    <div class="step info">optional safety timeout</div>
+    <div class="step pass"><strong>No universal work unit.</strong> Bytes, files, probes and time do not collapse into one scalar. Reaching a work cap is a normal <code>degraded</code> result.</div>
+  </div>
+</div>
+<div class="step warn">
+  <strong>Cache accounting splits the number in two</strong> <span class="tag ok">adopted</span> — a versioned
+  conservative <em>notional cold-work charge</em> sets the semantic work frontier as though every pure-derivation
+  cache lookup missed, so <strong>a cache hit can never buy examination of an additional scope or concept</strong>;
+  <em>observed execution work</em> records actual reads, parses, hits and misses, may stop execution for a
+  resource-limit failure, and <strong>never widens the notional frontier</strong>.
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/32">#32 Define what a discovery result caches, and what invalidates it</a>
+</div>
+
+<h3>4.3 Four tiers — the unit of allocation is a <code>(concept, tier)</code> pair</h3>
+<table>
+  <tr><th>Tier</th><th>Payload</th><th>Note</th></tr>
+  <tr><td class="code">LINE</td><td>stable concept locator plus authored title and description when present</td><td>self-announcing</td></tr>
+  <tr><td class="code">CARD</td><td><code>LINE</code> plus complete authored frontmatter in canonical serialized form</td><td>self-announcing</td></tr>
+  <tr><td class="code">SECTION</td><td><code>CARD</code> plus one or more <em>complete</em> heading-delimited body sections selected for the query</td><td><span class="tag err">the only tier whose loss is invisible from inside context</span></td></tr>
+  <tr><td class="code">FULL</td><td>the complete concept — asserts nothing in it remains unread, <em>even at zero incremental cost</em></td><td>self-announcing</td></tr>
+</table>
+<p class="dim" style="font-size:12px">
+Tiers are <strong>atomic</strong> — a half-read concept is indistinguishable in context from a whole one. When a body
+has no usable heading-delimited section, <code>SECTION</code> is unavailable and allocation moves
+<code>CARD → FULL</code>; paragraph and semantic chunking are not hidden inside this tier. "The N most relevant
+concepts within a budget" is <strong>unspecifiable</strong>: twelve titles and one full body cost the same and answer
+different questions, so <strong>no limit or default is expressed as a number of concepts</strong>.
+</p>
+
+<h3>4.4 The pipeline</h3>
+<div class="pipeline">
+  <div class="phase"><div class="num">1</div><div class="title">BUDGET</div></div><span class="arrow">→</span>
+  <div class="phase"><div class="num">2</div><div class="title">PIN</div></div><span class="arrow">→</span>
+  <div class="phase"><div class="num">3</div><div class="title">DISCOVER</div></div><span class="arrow">→</span>
+  <div class="phase"><div class="num">4</div><div class="title">RANK</div></div><span class="arrow">→</span>
+  <div class="phase"><div class="num">5</div><div class="title">ALLOCATE</div></div><span class="arrow">→</span>
+  <div class="phase"><div class="num">6</div><div class="title">NOTICE</div></div><span class="arrow">→</span>
+  <div class="phase"><div class="num">7</div><div class="title">VERIFY</div></div>
+</div>
+<div class="step pass"><strong>BUDGET</strong> — <code>operation context allowance − context reserve = spendable retrieval allowance</code>. The reserve is carved <em>before selection</em>; checking a total afterwards is not reserving. A versioned task profile sets it; a declared output requirement may <strong>raise</strong> the reserve but never lower the profile minimum; an unknown task takes the most conservative profile <em>evaluated at this allowance</em> (profiles are not totally ordered, so "most conservative" is not a fixed profile). Budget provenance is <code>explicit</code>, <code>estimated</code> or <code>unknown</code>.</div>
+<div class="step pass"><strong>PIN</strong> — exact concept, path and resolved source references are <strong>demands, not candidates</strong>. Honored first; under pressure they degrade <code>FULL → SECTION → CARD → LINE</code> and are <strong>never dropped</strong>; if they do not fit even at <code>LINE</code> the selection refuses and <em>quantifies the shortfall</em>. Demands bypass ranked-result filters with an explicit warning.</div>
+<div class="step pass"><strong>DISCOVER</strong> — discovery is priced and paid before ranking is possible. Escalating purchase order: <code>paths</code> (the glob listing) → <code>index</code> (title, plus description only from a <em>descriptive</em> index) → <code>scan</code> (frontmatter — the only source of <code>tags</code>/<code>type</code>/<code>status</code>) → <code>probe</code> (a capped grep — the only source of body-only words). The probe is <strong>priced at its cap, not its result count</strong>; pricing from matches would be an oracle.</div>
+<div class="step pass"><strong>RANK</strong> — deterministic query evidence, exact demands and approved navigation hints only. Query normalization survived the prototype completely: preserve the original query, NFC and case folding, retain one-character terms, digits, quoted phrases, paths and identifiers, add identifier subterms <em>without replacing the original</em>. <strong>No stopword deletion, no minimum term length, no substring stems, no implicit stemming, no generated synonyms.</strong> Semantic retrieval is deferred past <code>v0.1.0</code>.</div>
+<div class="step pass"><strong>ALLOCATE</strong> — atomic <code>(concept, tier)</code> selection inside the spendable allowance. Ordinary positive lookups default to <code>satisfice</code>; explicit completeness or absence claims, audits, migrations, validation and corpus-wide reviews use <code>exhaustive</code>. Exhaustive completion may be claimed only when every required scope and channel completed inside the work envelope.</div>
+<div class="step pass"><strong>NOTICE</strong> — the omission report is a budget line item paid out of the same budget. Clipped concepts are <strong>named</strong>; missed concepts are <strong>counted</strong> — naming everything unpicked costs roughly what picking it would have. The reservation must be the <em>largest form still reachable</em>, never below the collapsed form.</div>
+<div class="step pass"><strong>VERIFY</strong> — every conservative upper bound is checked on each ledger line. A falsified bound produces <code>invalid</code>, not <code>degraded</code>: discard content when detected before emission, return an independently bounded invalid envelope, quarantine the profile, require recalibration.</div>
+
+<h3>4.5 Omission codes — five classes, five different fixes</h3>
+<div class="verdict-grid">
+  <div class="verdict-card"><div class="label"><span class="tag warn">CLIPPED</span></div><div class="cause">a relevant discovered candidate's selected tier did not fit the context allowance</div><div class="cause" style="color:var(--green)">→ raise the budget, or pin it</div></div>
+  <div class="verdict-card"><div class="label"><span class="tag warn">MISS</span></div><div class="cause">every enabled, applicable channel required by the selected mode was examined without a sufficient match</div><div class="cause" style="color:var(--green)">→ change the query</div></div>
+  <div class="verdict-card"><div class="label"><span class="tag err">UNDISCOVERED</span></div><div class="cause">the envelope ended before a planned channel or scope could be examined</div><div class="cause" style="color:var(--green)">→ raise the budget</div></div>
+  <div class="verdict-card"><div class="label"><span class="tag inf">UNSEARCHED</span></div><div class="cause">satisficing intentionally stopped before that channel or scope was needed</div><div class="cause" style="color:var(--green)">→ broaden the query, or switch to exhaustive</div></div>
+  <div class="verdict-card"><div class="label"><span class="tag purp">FILTERED</span></div><div class="cause">observed metadata caused an active predicate to reject the candidate</div><div class="cause" style="color:var(--green)">→ change the policy</div></div>
+</div>
+<div class="step warn" style="margin-top:8px">
+  <code>UNDISCOVERED</code> and <code>UNSEARCHED</code> look identical from outside and mean opposite things —
+  poverty versus a satisficing rule working correctly. <strong>They must not be collapsed.</strong>
+  <code>FILTERED</code> is claimed <strong>only after observing the relevant field</strong>; unobserved filter
+  evidence remains incomplete discovery and is never assumed to have passed or failed.
+</div>
+
+<h3>4.6 Results</h3>
+<div class="verdict-grid">
+  <div class="verdict-card"><div class="label"><span class="tag ok">ok</span></div><div class="cause">ordinary continuation permitted</div></div>
+  <div class="verdict-card"><div class="label"><span class="tag warn">degraded</span></div><div class="cause">discloses limitations; forbids claim-affecting updates drawn from omitted context</div></div>
+  <div class="verdict-card"><div class="label"><span class="tag err">insufficient</span></div><div class="cause">below the honest retrieval floor; no mutation permitted</div></div>
+  <div class="verdict-card"><div class="label"><span class="tag purp">invalid</span></div><div class="cause">a conservative bound was falsified; profile quarantined; no mutation permitted</div></div>
+</div>
+<p class="dim" style="font-size:12px">
+Every receipt records: scope snapshot, budget provenance, task/reserve profile, breadth, stop reason, selected tiers,
+context spend, discovery-work spend, tokenizer / cost profile, serializer version, policy version, omission form.
+<code>unavailable</code>, <code>unobservable</code>, missing baseline and <code>not-configured</code> findings are
+<strong>never reported as clean or unchanged</strong>.
+</p>
+
+<h3>4.7 The six corrections from prototype #33</h3>
+<p class="dim" style="font-size:12px">
+102 cases, 136,080-run sweep. The contract largely holds; these six do not. The ticket stayed closed and the
+corrections amend its text.
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/33">#33 Prototype and verify the adopted retrieval runtime contract</a>
+</p>
+<table>
+  <tr><th>#</th><th>What broke</th><th>Correction</th></tr>
+  <tr><td>1</td><td><strong>The receipt has no reservation rule.</strong> #13 put three things on the context ledger and spelled out a reservation discipline for exactly one. Measured by patching the reservation out: ~1,200 worlds overrun from the missing reservation, ~119 more from the receipt's size depending on the selection it reports (worst case 6 tokens).</td><td>Reserve for the receipt too, under the same largest-reachable rule. And because <code>allowance − reserve</code> with an irreducible profile minimum permits a spendable of <strong>zero or below</strong> — the runtime must overspend even to say <em>no</em> — the invariant is not "never overrun" but <strong>"never overrun <em>silently</em>"</strong>, and "record the unplanned spend" must escape the falsified-bound path it was scoped to.</td></tr>
+  <tr><td>2</td><td><strong>"Internal reads do not consume model context" is a deployment property, not a design constant</strong> — asserted six lines after deferring the CLI/library shape to #5. A CLI's stdout <em>is</em> a tool result.</td><td>Make the seam an <strong>attested property of the adapter</strong>; the context ledger then has one rule — it charges bytes entering model context. Two consequences: under the out-of-context seam an index pre-pays nothing, so <strong>#28's index economics do not transfer as stated</strong>; and "resolve demands before ranking" is <strong>one phase too late</strong> — a demand's minimum must be reserved before <em>discovery</em>.</td></tr>
+  <tr><td>3</td><td><strong><code>SECTION</code> is the only tier whose loss is invisible from inside context.</strong> Its payload looks exactly like a short complete concept, and none of the five omission codes covers <em>intra-concept</em> residue — all five classify a candidate. The receipt says <code>SECTION</code>; the model's context says <code>FULL</code>.</td><td><code>SECTION</code> reports a bounded, priced <code>sectionsOmitted</code> count and is not used for sectionless bodies <span class="tag ok">adopted in #7</span>. The alternative — a complete section manifest — was implemented in the prototype and is not free: on a forty-heading document it can exceed the sections it discloses.</td></tr>
+  <tr><td>4</td><td><strong>"Evidence-bound filtering" has no observable.</strong> Inclusion is the pass action, and neither the model-facing structure nor the receipt's twelve fields carries "n candidates were ranked without their predicate field observed". From inside context, a concept whose status was never read but is materialized anyway is indistinguishable from one that passed.</td><td>Add a <strong>per-predicate, tier-derived, count-only</strong> coverage figure — O(active predicates), not O(N) — <strong>and price it like everything else</strong>. Active filters report observed coverage.</td></tr>
+  <tr><td>5</td><td><strong>The falsification backstop cannot fire where the profile is the only number there is.</strong> Detecting an exceeded bound needs ground truth other than the bound. Executed: the same uncalibrated profile is caught on an audit-capable deployment and <strong>completely undetected</strong> on an audit-blind one, with admission and charging byte-identical across the pair.</td><td>Make audit an <strong>attested capability</strong>: a deployment declares whether it can supply an exact post-emission token count; if it cannot it is <strong>audit-blind</strong>, <code>invalid</code> is unreachable, and the receipt says <code>unverified</code>. Two residual problems remain: the invalid envelope is <strong>circular</strong>, and <strong>quarantine is cross-call state in a runtime declared stateless</strong> — <code>retrieve</code>'s signature has nowhere for it to live. <span class="tag warn">unresolved</span></td></tr>
+  <tr><td>6</td><td><strong>"Coherent" is undefined, and its extremes are the two rules #13 was choosing between.</strong> At <code>single</code>, satisfice degenerates into exhaustive-bounded-by-the-work-cap; at <code>component</code> it is #28's union rule renamed. On <em>every</em> fixture, <code>linked</code> and <code>component</code> are byte-identical, because §8 index files link every concept in a directory — the middle position <em>is</em> the permissive extreme on any bundle with indexes. The rule also has no notion of clause informativeness while every cheap discriminator is banned by name, so <code>the</code> discharges coverage as fully as <code>retention</code>.</td><td>Document frequency is offered as a <strong>proposal, not a finding</strong> <span class="tag warn">proposed</span> — corpus-derived, and carrying its own uncalibrated constant.</td></tr>
+</table>
+<p style="font-size:12px">Smaller corrections, all executable:</p>
+<ul>
+  <li>The <strong>honest retrieval floor is a function of the request</strong>, not a runtime property — "never silently drop a demand" makes the smallest truthful envelope grow with the number of demands.</li>
+  <li><code>UNDISCOVERED</code> has <strong>two causes with opposite fixes</strong> (work envelope vs context allowance) and the class has no cause field. #7 adopts a bounded cause such as <code>context</code>, <code>work</code>, <code>satisficed-stop</code>.</li>
+  <li><code>MISS</code> is <strong>unreachable under <code>satisfice</code> as written</strong> — a zero-scoring index-only concept is <code>UNSEARCHED</code> evidence wearing a <code>MISS</code> label.</li>
+  <li><code>FILTERED</code> must <strong>dominate</strong> <code>CLIPPED</code>; budget-independent exclusions must win, or the advice is "raise the allowance" for something no allowance can surface.</li>
+  <li><strong>The scope summaries are uncapped</strong> — <code>CLIPPED</code>/<code>FILTERED</code> names are capped but <code>UNDISCOVERED</code>/<code>UNSEARCHED</code> summarize scopes that grow with the bundle, so the structure #13 calls bounded is not.</li>
+  <li><code>{summary, detail, nextAction}</code> <strong>cannot be a guarantee that taking the action changes the verdict</strong> — a remedy cannot be verified without spending the work whose absence it reports. The attainable invariant is that the advice <em>moves the run</em> and never names a knob already at its limit.</li>
+  <li><strong>Unknown budget without a fallback now refuses</strong>, inverting #28's validated "degrades rather than blocks" on assertion rather than evidence. Since <strong>no calibrated profile exists in the repository</strong>, every unknown-provenance call returns <code>insufficient</code> today — turning #11's unconditionally-allowed read into one gated on an artifact nobody has built. <span class="tag err">live consequence</span></li>
+</ul>
+
+<h3>4.8 What the numbers are worth</h3>
+<div class="step fail">
+  <strong>Nothing in this section is calibrated.</strong> The token-estimator figures often quoted from #28 —
+  ÷2.9 producing 0% violations, ÷3.2 producing 2%, ÷4.0 (mean-accurate) producing 95% — are a property of the
+  prototype's <code>corpus.ts</code>, whose densities were invented. There is no tokenizer, serializer, grep,
+  renderer, filesystem or clock behind any of it. A green prototype run licenses claims about the
+  <strong>decision procedure only, and nothing about the numbers</strong>.
+  <strong>"Never silently overruns the supplied limit" remains unanswered</strong>: the mechanism is settled,
+  calibration is owed by <a href="https://github.com/artemVeduta/okf-agent-skills/issues/7">#7</a> against a corpus
+  that does not exist yet.
+</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>5. Saving to docs — the write path</h2>
+<!-- ============================================================ -->
+<div class="card">
+
+<h3>5.1 What counts as an evidence-backed update</h3>
+<p style="font-size:12px">
+An <strong>evidence-backed update</strong> is a bounded change to durable context with authoritative evidence,
+clear ownership and post-write validation — and it <strong>does not alter trust, status, freshness or review
+baselines</strong>. The lifecycle chooses one of four outcomes at each evidence checkpoint
+<span class="tag ok">adopted</span> (<a href="https://github.com/artemVeduta/okf-agent-skills/issues/6">#6</a>):
+</p>
+<div class="two-col">
+  <div>
+    <div class="step warn"><strong>Abstain / no-op</strong> when the information is recoverable from authoritative artifacts, transient, speculative, duplicated, semantically unchanged, outside owner scope, or unsupported by evidence.</div>
+    <div class="step pass"><strong>Originate</strong> only when durable reusable knowledge is missing, ownership is known and evidence supports a bounded concept. The result is <code>draft</code> and unverified.</div>
+  </div>
+  <div>
+    <div class="step pass"><strong>Revise</strong> only when meaning or provenance-bearing metadata materially changes, the concept is owned and evidence supports the revision.</div>
+    <div class="step info"><strong>Every automatic update requires</strong> task intent, authoritative or explicitly adopted evidence, clear concept mapping, no unresolved conflict or unavailable dependency, bounded scope and post-write validation. <strong>"Small" means structurally bounded, not a numeric threshold.</strong></div>
+  </div>
+</div>
+<div class="step fail">
+  <strong>The gate on content itself is the Pocock test</strong> <span class="tag warn">proposed</span> — "can the
+  agent recover this from code alone? If yes, don't write it." The detection algorithm behind it (identifier
+  density &gt; 60% of paragraphs, rationale-signal ratio &gt; 0.3, &gt; 50% of links pointing at source code) is
+  research-side with <strong>candidate thresholds needing fixtures</strong>; none of those numbers is adopted.
+</div>
+<div class="step info">
+  <strong>Source change is review evidence, not proof of staleness</strong> <span class="tag ok">adopted</span>.
+  Provenance (<code>sources</code>) and review dependencies are different things: a <code>sources[].resource</code>
+  identifies supporting evidence and does not by itself declare that a change makes the concept stale. Observation
+  outcomes stay distinct and must not be collapsed: <code>unchanged</code> · <code>changed</code> ·
+  <code>unavailable</code> (a positively established existence failure) · <code>unobservable</code> (access,
+  network, workspace, tool or resource limits). A concept with no review dependencies is
+  <code>not configured</code> — <em>not clean and not stale</em> — and is quiet by default.
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/12">#12</a>
+</div>
+
+<h3>5.2 The automatic ceiling</h3>
+<div class="two-col">
+  <div>
+    <h4 style="color:var(--green)">Automatic execution MAY</h4>
+    <div class="step pass">read, validate, analyze</div>
+    <div class="step pass">create a small evidence-backed <strong>draft</strong> concept</div>
+    <div class="step pass">make a small evidence-backed update</div>
+    <div class="step pass">add independently reproducible machine verification</div>
+    <div class="step pass">maintain <em>directly affected</em> indexes</div>
+    <div class="step pass">append an existing or policy-required log entry</div>
+  </div>
+  <div>
+    <h4 style="color:var(--red)">Automatic execution MAY NOT</h4>
+    <div class="step fail">record human verification · independently remove verification</div>
+    <div class="step fail">change <code>status</code> · move or rename</div>
+    <div class="step fail">perform broad link rewrites</div>
+    <div class="step fail">archive · merge · split</div>
+    <div class="step fail">sync (full) · migrate · compact</div>
+    <div class="step fail">delete · purge · edit a sanctioned Attested Computation</div>
+  </div>
+</div>
+<div class="step warn">
+  <code>init</code>, large or full sync, migration and compaction are <strong>manual-only</strong> — and
+  <strong>manual-only means explicit invocation is necessary, not sufficient</strong>. The matrix, preview,
+  approval and recovery gates still apply. Composite commands expand into <strong>atomic effects before
+  authorization</strong> and inherit the strictest atomic outcome:
+  <code>blocked &gt; preview/approval &gt; notice &gt; allowed</code>. A friendly command name cannot conceal
+  deletion, identity changes or graph rewrites.
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/11">#11</a>
+</div>
+
+<h3>5.3 Authorization matrix — selected rows <span class="tag ok">adopted</span></h3>
+<p class="dim" style="font-size:12px">
+<code>A</code> allowed · <code>N</code> notice · <code>P</code> preview/approval · <code>R</code> verified recovery
+required · <code>B</code> blocked. U/M/H is the target concept's <em>pre-operation</em> trust tier
+(unverified / machine-confirmed / human-reviewed). The many identical U/M/H cells are intentional: trust is
+evidence, never authority.
+</p>
+<table>
+  <tr><th>Atomic effect</th><th>Code-backed U/M/H</th><th>Knowledge-only U/M/H</th></tr>
+  <tr><td>Read, validate, read-only analysis</td><td class="code">A/A/A</td><td class="code">A/A/A</td></tr>
+  <tr><td>Create a small evidence-backed concept</td><td class="code">N/N/N</td><td class="code">N/N/N</td></tr>
+  <tr><td>Small evidence-backed claim update</td><td class="code">N/N/N</td><td class="code">N/N/N</td></tr>
+  <tr><td>Add machine verification <em>without</em> complete qualifying evidence</td><td class="code" style="color:var(--red)">B/B/B</td><td class="code" style="color:var(--red)">B/B/B</td></tr>
+  <tr><td>Record exact human verification</td><td class="code" style="color:var(--yellow)">P/P/P</td><td class="code" style="color:var(--yellow)">P/P/P</td></tr>
+  <tr><td>Infer or fabricate human verification</td><td class="code" style="color:var(--red)">B/B/B</td><td class="code" style="color:var(--red)">B/B/B</td></tr>
+  <tr><td>Standalone removal of verification</td><td class="code">A/P/P</td><td class="code">A/P/P</td></tr>
+  <tr><td>Any <code>status</code> transition (<code>draft→stable</code>, <code>stable→deprecated</code>, <code>deprecated→stable</code>)</td><td class="code" style="color:var(--yellow)">P/P/P</td><td class="code" style="color:var(--yellow)">P/P/P</td></tr>
+  <tr><td>Move or rename · broad graph rewrite · create merge/split outputs</td><td class="code" style="color:var(--yellow)">P+R/P+R/P+R</td><td class="code" style="color:var(--yellow)">P+R/P+R/P+R</td></tr>
+  <tr><td>Delete a demonstrably redundant concept</td><td class="code" style="color:var(--yellow)">conditional P+R</td><td class="code" style="color:var(--red)">B/B/B</td></tr>
+  <tr><td>Purge unique durable knowledge</td><td class="code" style="color:var(--red)">B/B/B</td><td class="code" style="color:var(--red)">B/B/B</td></tr>
+  <tr><td>Introduce redirects or aliases</td><td class="code" style="color:var(--red)">B/B/B</td><td class="code" style="color:var(--red)">B/B/B</td></tr>
+  <tr><td>Edit a sanctioned Attested Computation</td><td class="code" style="color:var(--red)">B/B/B</td><td class="code" style="color:var(--red)">B/B/B</td></tr>
+</table>
+<div class="step info">
+  <strong>A claim-affecting edit clears <code>verified</code></strong> from the resulting concept and reports the
+  invalidation. Claim-affecting means: body, <code>type</code>, <code>title</code>, <code>description</code>,
+  <code>resource</code>, <code>tags</code>, <code>sources</code>, unregistered extension fields, or synthesis output.
+  The closed non-claim allowlist is: formatting with parsed semantics unchanged; <code>status</code>/<code>stale_after</code>
+  updates; generated/verified event maintenance; byte-identical path moves; manifest-bound link-target substitution
+  to the same moved target; index and log maintenance.
+</div>
+
+<h3>5.4 Guard state machine <span class="tag ok">adopted</span></h3>
+<pre>  idle ──&gt; requested ──&gt; previewed ──&gt; confirmed ──&gt; executing ──&gt; completed
+                                                                 ↘ failed
+
+        any of the above ──(expiry)──&gt; stale ──(re-preview)──&gt; previewed
+        any of the above ──(cancel)──&gt; idle
+
+  <span class="dim">One manual-only operation in flight at a time.</span>
+  <span class="dim">`previewed` is reachable without a request (a preview is read-only); `confirmed` is not.</span>
+  <span class="dim">A request occurrence records and binds {operation, selector} to confirmable preview tokens;</span>
+  <span class="dim">an unmatched preview stays read-only and can never confirm.</span>
+</pre>
+<div class="two-col">
+  <div>
+    <h4 style="color:var(--red)">REFUSE — the ask does not match authorized work</h4>
+    <pre style="font-size:10px">NO_EXPLICIT_REQUEST   SELF_CONFIRMED
+NO_PREVIEW            NOT_CONFIRMED
+UNKNOWN_TOKEN         OPERATION_MISMATCH
+SELECTOR_MISMATCH     PREVIEW_INCOMPLETE
+PREVIEW_FAILED        EMPTY_SCOPE
+TOKEN_SPENT           MUST_RESTART</pre>
+  </div>
+  <div>
+    <h4 style="color:var(--yellow)">EXPIRE — the ask matches, but what it was confirmed against has moved</h4>
+    <pre style="font-size:10px">SCOPE_MOVED
+TRANSFORM_CHANGED
+SUPERSEDED_BY_ANOTHER_RUN
+CONFIRMATION_AGED_OUT
+SESSION_BOUNDARY</pre>
+  </div>
+</div>
+<div class="step pass">
+  <strong>The binding is <code>--force-with-lease</code>, not a counter.</strong> A confirmation binds to a
+  fingerprint over <code>{operation, selector, transformVersion, sorted [path, contentHash, plannedAction,
+  riskClass]}</code>, taken from the plan the human actually saw and <strong>re-verified at execute time against a
+  freshly observed plan</strong>. <code>mtime</code> and size are <em>excluded</em> — a <code>touch</code> must not
+  expire a confirmation, or humans learn to reconfirm blindly. Planned action and risk class <em>are</em> included —
+  an edit turning a <code>MOVE</code> into a <code>DELETE</code> invalidates the confirmation even with an unchanged
+  file set.
+</div>
+<div class="step warn">
+  <strong>A completed run bumps a bundle epoch</strong>, obsoleting every outstanding sibling confirmation, and a
+  spent fingerprint can <strong>never</strong> authorize a second run — so a rollback restoring a byte-identical
+  corpus does <em>not</em> resurrect the token.
+</div>
+
+<h3>5.5 Where the guard state lives, and how sessions coordinate <span class="tag ok">adopted</span></h3>
+<pre>  In a Git repository:
+    <span class="hl2">&lt;git-common-dir&gt;/okf-agent-skills/guard/&lt;bundle-key&gt;/</span>
+    <span class="dim">linked worktrees therefore coordinate for the same logical bundle and</span>
+    <span class="dim">conservatively invalidate one another even when their content differs</span>
+
+  In a non-repository workspace:
+    <span class="hl2">&lt;workspace-root&gt;/.okf-agent-skills/guard/&lt;bundle-key&gt;/</span>
+
+  <span class="hl3">NEVER COMMITTED.</span> A fresh clone, replacement instance or CI checkout inherits no
+  confirmations, no epoch, no replay history, and cannot execute a token issued elsewhere.
+
+  <span class="hl2">Execution protocol — four steps, execution holds an EXCLUSIVE lock for its full duration</span>
+    1. acquire the lock; reread the authoritative ledger; reject a mismatched generation,
+       obsolete epoch, absent or spent token, or operation/selector mismatch
+    2. <span class="hl">recompute and validate the COMPLETE current plan UNDER THE LOCK</span>
+    3. atomically record `in-flight` BEFORE beginning mutation
+    4. on success: spend the occurrence-bound token, advance the epoch, invalidate all
+       sibling confirmations, clear `in-flight`, release the lock
+
+  <span class="dim">Epoch checking WITHOUT this lock is insufficient — it cannot stop two already-armed</span>
+  <span class="dim">sessions from beginning together.</span>
+
+  <span class="hl3">Crash</span> (process gone, OS lock released, `in-flight` remains): outcome is <span class="hl3">unknown</span>.
+  Confirmation and execution stay BLOCKED. Explicit recovery reports the operation,
+  token, fingerprint and start time, then advances the epoch, clears all outstanding
+  confirmations, and records the interrupted token with `outcome: unknown`.
+  Recovery <span class="hl3">neither assumes success nor performs rollback.</span>
+</pre>
+<p class="dim" style="font-size:12px">
+The ledger may store paths, actions, risk classes and content hashes — <strong>never source content</strong>. Files
+use owner-only permissions where supported and write-temp / flush / atomic-replace discipline. If the runtime cannot
+create, secure, lock or atomically replace the ledger, <strong>confirmation and execution fail closed</strong>.
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/31">#31 Decide where manual-operation guard state persists and how concurrent sessions coordinate</a>
+</p>
+
+<h3>5.6 Operation manifest and the recovery gate <span class="tag ok">adopted</span></h3>
+<pre>  <span class="hl2">OPERATION MANIFEST</span>  — the durable record of ONE broad / destructive / identity-changing operation
+    lives in a separate durable store <span class="hl">OUTSIDE every mutation target AND outside the guard ledger</span>
+    survives repository replacement and the writing machine
+    written completely -&gt; flushed -&gt; atomically replaced -&gt; content-verified
+    sealed at MANIFEST_DURABLE, immutable thereafter (it sits inside the approval fingerprint)
+    later observations APPEND an OBSERVATION record; they never amend the manifest
+
+    missing · torn · corrupt · truncated · unknown-schema  =&gt;  <span class="hl3">indeterminate</span>
+    blocks execution and any recovery claim.  <span class="hl3">Never recover from a valid-looking prefix.</span>
+
+  <span class="hl2">EACH EFFECT</span>   INTENT{undo} ──&gt; mutate ──&gt; OUTCOME     each durable IN THAT ORDER
+    so death between the write and the journal append leaves a dangling INTENT that
+    reconciliation can SEE, rather than an unrecorded mutation.
+    observedHash = H(contentHash, verificationHash) is rechecked at EVERY INTENT —
+    a concurrent VERIFICATION is as much a reason to abort as a concurrent edit.
+
+  <span class="hl2">RECOVERY GATE</span>  — passes only when ALL hold:
+    ✓ independent content-addressed snapshot of affected bundles + relevant untracked files
+    ✓ snapshot stored OUTSIDE the mutation target
+    ✓ successful restore into a DISPOSABLE location
+    ✓ restored-content hash verification
+    ✓ OKF validation + operation-specific identity / link / provenance / trust checks
+    ✓ documented rollback procedure
+    ✓ snapshot and restore evidence BOUND to the approved preview
+    ✓ post-operation validation
+
+    <span class="hl3">Trust tier, confirmation, Git history, PR approval, reflogs, automatic commits and</span>
+    <span class="hl3">`git archive` cannot override or alone satisfy this gate.</span>
+    <span class="dim">"An automatic git commit is not a backup" — the only proof a backup works is restoring</span>
+    <span class="dim">it to a disposable location and verifying the files.</span>
+
+  <span class="hl2">TERMINALS</span>  = settlement (applied | reverted | failed) × cleanliness (clean | dirty)
+    which makes "succeeded but left residue" a NAMEABLE state.
+    Effects rollback cannot reverse are recorded as <span class="hl3">residue</span>; the result is `dirty` or
+    `indeterminate`, <span class="hl3">never `clean`</span>.
+    <span class="hl3">rollback-failed is a LOUD TERMINAL.</span> No automatic repair, no inverse retry.
+    Repair starts as a NEW operation with a new preview, approval, snapshot and gate.
+    Rollback ALWAYS requires fresh approval; parent approval is context only.
+    The inverse manifest is built from <span class="hl">what actually landed</span>, not from what was planned.
+</pre>
+
+<h3>5.7 Write-new-then-swap</h3>
+<div class="step pass">
+  <strong>The single convergent invariant.</strong> rsync's temp-file-and-rename, blue-green deployment's
+  never-mutate-live, and restic's packs→index→snapshots ordering independently arrive at it:
+  <strong>write new, then swap; never mutate in place.</strong> For migration this means a
+  <strong>separate staging area</strong>, validation, then an <strong>atomic write-new-then-swap publication</strong>.
+  Originals are <strong>never mutated, relocated or deleted</strong> by migration; cleanup, if ever needed, is a
+  separate recovery-gated operation.
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/19">#19</a>,
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/23">#23 Research safe migration of existing knowledge corpora into OKF</a>
+</div>
+<pre>  <span class="hl2">MIGRATION — a manual, explicitly requested okf-lifecycle operation</span>
+
+  request names ONE source root, ONE explicit project mode, and explicit include/exclude rules
+  <span class="dim">— it does NOT scan a workspace or discover sources implicitly</span>
+        │
+        ▼
+  <span class="hl2">DRY-RUN PREVIEW</span>  complete only when <span class="hl">EVERY selected input has a disposition</span>
+     manifest lists scope, mode, classifications, paths, transformations, links, provenance,
+     residue, conflicts, attachments, retained originals, output identities, hashes,
+     recovery evidence
+     <span class="hl3">An incomplete preview CANNOT mint a confirmation, and completeness is FRESHLY</span>
+     <span class="hl3">RE-CHECKED at execution — not inferred from a sentinel.</span>
+        │
+        ▼
+  <span class="hl2">APPROVAL</span>  binds to the explicit request AND the complete plan
+        │
+        ▼
+  <span class="hl2">SNAPSHOT</span>  independent · restored in a disposable location · checked BEFORE execution
+     <span class="dim">Git history, reflogs and `git archive` are not the sole recovery mechanism.</span>
+        │
+        ▼
+  <span class="hl2">EXECUTE</span>  bundle-scoped operation lock · fresh source and target identity/content checks
+     writes into a <span class="hl">SEPARATE STAGING AREA</span> · validation
+     drift after preview <span class="hl3">ABORTS WITHOUT TARGET MUTATION</span> and requires a new preview
+        │
+        ▼
+  <span class="hl2">PUBLISH</span>  atomic write-new-then-swap
+     <span class="hl3">Incomplete work is NOT published.</span> A partial run remains staged and reported until
+     the user narrows the request or resolves the blocker.
+
+  outcomes:  <span class="hl">complete</span> (every selected input has a safe disposition, including inert residue)
+             <span class="hl3">partial</span>  (selected work remains unresolved)
+             <span class="hl3">failed | indeterminate</span>  (recovery or post-operation uncertainty) — never success
+</pre>
+<div class="step warn">
+  <strong>Structural success is not semantic fidelity.</strong> Frontmatter parse-tree round trips, file counts,
+  link handling and conformance checks <em>do not</em> establish that migrated content retains its intended
+  user-authored meaning. A semantic-fidelity claim requires explicit human review of all conflicts and residue plus
+  representative high-risk conversions. Without that evidence, <strong>semantic fidelity is not assessed</strong> —
+  and the suite never emits a bare <code>conformant</code>, <code>compliant</code> or <code>succeeded</code>.
+</div>
+<div class="step info">
+  <strong>Every harness runs the same request, preview, confirmation, plan binding, execution checks and outcome
+  semantics.</strong> Adapters may change presentation only. A harness that cannot attest a complete preview or an
+  explicit confirmation <strong>blocks the operation rather than weakening it</strong>.
+</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. What this state does NOT establish</h2>
+<!-- ============================================================ -->
+<div class="card">
+<div class="two-col">
+  <div>
+    <h4 style="color:var(--green)">Settled</h4>
+    <div class="step pass">The OKF baseline, write gate, read posture, reporting vocabulary and extension policy (#21).</div>
+    <div class="step pass">Identity as bundle-relative path, the four-gate admission ladder, read/write routing, and the manifest schema (#22, #27).</div>
+    <div class="step pass">The four-skill split behind a router, library-only runtime, zero dependencies, single tag (#5).</div>
+    <div class="step pass">The retrieval decision procedure — two ledgers, four atomic tiers, five omission classes, four results (#13, corrected by #33).</div>
+    <div class="step pass">The guard state machine, its content binding, its ledger location, and the concurrency protocol (#29, #31).</div>
+    <div class="step pass">The authorization matrix, the recovery gate, restructuring semantics, archive semantics, migration semantics (#11, #7, #24, #14, #19).</div>
+    <div class="step pass">The activation contract and per-harness seams (#35).</div>
+  </div>
+  <div>
+    <h4 style="color:var(--red)">Not settled</h4>
+    <div class="step fail"><strong>Every number.</strong> Reserve and work profiles, ranking weights, stop thresholds, notice caps, fallback allowances, evidence-sufficiency thresholds, human tolerances and the selected non-dominated operating points all remain unset, owned by <a href="https://github.com/artemVeduta/okf-agent-skills/issues/7">#7</a>.</div>
+    <div class="step fail"><strong>No calibration corpus exists.</strong> Consequence: with no calibrated fallback profile, every unknown-provenance retrieval call returns <code>insufficient</code> today.</div>
+    <div class="step fail"><strong>Quarantine has no home.</strong> It is cross-call state in a runtime declared stateless; <code>retrieve</code>'s signature has nowhere for it, and #13 gives it to no adapter.</div>
+    <div class="step fail"><strong>The invalid envelope is circular</strong> — bounded either by the quarantined profile or by the universal constant the same rule bans.</div>
+    <div class="step fail"><strong>A knowledge-only merge or split leaves an orphan</strong>: a deprecated source with full original text, zero inbound links and no supersede edge. #24 declined to invent a pointer #21 forbids; #14 answers with a visible Markdown successor notice, which is navigation, not a machine-parsed relationship.</div>
+    <div class="step fail"><strong>Whether a harness-native multi-root bootstrap signal authorizes discovery</strong> is open (#27, carried into #22 as a one-line reversal).</div>
+    <div class="step fail"><strong>Live validation.</strong> No prototype has been driven live at the keyboard except #30. #27, #28, #29 and #33 were validated in-session only; #27's topologies are analytical rather than real filesystems.</div>
+    <div class="step fail"><strong>No code exists.</strong> No TypeScript, JavaScript, Python, package manifest, lockfile, test suite or CI configuration is tracked. The prototype directories referenced throughout (<code>prototypes/retrieval-runtime/</code> and its siblings) do not exist on <code>main</code> — the method was prototype, learn, discard the code, keep the contract.</div>
+  </div>
+</div>
+<div class="step warn" style="margin-top:12px">
+  <strong>One systemic caution carried from <a href="https://github.com/artemVeduta/okf-agent-skills/issues/34">#34 Audit the OKF spec research note for normative drift</a>.</strong>
+  That audit found 29 findings — 12 of them tabulation-induced normative drift, 3 high severity — caused by a binary
+  <code>NORMATIVE</code>/<code>editorial</code> taxonomy with no slot for <code>SHOULD</code> and no slot for "the spec
+  is silent here", and hardened by rendering bullet lists as rectangular tables that demand a value in every cell.
+  <strong>Only <code>02-okf-v02-spec.md</code> was audited.</strong> Other research notes were written by the same
+  process and may carry the same pattern — flagged for whoever picks up
+  <a href="https://github.com/artemVeduta/okf-agent-skills/issues/8">#8</a>. The anti-recurrence rule that killed five
+  of the twelve findings: <em>empty stays empty</em> — a status cell with no corresponding RFC 2119 keyword renders
+  <code>—</code>, never "implied", never "Optional", never "Core".
+</div>
+</div>
+
+<p class="subtitle" style="margin-top:24px">
+Open issues: <a href="https://github.com/artemVeduta/okf-agent-skills/issues/1">#1</a> (umbrella map) ·
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/8">#8</a> →
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/9">#9</a> →
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/10">#10</a> (spec, implement, dogfood/publish) ·
+<a href="https://github.com/artemVeduta/okf-agent-skills/issues/15">#15</a> (live cross-harness acceptance testing, deferred to v0.2.0).
+</p>
+
+</div>
+</body>
+</html>
