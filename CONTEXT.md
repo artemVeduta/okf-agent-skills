@@ -221,3 +221,76 @@ The record of which provenance sources each restructuring output carries. It is
 derived from the footnote attribution key of the retained body, and a source
 that no output cites is assigned explicitly rather than inferred.
 _Avoid_: Source inheritance, provenance merge
+
+**In-place deprecation**:
+An archive operation that retains a concept at its current path and marks it
+deprecated. It preserves bundle-relative identity and path-based link
+resolution.
+_Avoid_: Relocation, deletion
+
+**Relocation**:
+An archive operation that moves a concept to a different path. It changes the
+bundle-relative identity; references to the old path need explicit handling.
+_Avoid_: In-place deprecation, redirect
+
+**Successor notice**:
+Visible Markdown in a deprecated concept that links readers to a known
+replacement. It is navigation, not a redirect, identity continuity, or a
+machine-parsed relationship.
+_Avoid_: Supersede edge, redirect, index-only metadata
+
+**Safety gate**:
+An operation-specific hard condition that must pass before an operation can
+proceed or claim success. It is separate from OKF bundle conformance and may
+cover identity, links, provenance, review evidence, approval, recovery, or
+post-operation checks.
+_Avoid_: Conformance error, warning, permission
+
+**Calibrated profile**:
+A versioned operating profile selected from held-out benchmark evidence for a
+task kind and deployment seam. Outside its measured support ceiling it cannot
+claim calibrated behavior; absence requires a disclosed safe fallback, not an
+invented default.
+_Avoid_: Universal default, tuning preset
+
+**Support ceiling**:
+The measured boundary of corpus, syntax, tokenizer, serializer, renderer, and
+adapter conditions for which a profile may claim calibrated behavior. Work
+outside it may be inspected, but it cannot claim completeness or calibration.
+_Avoid_: Maximum repository size, hard repository limit
+
+**Growth signal**:
+A measured observation of maintenance or retrieval pressure that may report a
+condition or recommend manual review or compaction. It is not permission for
+automatic archive, deletion, compaction, or rewrite.
+_Avoid_: Compaction trigger, automatic threshold
+
+**Compaction**:
+A manual, recovery-gated, lossless operation on selected derived artifacts,
+such as indexes or link-maintenance data. It does not summarize, merge,
+deduplicate, delete, relocate, or change authored concept meaning.
+_Avoid_: Cleanup, summarization, automatic optimization
+
+**Operation manifest**:
+The durable record of one broad, destructive, or identity-changing operation,
+stored outside mutation targets and the manual-operation guard ledger. It is
+atomically published and is the source for crash recovery; it is not OKF
+content or a confirmation token.
+_Avoid_: Guard ledger, temporary plan, backup
+
+**Recovery evidence**:
+The conjunction of an independent snapshot, a verified disposable restore,
+content identity checks, applicable conformance and operation checks,
+rollback instructions, and post-operation validation. A backup that exists
+but cannot be restored and verified is not recovery evidence.
+_Avoid_: Backup, Git history, rollback assumption
+
+**Rollback residue**:
+A non-reversible external effect that remains after rollback. Its presence
+makes the operation result dirty or indeterminate, never clean.
+_Avoid_: Successful rollback, clean recovery
+
+**Review-dependency proposal**:
+A non-authoritative mapping suggested for a restructuring output. It requires
+explicit review before acceptance and never transfers a review baseline.
+_Avoid_: Automatic review inheritance, baseline transfer
