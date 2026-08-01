@@ -128,3 +128,26 @@ Local, uncommitted, bundle-scoped safety state that binds preview confirmations
 to a ledger generation and bundle epoch, prevents token replay, and coordinates
 manual operation execution. It is neither OKF content nor harness session state.
 _Avoid_: Bundle metadata, confirmation cache
+
+**Inbound link**:
+A parsed, resolvable path reference to a concept, carried by a Markdown link, a
+path-valued frontmatter field, an index entry, or a workspace link. A path
+written in prose or inside code is not an inbound link.
+_Avoid_: Backlink, reference, mention
+
+**Link resolution**:
+The verdict on whether an inbound link reaches its target, decided only by
+whether the target file exists. Concept status is not an input, so the verdict
+is independent of what a retrieval budget observed.
+_Avoid_: Link validation, link health
+
+**Source disposition**:
+The terminal fate of a concept that a merge or split consumed. It is determined
+by project mode rather than chosen per operation.
+_Avoid_: Cleanup policy, source handling
+
+**Provenance assignment**:
+The record of which provenance sources each restructuring output carries. It is
+derived from the footnote attribution key of the retained body, and a source
+that no output cites is assigned explicitly rather than inferred.
+_Avoid_: Source inheritance, provenance merge
