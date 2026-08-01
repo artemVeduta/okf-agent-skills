@@ -177,6 +177,22 @@ an evidence-backed review. Later observations are compared with this baseline;
 repository history and file timestamps do not define it.
 _Avoid_: Git baseline, last concept edit
 
+**Migration**:
+A manual conversion of explicitly selected source material into an OKF bundle.
+It is not automatic lifecycle synchronization and does not silently discard or
+invent meaning.
+_Avoid_: Automatic import, full synchronization
+
+**Migration residue**:
+Source material that cannot be safely represented as OKF semantics. It remains
+visible and inert with an operational report; it is not active concept meaning.
+_Avoid_: Lost content, active extension
+
+**Semantic fidelity**:
+Evidence that migrated content retains the intended user-authored meaning.
+Structural conformance and successful file conversion do not establish it.
+_Avoid_: Conformance, migration success
+
 **Manual-operation guard ledger**:
 Local, uncommitted, bundle-scoped safety state that binds preview confirmations
 to a ledger generation and bundle epoch, prevents token replay, and coordinates
