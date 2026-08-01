@@ -28,6 +28,37 @@ and maintains small, evidence-backed documentation changes while doing normal
 project work.
 _Avoid_: Automatic full sync
 
+**Project mode**:
+The explicit authority model of an affected bundle: code-backed or
+knowledge-only. It identifies which source is authoritative for durable
+knowledge and does not grant trust, access, write ownership, approval, or
+permission.
+_Avoid_: Repository-wide assumption, trust tier, permission level
+
+**Task kind**:
+The primary user intent that selects lifecycle context and behavior: feature
+work, fix, debugging, exploration, research, review, or pre-PR synchronization.
+It is not inferred from file events; a phase transition can change it.
+_Avoid_: File-event category, lifecycle state, command type
+
+**Lifecycle moment**:
+A point in a work episode at which automatic lifecycle behavior consults
+context, evaluates evidence, validates a mutation, or reports an outcome. It
+is not a concept status or a synchronization run.
+_Avoid_: Session-start synchronization, concept lifecycle state
+
+**Evidence-backed update**:
+A bounded change to durable context supported by authoritative or explicitly
+adopted evidence, clear ownership, and post-write validation. It does not
+automatically alter trust, status, freshness, or review baselines.
+_Avoid_: Source change, automatic repair, documentation mirror
+
+**Scoped synchronization**:
+Reconciliation of authoritative evidence and durable context within an
+explicit scope. Incremental, diff-scoped, and full-project synchronization
+have different safeguards; synchronization is not mirroring.
+_Avoid_: Automatic full sync, bidirectional replication
+
 **Trust tier**:
 An advisory classification of the verification evidence recorded for a
 concept. A trust tier does not grant authority to mutate the concept; operation
@@ -65,6 +96,29 @@ requires an exact `okf_version: "0.2"` bundle-root declaration, and a rewrite
 must reproduce the frontmatter's parsed semantics through the suite's own
 writer. Reported with origin `suite`, never as an OKF conformance error.
 _Avoid_: OKF conformance, product extension
+
+**Activation marker**:
+The explicit project-local `.okf-active` marker at a Git worktree root that
+selects whether harness adapters provide automatic OKF behavior. It does not
+grant trust, authority, access, write ownership, approval, or permission.
+_Avoid_: Authorization marker, permission flag, automatic setup
+
+**Harness adapter**:
+The harness-specific integration layer that invokes and presents the shared
+skills and runtime through native plugins, hooks, or session seams. It does
+not redefine shared authority, trust, or mutation rules.
+_Avoid_: Separate runtime, harness-specific semantics
+
+**Semantic parity**:
+Agreement across harnesses on shared runtime decisions and safety outcomes
+while allowing different native triggers, configuration, and presentation.
+_Avoid_: Identical harness behavior, feature parity
+
+**Orientation context**:
+A bounded, read-only summary emitted at a supported session-entry seam after
+activation checks. It provides navigation and status only; it does not infer
+task intent, perform task-specific retrieval, or mutate OKF content.
+_Avoid_: Session-start synchronization, automatic context sync
 
 **Semantic preservation**:
 Retention of YAML key names, scalar types and values, sequence order, and
