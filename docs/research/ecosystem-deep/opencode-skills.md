@@ -2,6 +2,23 @@
 
 > Primary sources: [opencode.ai/docs](https://opencode.ai/docs), [github.com/anomalyco/opencode](https://github.com/anomalyco/opencode)
 
+> **PARTIAL RETRACTION 2026-08-01.** This note claimed that OpenCode has no per-skill command at
+> all — that skills are only a built-in `skill` tool listing `<available_skills>` XML, so every
+> load is a model tool call. **That is false.** `packages/opencode/src/command/index.ts:134-152`
+> loops over `skill.all()` and registers **every** discovered skill as a slash command with
+> `source: "skill"`, so any skill can be run as `/name` by the user, with no authoring step.
+> **Why the note was wrong:** the capability landed 2026-01-31 — commit
+> `81ac41e0891cf9318af641805e7b1c5af1194be4`, *"feat: make skills invokable as slash commands in
+> the TUI (#11390)"*, first released in `v1.1.48` — six months before this note, and it is
+> **undocumented**: `commands.mdx` never mentions skills and `skills.mdx` never mentions commands,
+> so a docs-led investigation could not find it.
+> **What in this note stands:** the discovery paths (§1), the `skill` tool description and the
+> `<available_skills>` XML shape (§3), and the fact that no frontmatter key named
+> `disable-model-invocation` exists.
+> Retractions are marked inline in §2, §3 and §12.
+> Superseding note: [`opencode-commands-and-skill-invocation.md`](./opencode-commands-and-skill-invocation.md)
+> (source snapshot `32f278b48f1a495611165d8a9f1ace0b512933e2`, tag `v1.4.11`, verified 2026-08-01).
+
 ---
 
 ## 1. Skill Discovery
@@ -63,6 +80,15 @@ Each `SKILL.md` must start with **YAML frontmatter** (delimited by `---`). Recog
 
 Consequently, `disable-model-invocation: true` is not an OpenCode policy. It is ignored, and a valid described skill remains in `<available_skills>` for the model to choose and load. `permission.skill: "ask"` adds an approval prompt but does not hide the skill; `deny` hides and rejects it for everyone. There is no supported explicit-only/manual-only per-skill state.
 
+> **RETRACTED 2026-08-01 — last two sentences only.** `deny` hides the skill from the *model*
+> (`Skill.available()` filters it out of `<available_skills>` and the `skill` tool refuses it), but
+> it does **not** reject it for the user: `Command.init` builds commands from `skill.all()`, and the
+> slash path is prompt injection with no `permission.assert`, so `/name` still runs. An explicit-only
+> per-skill state therefore does exist — via `deny`, or by omitting `description`, which drops the
+> skill from `<available_skills>` while leaving its command registered.
+> The first two sentences stand: the frontmatter key is unknown to OpenCode and silently ignored.
+> See [`opencode-commands-and-skill-invocation.md`](./opencode-commands-and-skill-invocation.md) §4.
+
 Source: https://opencode.ai/docs/skills/#write-frontmatter, https://opencode.ai/docs/skills/#validate-names, https://opencode.ai/docs/skills/#follow-length-rules
 
 ### Name Validation Regex
@@ -112,6 +138,15 @@ skill({ name: "git-release" })
 When loaded, the entire `SKILL.md` content (frontmatter stripped) is injected into the conversation context.
 
 Source: https://opencode.ai/docs/skills/#recognize-tool-description
+
+> **RETRACTED 2026-08-01 — completeness, not accuracy.** Everything above is correct and stands:
+> the `skill` tool, the `<available_skills>` XML shape, and the tool-call load path. What is wrong
+> is the implied claim that this is the *only* load path. A second, undocumented path exists: every
+> skill is also a slash command (`command/index.ts:134-152`). On that path the `skill` tool is never
+> called, its `permission.assert` gate is bypassed, the skill body is injected as the user prompt by
+> `session/prompt.ts:1355-1410`, and the `<skill_files>` directory listing is omitted — only a
+> base-directory footer is appended. A same-named config command or MCP prompt takes precedence over
+> the skill. See [`opencode-commands-and-skill-invocation.md`](./opencode-commands-and-skill-invocation.md) §2–§3.
 
 ---
 
@@ -502,8 +537,8 @@ Source: https://opencode.ai/docs/config/#schema
 
 - **No `opencode skill` CLI command** — no dedicated subcommand for skill management (install, list, create). Skills are filesystem-discovered only. `opencode agent create` exists for agents but no equivalent for skills.
 - **No "hooks" in `opencode.json`** — pre/post-execution hooks for tools/sessions are exclusively a plugin feature, not a declarative config option.
-- **No skill lifecycle hooks** — plugins have no `skill.load` or `skill.execute` event. Skills are loaded on-demand via the `skill` tool, not trigger-based.
+- **No skill lifecycle hooks** — plugins have no `skill.load` or `skill.execute` event. Skills are loaded on-demand via the `skill` tool, not trigger-based. *(Retracted in part 2026-08-01: also loadable as a `/name` slash command, which is prompt injection rather than a tool call.)*
 - **No skill dependency management** — skills cannot declare dependencies on other skills or MCP servers.
-- **No deterministic host-side auto-trigger rule** — OpenCode does not execute a skill merely because a prompt matches. The model sees each described skill and may decide to call the `skill` tool, which is still model invocation.
+- **No deterministic host-side auto-trigger rule** — OpenCode does not execute a skill merely because a prompt matches. The model sees each described skill and may decide to call the `skill` tool, which is still model invocation. *(Retracted in part 2026-08-01: a deterministic host-side path does exist for the **user** — typing `/name` injects the skill body with no model decision involved. There is still no automatic trigger.)*
 - **No skill nesting** — skills cannot include or reference other skills. Each SKILL.md is standalone.
 - **No `permission.skill` for plugins** — plugins cannot register as skill providers or extend the skill mechanism.

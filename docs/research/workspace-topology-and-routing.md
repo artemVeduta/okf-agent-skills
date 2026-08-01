@@ -1,5 +1,30 @@
 # Workspace Topology, Autodiscovery, and Cross-Repository Knowledge Routing
 
+> **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of
+> what was believed and why. An adopted ticket resolution always supersedes a research note; this
+> note is evidence, never policy. These claims no longer hold:
+>
+> - **The two-tier routing model with CUE-style subsumption, merge/shadow precedence, and the
+>   `imported_from` / `overrides` provenance fields (§4.2–§4.5)** — superseded by
+>   [Define concept identity, cross-bundle routing, precedence, and workspace trust](https://github.com/artemVeduta/okf-agent-skills/issues/22):
+>   concepts never merge across bundles, every concept has exactly one owning bundle, and matching
+>   paths or content produce diagnostics rather than synthetic documents.
+> - **The operation × trust-tier gate matrix in §5.4** — superseded by
+>   [Design operational trust tier matrix for skill operations](https://github.com/artemVeduta/okf-agent-skills/issues/11).
+>   The adopted matrix contradicts it: trust is evidence, never authority, so every status
+>   transition is `P/P/P` independent of tier rather than blocked at unverified.
+> - **Token and scan-cost estimates, the session-start token budget, the cache size estimate, and
+>   the three-tier lazy-loading benchmark (§6.4, §7, P2 prototypes)** — superseded by
+>   [Replace budget-aware retrieval with index navigation](https://github.com/artemVeduta/okf-agent-skills/issues/36),
+>   which removes the budget model, cost model and tokenizer from `v0.1.0`. Note that the same
+>   ticket adopts index navigation itself, so §7's navigation sequence survives; only its
+>   accounting falls.
+>
+> **Pending, not superseded.** The write-routing questions this note leaves open are now owned by
+> [Decide cross-repository write authority](https://github.com/artemVeduta/okf-agent-skills/issues/37).
+> #22 closed them with "federated peers and non-repository workspace-root bundles are read-only";
+> #37 reopens that clause, so treat cross-repository write behavior as undecided.
+
 **Date:** 2026-07-26
 **Source:** wayfinder:research — [Research workspace topology, autodiscovery, and cross-repository knowledge routing](https://github.com/artemVeduta/okf-agent-skills/issues/20)
 **Method:** Primary-source capability research plus analytical design synthesis

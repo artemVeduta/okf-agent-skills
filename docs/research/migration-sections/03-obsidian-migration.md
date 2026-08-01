@@ -1,5 +1,20 @@
 # 03 — Obsidian Vault Migration to OKF
 
+> **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of
+> what was believed and why. An adopted ticket resolution always supersedes a research note; this
+> note is evidence, never policy. These claims no longer hold:
+>
+> - **Automatic conversion of Obsidian-specific syntax — wikilinks rewritten to bundle-relative
+>   Markdown links, ambiguous-wikilink resolution, callouts, block embeds, Dataview** — superseded
+>   by
+>   [Define safe migration of existing knowledge into OKF](https://github.com/artemVeduta/okf-agent-skills/issues/19):
+>   direct parsing is limited to UTF-8 Markdown, optional YAML frontmatter, and standard Markdown
+>   links; no `v0.1.0` parser is added for Obsidian syntax, wikilinks, plugins or Dataview, and
+>   they remain source material or inert residue.
+> - **Redirecting MOC notes into an OKF `index.md` (§ MOC mapping)** — superseded by the same
+>   ticket's one-selected-source-document-to-one-output-concept rule: migration does not
+>   automatically extract, split, or re-target concepts.
+>
 > Research into the challenges, existing tools, and recommended strategies for
 > migrating an Obsidian vault to OKF, a Markdown format that does not support
 > Obsidian-specific syntax extensions.

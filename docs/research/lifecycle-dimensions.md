@@ -1,5 +1,21 @@
 # Lifecycle Dimensions of Lightweight Durable Context
 
+> **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of
+> what was believed and why. An adopted ticket resolution always supersedes a research note; this
+> note is evidence, never policy. These claims no longer hold:
+>
+> - **"Every concept needs an optional `derived_from` or `source_files` field" (§Priority gap 2)** —
+>   superseded by
+>   [Design concept-source traceability and freshness detection](https://github.com/artemVeduta/okf-agent-skills/issues/12):
+>   the suite adds no `source_files`, `derived_from`, or namespaced frontmatter; review
+>   dependencies live in a separate operational record, not in concept frontmatter.
+> - **Context-budget management and a `context build` operation returning the N most relevant
+>   concepts within a token budget (§11 gaps and code-backed/knowledge-only retrieval, priority
+>   gap 3)** — superseded by
+>   [Replace budget-aware retrieval with index navigation](https://github.com/artemVeduta/okf-agent-skills/issues/36):
+>   the budget model, cost model and tokenizer are out of `v0.1.0`; the agent navigates
+>   bundle-root `index.md` → subdirectory index → concept body with its own tools.
+>
 > Research into state-of-the-art patterns for lifecycle management of agent-facing knowledge.
 > Prepared for the OKF skill suite design.
 

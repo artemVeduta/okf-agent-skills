@@ -1,5 +1,27 @@
 # 05 — Stable Identity, Duplicate Detection, Redirects, and Link Rewriting
 
+> **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of
+> what was believed and why. An adopted ticket resolution always supersedes a research note; this
+> note is evidence, never policy. These claims no longer hold:
+>
+> - **The two-tier identity model — an immutable `concept_id` (UUID v7) in frontmatter and in the
+>   filename, with a mutable path as location and identity-based linking through a bundle-level
+>   ID→path index (§1.3, §identity-based linking, D1)** — superseded by
+>   [Define concept identity, cross-bundle routing, precedence, and workspace trust](https://github.com/artemVeduta/okf-agent-skills/issues/22):
+>   the Concept ID is the bundle-relative path without `.md`, moving or renaming changes identity,
+>   and no suite UUID or frontmatter extension claims continuity.
+> - **Redirect implementations — stub files at old paths, `aliases` frontmatter, redirect-chain and
+>   cycle handling** — superseded by
+>   [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24):
+>   `redirects` resolves to `{mode: 'off'}` for `v0.1.0`; a retired path vacates outright and
+>   safety rests on total inbound-link rewriting.
+> - **Automatic duplicate resolution — `-2` suffix renames, keeping the first path and redirecting
+>   the second, deleting exact duplicates** — superseded by
+>   [Define safe migration of existing knowledge into OKF](https://github.com/artemVeduta/okf-agent-skills/issues/19):
+>   exact duplicates are reported as candidates only; near-duplicates, conflicting claims and
+>   identifier collisions block until the user chooses, and an existing target-path collision
+>   blocks the plan.
+>
 > Primary-source investigation, 2026-07-26.
 >
 > **Evidence** = directly supported by a cited source (spec, standard, code, doc).

@@ -1,5 +1,22 @@
 # Wiki Platform Export and Migration to Markdown
 
+> **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of
+> what was believed and why. An adopted ticket resolution always supersedes a research note; this
+> note is evidence, never policy. These claims no longer hold:
+>
+> - **The two-pass wikitext/HTML conversion pipeline and its candidate defaults — template
+>   expansion, category-to-`tags` conversion, namespace-to-directory mapping, info-box rendering,
+>   image-attribute stripping** — superseded by
+>   [Define safe migration of existing knowledge into OKF](https://github.com/artemVeduta/okf-agent-skills/issues/19):
+>   direct parsing is limited to UTF-8 Markdown, optional YAML frontmatter, and standard Markdown
+>   links; no `v0.1.0` parser is added for HTML or MediaWiki, and those formats remain source
+>   material or inert residue. The export-format and quality-gap evidence is unaffected.
+> - **Preserving wiki redirects as a frontmatter `redirect: target` field** — superseded by
+>   [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24):
+>   `redirects` resolves to `off` for `v0.1.0`, and
+>   [Choose the OKF conformance baseline, compatibility, and extension policy](https://github.com/artemVeduta/okf-agent-skills/issues/21)
+>   forbids product-specific frontmatter.
+>
 > Primary-source research on MediaWiki, Confluence, DokuWiki export formats, conversion
 > tools, known quality gaps, and wiki-specific constructs without Markdown equivalents.
 >

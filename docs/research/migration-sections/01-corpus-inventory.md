@@ -1,5 +1,18 @@
 # 01 — Corpus Inventory and Classification
 
+> **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of
+> what was believed and why. An adopted ticket resolution always supersedes a research note; this
+> note is evidence, never policy. This claim no longer holds:
+>
+> - **Pandoc as the per-file conversion engine, driven by an inventory pre-pass that classifies
+>   MediaWiki, Confluence, DokuWiki and Obsidian corpora for conversion (§1.1 onward)** —
+>   superseded by
+>   [Define safe migration of existing knowledge into OKF](https://github.com/artemVeduta/okf-agent-skills/issues/19):
+>   direct parsing is limited to UTF-8 Markdown, optional YAML frontmatter, and standard Markdown
+>   links; no `v0.1.0` parser is added for HTML, PDF, Word, MediaWiki, Obsidian syntax, wikilinks,
+>   plugins or Dataview, and those formats remain source material or inert residue. The inventory
+>   and classification findings themselves are unaffected.
+>
 > Research date: 2026-07-26
 > Sources: Primary documentation for Pandoc, pathlib, os.walk, git-ls-files,
 > Obsidian help, MediaWiki, Confluence; local OKF research files.

@@ -1,5 +1,31 @@
 # Lightweight Durable Context Lifecycle for OKF Skills
 
+> **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of
+> what was believed and why. An adopted ticket resolution always supersedes a research note; this
+> note is evidence, never policy. These claims no longer hold:
+>
+> - **The candidate operation × trust-tier matrix in §4.6** — superseded by
+>   [Design operational trust tier matrix for skill operations](https://github.com/artemVeduta/okf-agent-skills/issues/11).
+>   The adopted matrix contradicts it: trust is evidence, never authority, so every status
+>   transition (including `stable -> deprecated`) is `P/P/P` independent of tier, rather than
+>   blocked at unverified and allowed at human-reviewed.
+> - **An optional `derived_from` frontmatter field for agent-synthesized concepts (§4.4)** —
+>   superseded by
+>   [Design concept-source traceability and freshness detection](https://github.com/artemVeduta/okf-agent-skills/issues/12):
+>   the suite adds no `source_files`, `derived_from`, or namespaced frontmatter; standard `sources`
+>   is the only authored provenance representation.
+> - **`archive/` relocation, `deprecation_reason`, `superseded_by`, `retain_until`, and redirect or
+>   alias concepts as candidate conventions (§4.8, §4.9)** — superseded by
+>   [Design archive lifecycle and discoverability](https://github.com/artemVeduta/okf-agent-skills/issues/14)
+>   (only standard `status: deprecated` is authored; archive means in-place deprecation) and
+>   [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24)
+>   (`redirects` resolves to `off` for `v0.1.0`).
+> - **Retrieval as ranked concepts returned within a configurable context-window budget (§4.11 and
+>   the `context build` experiment)** — superseded by
+>   [Replace budget-aware retrieval with index navigation](https://github.com/artemVeduta/okf-agent-skills/issues/36):
+>   the budget model, cost model and tokenizer are out of `v0.1.0`; the agent navigates
+>   bundle-root `index.md` → subdirectory index → concept body with its own tools.
+>
 > Research date: July 2026  
 > Sources: Primary platform documentation, Matt Pocock's directly linked YouTube video and timed captions, OKF v0.2 specification, and the supporting research notes linked below
 

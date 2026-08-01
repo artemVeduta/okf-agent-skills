@@ -147,16 +147,39 @@ identity and ownership. Federation does not merge concepts or grant write
 authority across repositories.
 _Avoid_: Workspace merge, shared write scope
 
+**Workspace manifest**:
+The user-authored `.okf-workspace.json` federation declaration whose containing
+directory is the workspace root, and of which exactly one is active. It names
+which bundles may be read and under which aliases; it does not grant trust,
+filesystem access, discovery authority, or write ownership, and it records no
+operation.
+_Avoid_: Operation manifest, trust store, permission file
+
+**Bundle admission**:
+The bundle-level decision on whether a candidate bundle may be read, taken in
+the fixed order of reach, presence, then trust and access. It classifies
+candidates and does not locate, rank, or read concepts.
+_Avoid_: Discovery, workspace discovery, access grant
+
+**Concept discovery**:
+The location of candidate concepts inside a bundle that bundle admission
+already admitted. It cannot widen bundle admission, and it does not grant
+trust, access, write ownership, approval, or permission.
+_Avoid_: Discovery, admission, bundle admission
+
 **Notional cold-work charge**:
-A versioned conservative measure of the discovery work a resolution would
-perform without cache hits. It determines the work frontier so cache state
-cannot change which scopes are examined.
+A versioned conservative measure of the bundle-admission work a resolution
+would perform without cache hits. It determines the work frontier so cache
+state cannot change which scopes are examined, and it does not govern concept
+discovery, which never shares its budget. Pending supersession by the adopted
+index-navigation retrieval model.
 _Avoid_: Actual work, cache-adjusted budget
 
 **Observed execution work**:
-The resources actually consumed while resolving, including cache hits and
-misses. It supports telemetry and hard resource protection but never widens the
-frontier set by the notional cold-work charge.
+The resources actually consumed while resolving a bundle admission, including
+cache hits and misses. It supports telemetry and hard resource protection but
+never widens the frontier set by the notional cold-work charge. Pending
+supersession by the adopted index-navigation retrieval model.
 _Avoid_: Discovery allowance, notional work
 
 **Provenance source**:
@@ -272,11 +295,29 @@ deduplicate, delete, relocate, or change authored concept meaning.
 _Avoid_: Cleanup, summarization, automatic optimization
 
 **Operation manifest**:
-The durable record of one broad, destructive, or identity-changing operation,
-stored outside mutation targets and the manual-operation guard ledger. It is
-atomically published and is the source for crash recovery; it is not OKF
-content or a confirmation token.
-_Avoid_: Guard ledger, temporary plan, backup
+The sealed durable record of the approved plan and identity of one broad,
+destructive, or identity-changing operation, stored outside mutation targets
+and the manual-operation guard ledger and covered by the approval fingerprint.
+It is atomically published and immutable thereafter; it carries no checkpoint,
+resume state, or later observation, and it is not OKF content, a workspace
+manifest, or a confirmation token.
+_Avoid_: Observation journal, workspace manifest, guard ledger, temporary plan,
+backup
+
+**Observation journal**:
+The append-only record of one operation's intents, outcomes, and later
+observations, stored beside its operation manifest. Recovery, resume, and
+derived phase and terminal classification read the journal; it never amends the
+sealed plan and is not OKF content.
+_Avoid_: Operation manifest, checkpoint file, activity log
+
+**Dry-run preview**:
+The complete enumerated statement of an operation's intended effects presented
+for human confirmation, whose completeness is explicit data rather than an
+inferred property. It lasts only until its confirmation expires; it does not
+grant approval, and it is neither the sealed operation manifest nor the
+observation journal.
+_Avoid_: Operation manifest, plan record, confirmation token
 
 **Recovery evidence**:
 The conjunction of an independent snapshot, a verified disposable restore,

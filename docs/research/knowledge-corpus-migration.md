@@ -1,5 +1,28 @@
 # Safe Migration of Existing Knowledge Corpora into OKF
 
+> **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of
+> what was believed and why. An adopted ticket resolution always supersedes a research note; this
+> note is evidence, never policy. These claims no longer hold:
+>
+> - **Concept identity as an immutable UUID v7 in frontmatter plus content hash, and "identity is
+>   the single most impactful decision" (§1, §6, D1)** — superseded by
+>   [Define concept identity, cross-bundle routing, precedence, and workspace trust](https://github.com/artemVeduta/okf-agent-skills/issues/22):
+>   the Concept ID is the bundle-relative path without `.md`, moving or renaming changes identity,
+>   and no suite UUID or frontmatter extension claims continuity.
+> - **Redirect stubs at vacated paths and `aliases` frontmatter (§6, D2)** — superseded by
+>   [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24):
+>   `redirects` resolves to `off` for `v0.1.0`; a retired path vacates outright.
+> - **`superseded_by` frontmatter on deprecated concepts (§6)** — superseded by
+>   [Design archive lifecycle and discoverability](https://github.com/artemVeduta/okf-agent-skills/issues/14):
+>   only standard `status: deprecated` is authored; `superseded_by`, `deprecation_reason` and
+>   `retain_until` are not added in `v0.1.0`.
+> - **Auto-assigned concept `type` and Pandoc-driven conversion of non-Markdown sources (§1, D-table)**
+>   — superseded by
+>   [Define safe migration of existing knowledge into OKF](https://github.com/artemVeduta/okf-agent-skills/issues/19):
+>   direct parsing is limited to UTF-8 Markdown with standard links; a source-class-to-OKF-type
+>   mapping must be human-approved; output identity is a deterministic normalized form of the
+>   source path.
+>
 > Research date: July 2026. Wayfinder research ticket: [Research safe migration of existing knowledge corpora into OKF](https://github.com/artemVeduta/okf-agent-skills/issues/23)
 >
 > This report synthesizes findings from 8 parallel sub-agent investigations. Each section is backed by a detailed supporting report under `docs/research/migration-sections/`. Citations below reference those reports; consult each for full primary-source chains.

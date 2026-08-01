@@ -1,5 +1,20 @@
 # 07 — Durable Context Detection: Distinguishing Non-Recoverable Knowledge from Code-Repeat Documentation
 
+> **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of
+> what was believed and why. An adopted ticket resolution always supersedes a research note; this
+> note is evidence, never policy. This claim no longer holds:
+>
+> - **Auto-populating a concept's `type` from content classification during migration, and
+>   paragraph-level extraction that splits a source document across concepts (§ auto-type
+>   assignment, § extraction phases)** — superseded by
+>   [Define safe migration of existing knowledge into OKF](https://github.com/artemVeduta/okf-agent-skills/issues/19):
+>   one selected source document maps to one output concept by default, migration does not
+>   automatically extract or split, a source-class-to-OKF-type mapping must be human-approved, and
+>   an ambiguous or missing type is not guessed.
+>
+> The detection signals and thresholds themselves are unaffected; they remain unbenchmarked
+> candidate defaults.
+>
 > Research date: July 2026
 > Primary sources: ADR format (Nygard 2011, AWS PG, adr.github.io), design rationale literature (Zdun et al. 2014, Lee 1997, Wikipedia design rationale), software documentation taxonomy (Wikipedia), program comprehension (Storey 2005, Letovsky 1987), Matt Pocock transcript (see §1 of lightweight-durable-context.md), AI coding platform documentation (see durable-context-platforms.md), CONTEXT.md definitions
 

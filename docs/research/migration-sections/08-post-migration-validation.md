@@ -1,5 +1,19 @@
 # 08 — Post-Migration Conformance Checking and Validation
 
+> **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of
+> what was believed and why. An adopted ticket resolution always supersedes a research note; this
+> note is evidence, never policy. This claim no longer holds:
+>
+> - **L4 semantic fidelity established by random sampling of N concepts, optionally supported by
+>   embedding similarity and LLM-assisted review (§5)** — superseded by
+>   [Define safe migration of existing knowledge into OKF](https://github.com/artemVeduta/okf-agent-skills/issues/19):
+>   structural checks, parse-tree round trips, file counts, link handling and conformance checks do
+>   not establish semantic fidelity, and a semantic-fidelity claim requires explicit human review
+>   of **all** conflicts and residue plus representative high-risk conversions. Without that
+>   evidence, semantic fidelity is reported as not assessed rather than sampled.
+>
+> The L1–L3 structural, conformance and link-validation findings are unaffected.
+
 **Date:** 2026-07-26
 **Source:** wayfinder:research sub-agent
 **Method:** Primary-source capability research — tools, spec text, and proven validation patterns

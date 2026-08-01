@@ -155,10 +155,15 @@ path/to/bundle/
 
 ### Reserved filenames (§3.1) — NORMATIVE
 
+§3.1 verbatim: "The following filenames have defined meaning **at any level of
+the hierarchy** and MUST NOT be used for concept documents". The scoping clause
+is part of the rule — the reservation holds in every directory of the bundle,
+not only at the bundle root.
+
 | Filename | Purpose | Constraint |
 |----------|---------|-----------|
-| `index.md` | Directory listing (§8) | **MUST NOT** be used for concept documents |
-| `log.md` | Update history (§9) | **MUST NOT** be used for concept documents |
+| `index.md` | Directory listing (§8) | **MUST NOT** be used for concept documents, at any level of the hierarchy |
+| `log.md` | Update history (§9) | **MUST NOT** be used for concept documents, at any level of the hierarchy |
 
 All other `.md` files are concept documents.
 
@@ -195,7 +200,7 @@ means SHOULD — normative but not mandatory. It is not editorial.
 |-------|---------------------------|-------------------|
 | `title` | "A human-readable display name." | Consumers MAY derive a title from the filename |
 | `description` | "A single sentence summarizing the concept. Used by `index.md` generators, search snippets, and previews." | — |
-| `resource` | "Absent for concepts that describe abstract ideas rather than physical resources." | — |
+| `resource` | "A URI that uniquely identifies the underlying asset the concept describes. Absent for concepts that describe abstract ideas rather than physical resources." | — |
 | `tags` | "A YAML list of short strings for cross-cutting categorization." | — |
 
 The `title` row is the only one where the spec states consumer behavior; the
@@ -234,6 +239,10 @@ The `OKFDocument` class (from `document.py`):
 
 ### Link forms
 
+**NORMATIVE (MAY, §6.1)**: "Concepts **MAY** link to other concepts using
+standard markdown links." Linking is a permission, not an obligation — a
+concept that links to nothing is fully conformant. Two forms are supported:
+
 | Form | Syntax | Interpretation | Recommendation |
 |------|--------|---------------|----------------|
 | Absolute (bundle-relative) | `[label](/path/to/concept.md)` | Relative to bundle root | **Recommended** — stable when documents are moved within subdirectories |
@@ -243,7 +252,7 @@ The `OKFDocument` class (from `document.py`):
 
 **NORMATIVE**: Consumers MUST tolerate broken links. A link whose target does not exist in the bundle is not malformed; it may represent not-yet-written knowledge.
 
-**Editorial**: A link from concept A to concept B asserts a *relationship*. The specific kind (parent/child, references, joins-with, depends-on) is conveyed by the surrounding prose, not by the link itself. Consumers that build a graph view typically treat all links as directed edges of an untyped relationship.
+**Definitional (§6.1, no RFC 2119 keyword)**: A link from concept A to concept B asserts a *relationship*. The specific kind (parent/child, references, joins-with, depends-on) is conveyed by the surrounding prose, not by the link itself. Consumers that build a graph view typically treat all links as directed edges of an untyped relationship.
 
 ### Path-valued fields (§6.2)
 
@@ -264,11 +273,25 @@ Body structure — one or more sections grouping concepts under headings:
 
 ```markdown
 # Section / Group Heading
+
 * [Title 1](relative-url-1) - short description of item 1
 * [Title 2](relative-url-2) - short description of item 2
+
+# Another Section
+
+* [Subdirectory](subdir/) - short description of the subdirectory
 ```
 
-**Editorial**: Entries SHOULD include the description from the linked concept's frontmatter. Producers MAY generate `index.md` automatically; consumers MAY synthesize one on the fly when none is present.
+The spec's own example includes an entry linking to a **bare directory**
+(`subdir/`), not to that directory's `index.md`. The `subdir/index.md` form
+below is the reference implementation's choice, not the spec's example.
+
+**NORMATIVE (SHOULD, §8)**: "Entries **SHOULD** include the description from
+the linked concept's frontmatter." This is a producer `SHOULD` — normative but
+not mandatory, and not editorial (see convention 3).
+
+**NORMATIVE (MAY, §8)**: Producers MAY generate `index.md` automatically;
+consumers MAY synthesize one on the fly when none is present.
 
 ### Reference implementation behavior (index.py)
 
@@ -279,6 +302,15 @@ Body structure — one or more sections grouping concepts under headings:
 - For directories with multiple children, uses an LLM-synthesized description (callable hook, default `synthesize_description`).
 
 ## Log Files (§9)
+
+### Placement
+
+**NORMATIVE (MAY, §9)**: "A `log.md` file **MAY** appear at any level of the
+hierarchy to record the history of changes to that scope." A log is therefore
+not a bundle-root-only file: each directory may carry its own, scoped to that
+directory. The §3 directory sketch above reproduces the spec's own sketch,
+which shows `log.md` only at the root; that sketch is illustrative and does not
+narrow this permission.
 
 ### Format
 
@@ -295,11 +327,20 @@ A flat list of date-grouped entries, newest first:
 * **Initialization**: Created ...
 ```
 
-**NORMATIVE**: Date headings MUST use ISO 8601 `YYYY-MM-DD` form.
+**NORMATIVE**: Date headings MUST use ISO 8601 `YYYY-MM-DD` form. §9 names no
+actor for this MUST; it is a constraint on the file, and §11 test 3 reaches it
+as a property of the bundle, not as a duty laid on consumers.
 
-**Editorial**: Log entries are prose. The leading bold word (`**Update**`, `**Creation**`) is a convention, not a requirement.
+**Definitional (§9, no RFC 2119 keyword)**: Log entries are prose. The leading bold word (`**Update**`, `**Creation**`) is a convention, not a requirement.
 
 ## Provenance, Trust, and Lifecycle (§5)
+
+§5 preamble, verbatim: these families make "where did this come from," "how much
+should I trust it," and "is it still current" answerable from frontmatter. "All
+are optional. **Their absence carries meaning**: an unverified concept is
+distinguishable from a verified one, but is never rejected (§11)." Absence is a
+readable signal, not a defect — which is why the non-rejection rules in §5.3 and
+§11 follow from it rather than merely coexisting with it.
 
 ### Sources (§5.1)
 
@@ -446,7 +487,7 @@ Provide in one of two ways:
 
 ### Parameter-only surface (§10.3)
 
-The agent MAY only supply *values* for the declared `parameters`; it MUST NOT author or edit the computation. The attester independently re-derives the same binding to compare against what actually ran. "Because the comparison is on the expanded, compiled artifact ... a rewritten query, a swapped computation file, or a mutated dependency fails the check."
+The agent MAY only supply *values* for the declared `parameters`; it MUST NOT author or edit the computation. §10.3 also allocates the binding role: "Binding `computation` with the parameter values into the executable artifact is **the consumer's job**." The attester independently re-derives the same binding to compare against what actually ran. "Because the comparison is on the expanded, compiled artifact ... a rewritten query, a swapped computation file, or a mutated dependency fails the check."
 
 ### How a consumer uses it (§10.5) — the spec marks this subsection INFORMATIVE
 
@@ -508,8 +549,10 @@ three tests and the lists below without commenting on their scope.
 
 **Conditional producer obligations**:
 
-- Reserved filenames MUST NOT be used as concept documents (§3.1).
-- If a `log.md` is present, its date headings MUST use `YYYY-MM-DD` (§9).
+- Reserved filenames MUST NOT be used as concept documents, at any level of the
+  hierarchy (§3.1).
+- If a `log.md` is present, its date headings MUST use `YYYY-MM-DD` (§9). §9
+  names no actor; the obligation falls on whoever writes the file.
 - If an actor identifies a human author or confirmer, the producer MUST use
   the `human:` prefix (§7).
 - In the Attested Computation workflow, an agent MAY supply only declared
@@ -747,8 +790,11 @@ From the reference implementation:
 ### Metadata model: what fields must a parser/skill support
 
 These headings scope **parser support**, not document requirements. §5 is
-explicit: "These frontmatter families … **All are optional.**" A concept
-carrying only `type` is fully conformant.
+explicit: "These frontmatter families … **All are optional. Their absence
+carries meaning**: an unverified concept is distinguishable from a verified one,
+but is never rejected (§11)." A concept carrying only `type` is fully
+conformant, and a parser must treat an absent family as a signal to read, not an
+error to raise.
 
 **Required for basic conformance:**
 - `type` (string, non-empty) — the only always-required field
@@ -786,16 +832,35 @@ carrying only `type` is fully conformant.
 
 ### What validation checks apply, by normative force
 
-**A consumer MUST enforce** — these are the §11 bundle-conformance tests:
+**Bundle-conformance tests (§11)** — properties of a *bundle*, not duties laid
+on any actor. §11's wording is "A bundle is **conformant** with OKF v0.2 if:
+…". It names no actor, and the same section tells consumers the opposite of
+"enforce": they "MUST NOT reject a bundle because of" the list below. A
+validator may of course report these three, but the spec does not oblige a
+consumer to fail on them.
 
 | Check | Rule | Who |
 |-------|------|-----|
-| Type presence | Every concept MUST have a non-empty `type` field | Consumer |
-| Reserved filenames | `index.md` and `log.md` MUST NOT be used for concepts (§3.1) | Consumer |
-| Log date format | Log date headings MUST use `YYYY-MM-DD` (§9) | Consumer |
-| Verified normalization | Bare `verified` mapping MUST be treated as one-element list (§5.2) | Consumer |
+| Frontmatter parseable | Every non-reserved `.md` file contains a parseable YAML frontmatter block (§11) | Bundle property — no actor named |
+| Type presence | Every frontmatter block contains a non-empty `type` field (§11) | Bundle property — no actor named |
+| Reserved-file structure | `index.md`/`log.md`, when present, follow §8 and §9 (§11) | Bundle property — no actor named |
 
-**A consumer MUST NOT reject for** — forbearance, the mirror of the above:
+The §9 date-heading MUST and the §3.1 reserved-filename MUST NOT are **not**
+consumer enforcement duties, and neither appears as a row of its own here. §9
+names no actor; it constrains the file, and test 3 reaches it only as the
+"structure in §9" a present `log.md` must have — the producer reading is filed
+under "Conditional producer obligations" in the Conformance (§11) section
+above. §3.1 constrains whoever writes the files and is filed under producer
+obligations below. Filing either as
+a consumer check would contradict the rule stated under that table.
+
+**A consumer MUST** — the consumer obligations §11 states in its own voice:
+
+| Check | Rule | Who |
+|-------|------|-----|
+| Verified normalization | Bare `verified` mapping MUST be treated as one-element list (§5.2, §11) | Consumer |
+
+**A consumer MUST NOT reject for** — forbearance, the larger half of §11:
 
 | Check | Rule | Who |
 |-------|------|-----|
@@ -810,7 +875,7 @@ carrying only `type` is fully conformant.
 | Check | Rule | Who |
 |-------|------|-----|
 | Actor trust prefix | Producers MUST use the `human:` prefix for hand-authored or human-confirmed content (§7) | **Producer** |
-| Reserved filenames | Producers MUST NOT use `index.md`/`log.md` as concept documents (§3.1) | **Producer** |
+| Reserved filenames | Producers MUST NOT use `index.md`/`log.md` as concept documents, at any level of the hierarchy (§3.1) | **Producer** |
 | Computation integrity | An agent MAY supply only declared parameter values and MUST NOT author or edit the sanctioned computation (§10.3) | **Producer** |
 
 > §11 conformance is the three bundle tests only. **A validator MUST NOT fail a
