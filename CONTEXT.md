@@ -32,7 +32,8 @@ _Avoid_: Automatic full sync
 The explicit authority model of an affected bundle: code-backed or
 knowledge-only. It identifies which source is authoritative for durable
 knowledge and does not grant trust, access, write ownership, approval, or
-permission.
+permission. An unknown mode permits reading and validation but blocks
+mutation.
 _Avoid_: Repository-wide assumption, trust tier, permission level
 
 **Task kind**:
@@ -100,7 +101,8 @@ _Avoid_: OKF conformance, product extension
 **Activation marker**:
 The explicit project-local `.okf-active` marker at a Git worktree root that
 selects whether harness adapters provide automatic OKF behavior. It does not
-grant trust, authority, access, write ownership, approval, or permission.
+grant trust, authority, access, write ownership, approval, or permission. A
+cross-repository operation requires valid markers in both affected worktrees.
 _Avoid_: Authorization marker, permission flag, automatic setup
 
 **Harness adapter**:
@@ -114,10 +116,55 @@ Agreement across harnesses on shared runtime decisions and safety outcomes
 while allowing different native triggers, configuration, and presentation.
 _Avoid_: Identical harness behavior, feature parity
 
+**Delegation**:
+The explicit choice by a main session to assign bounded work to a separate agent
+under a delegation brief. It changes execution placement, not project mode,
+admission, trust, access, authority, approval, recovery, or guard state.
+_Avoid_: Authority transfer, automatic sub-agent execution
+
+**Delegation brief**:
+The immutable bounded instruction set passed from a main session to a delegated
+agent. It names the task kind, operation class, target identities, allowed and
+forbidden effects, observed evidence, required gates, effective settings, and
+expected result. It does not grant authority or approval.
+_Avoid_: Prompt fragment, permission grant, approval token
+
+**Agent definition**:
+The shipped role contract for a delegated agent. It states the required skill,
+tool allowlist, forbidden effects, delegation-brief rules, and result contract.
+It is inert until explicit use and does not grant authority.
+_Avoid_: Permission grant, active worker, harness policy
+
+**Reader agent**:
+A delegated agent restricted to admitted read and search work. It returns
+observed evidence and cannot mutate OKF content.
+_Avoid_: Retrieval backend, writer agent
+
+**Writer agent**:
+A delegated leaf agent that may read admitted evidence and execute bounded OKF
+writes through the shared runtime and guard under an explicit delegation brief.
+It cannot create agents, broaden authority, mutate from automatic hooks, or
+execute broad manual operations under this role.
+_Avoid_: Automatic writer, authority holder, unrestricted sub-agent
+
+**Execution preference**:
+A user setting that chooses `inline` or `delegated` placement for eligible reads
+or bounded writes. It does not change safety or authority and remains below the
+shared rules.
+_Avoid_: Permission setting, policy override
+
+**Delegation receipt**:
+The structured result returned by a delegated operation. It records status,
+operation and target identity, requested and actual effects, observed evidence,
+validation, residue, and the next action. It is not approval, an operation
+manifest, or an observation journal.
+_Avoid_: Completion claim, audit log
+
 **Orientation context**:
-A bounded, read-only summary emitted at a supported session-entry seam after
-activation checks. It provides navigation and status only; it does not infer
-task intent, perform task-specific retrieval, or mutate OKF content.
+A fixed-schema, bounded, read-only summary emitted at a supported session-entry
+seam after activation and admission checks. It provides navigation and status
+only; it contains no full index or concept body, does not infer task intent,
+perform task-specific retrieval, or mutate OKF content.
 _Avoid_: Session-start synchronization, automatic context sync
 
 **Semantic preservation**:
@@ -143,9 +190,19 @@ _Avoid_: Bundle name, filesystem path alone
 
 **Federation**:
 Read-time composition of explicitly admitted bundles that retain independent
-identity and ownership. Federation does not merge concepts or grant write
-authority across repositories.
+identity and ownership. Federation does not merge concepts or grant foreign-
+write authority by itself. An explicit target-side grant may enable a manual,
+approved, recovery-gated cross-repository operation under suite policy.
 _Avoid_: Workspace merge, shared write scope
+
+**Foreign-write authority**:
+The target-side, uncommitted grant that permits one exact source repository
+instance to perform a bounded operation against one exact foreign bundle. It
+is separate from reach, presence, trust, filesystem access, federation,
+`.okf-active`, project mode, approval, and the guard ledger. It is scoped to
+allowed effects, can be revoked by an authorized target owner, and never
+permits automatic mutation.
+_Avoid_: Trust grant, filesystem permission, workspace declaration, approval
 
 **Workspace manifest**:
 The user-authored `.okf-workspace.json` federation declaration whose containing
@@ -163,30 +220,31 @@ _Avoid_: Discovery, workspace discovery, access grant
 
 **Concept discovery**:
 The location of candidate concepts inside a bundle that bundle admission
-already admitted. It cannot widen bundle admission, and it does not grant
-trust, access, write ownership, approval, or permission.
+already admitted. It may use index navigation, exact paths, or native search.
+It cannot widen bundle admission, and it does not grant trust, access, write
+ownership, approval, or permission.
 _Avoid_: Discovery, admission, bundle admission
 
-**Notional cold-work charge**:
-A versioned conservative measure of the bundle-admission work a resolution
-would perform without cache hits. It determines the work frontier so cache
-state cannot change which scopes are examined, and it does not govern concept
-discovery, which never shares its budget. Pending supersession by the adopted
-index-navigation retrieval model.
-_Avoid_: Actual work, cache-adjusted budget
-
-**Observed execution work**:
-The resources actually consumed while resolving a bundle admission, including
-cache hits and misses. It supports telemetry and hard resource protection but
-never widens the frontier set by the notional cold-work charge. Pending
-supersession by the adopted index-navigation retrieval model.
-_Avoid_: Discovery allowance, notional work
+**LLM-guided native navigation**:
+Task-specific reading in which an agent uses harness-native file and search
+tools to navigate admitted bundles. The model chooses navigation steps and
+interprets tool results; it does not treat model memory as bundle content. The
+suite supplies scope and safety rules, not a custom retrieval backend, matcher,
+ranking service, tokenizer, embedding store, retrieval cache, cost model, or
+ledger.
+_Avoid_: Pure LLM retrieval, custom retrieval backend, semantic retrieval
 
 **Provenance source**:
 An authored OKF `sources` entry identifying evidence that supports a concept.
 It does not by itself assert that a change to the source makes the concept
 semantically stale.
 _Avoid_: Freshness dependency, watched file
+
+**Observed evidence**:
+A file, path, or tool result actually read during a resolution. It supports an
+answer only to the extent observed; it is not authored provenance, a review
+baseline, or a freshness claim.
+_Avoid_: Provenance source, source-of-truth claim, review dependency
 
 **Review dependency**:
 An operationally tracked artifact or scope whose change is evidence that a
@@ -277,9 +335,10 @@ invented default.
 _Avoid_: Universal default, tuning preset
 
 **Support ceiling**:
-The measured boundary of corpus, syntax, tokenizer, serializer, renderer, and
-adapter conditions for which a profile may claim calibrated behavior. Work
-outside it may be inspected, but it cannot claim completeness or calibration.
+The boundary in corpus scale, file count, aggregate bytes, and bundle-relative
+nesting depth for which a release may claim complete and calibrated behavior.
+Work outside it may be inspected, but it cannot claim completeness or
+calibration. It is an inclusive claim boundary, not a hard read limit.
 _Avoid_: Maximum repository size, hard repository limit
 
 **Growth signal**:
