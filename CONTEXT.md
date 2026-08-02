@@ -164,8 +164,22 @@ _Avoid_: Completion claim, audit log
 A fixed-schema, bounded, read-only summary emitted at a supported session-entry
 seam after activation and admission checks. It provides navigation and status
 only; it contains no full index or concept body, does not infer task intent,
-perform task-specific retrieval, or mutate OKF content.
+perform task-specific retrieval, or mutate OKF content. Each child context gets
+a fresh orientation rather than inheriting a parent result.
 _Avoid_: Session-start synchronization, automatic context sync
+
+**Orientation occurrence**:
+A logical re-entry for which a harness adapter may make at most one orientation
+attempt. It is distinct from a native harness event, a prompt, and a
+manual-operation occurrence. Its identity does not grant authority or approval.
+_Avoid_: Session event, prompt event, operation occurrence
+
+**Orientation result**:
+The reported outcome of an orientation attempt or automatic no-op. It can show
+that the project is not configured, the required scope is invalid or
+unavailable, the seam is degraded or the attempt failed, or the orientation is
+clean. A non-clean result never asserts clean evidence or permits mutation.
+_Avoid_: Concept status, operation result, approval result
 
 **Semantic preservation**:
 Retention of YAML key names, scalar types and values, sequence order, and
