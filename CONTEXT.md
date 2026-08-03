@@ -111,6 +111,42 @@ skills and runtime through native plugins, hooks, or session seams. It does
 not redefine shared authority, trust, or mutation rules.
 _Avoid_: Separate runtime, harness-specific semantics
 
+**Skill wrapper script**:
+The thin per-skill process entry under `scripts/` that imports shared modules,
+accepts one JSON request on standard input, and emits one canonical response on
+standard output. It does not define authority, approval, or mutation policy.
+_Avoid_: CLI, router, independent runtime
+
+**Invocation class**:
+The classification of how a request may reach its owning skill: `Model-invoked`,
+`User-invoked`, `Model-or-user-invoked`, `Inherited from parent`, or `Not
+invocable`. It does not grant permission, authority, approval, trust, or access.
+_Avoid_: Permission level, execution preference, task kind
+
+**Reach clause**:
+Routing metadata in a skill description that states when another skill must
+invoke that skill. A router dispatch counts as skill-to-skill invocation. It is
+not a permission, scope declaration, admission gate, or authority grant.
+_Avoid_: Bundle REACH gate, permission clause, trigger guarantee
+
+**Wrapper response**:
+The one canonical JSON object emitted by a skill wrapper. It carries the
+protocol, skill, operation, result, scope, evidence limits, operation data,
+findings, and next action. A valid refusal is a response, not a process error.
+_Avoid_: Tool result, approval record, observation journal
+
+**Wrapper exit code**:
+The process transport result of a wrapper: `0` for any valid response, `64` for
+invalid input, and `70` for an internal failure that also emits a complete
+`failed/incomplete` response. It does not encode an OKF result or approval.
+_Avoid_: OKF status, finding code, permission result
+
+**Wrapper error stream**:
+The wrapper's diagnostic-only `stderr` channel for invalid input and internal
+failure. It is empty for valid domain responses and does not carry results,
+findings, approval, authority, or operation-success claims.
+_Avoid_: Semantic result channel, audit log, approval channel
+
 **Semantic parity**:
 Agreement across harnesses on shared runtime decisions and safety outcomes
 while allowing different native triggers, configuration, and presentation.
