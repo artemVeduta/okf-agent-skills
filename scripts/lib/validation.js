@@ -1,0 +1,510 @@
+/*
+PROVISIONAL (spec section 11 open item): the specification leaves the reader/writer
+implementation, the parse-tree comparison interface and the finding-code vocabulary
+undecided. Invented here, pending a decision:
+  - the YAML subset the reader accepts and the canonical form the writer emits
+  - the parse-tree comparison interface (deep structural equality, first differing
+    path reported as the responsible construct)
+  - the finding codes ROOT_DECLARATION_NOT_EXACT, FRONTMATTER_UNPARSEABLE,
+    TYPE_MISSING, BUNDLE_FILES_NONCONFORMING, SOURCE_RESOURCE_MISSING,
+    GENERATED_BY_MISSING, RUNTIME_MISSING, HUMAN_PREFIX_MISSING,
+    PARSE_TREE_MISMATCH, DEPENDS_ON_BLOCKED_CONCEPT, and the two added in this pass,
+    CONCEPT_OUTSIDE_BUNDLE (blocking) and UNRESOLVED_INTERNAL_LINK (non-blocking)
+  - the set of recognized non-human actor prefixes (NON_HUMAN_ACTORS below)
+  - upstream findings propagate one level only; cycles are therefore not walked
+*/
+
+const path = require('path');
+
+const NON_HUMAN_ACTORS = ['agent:', 'tool:'];
+
+// ---------------------------------------------------------------- frontmatter
+
+function extractFrontmatter(text) {
+  const lines = text.split('\n');
+  if (lines[0].replace(/\r$/, '') !== '---') return { unterminated: false, frontmatter: '', body: text };
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].replace(/\r$/, '') !== '---') continue;
+    return {
+      unterminated: false,
+      frontmatter: lines.slice(1, i).map((l) => l.replace(/\r$/, '')).join('\n'),
+      body: lines.slice(i + 1).join('\n'),
+    };
+  }
+  return { unterminated: true, frontmatter: '', body: '' };
+}
+
+// --------------------------------------------------------------------- reader
+
+function stripComment(s) {
+  let quote = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (quote) {
+      if (quote === '"' && c === '\\') i++;
+      else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+    } else if (c === '#' && (i === 0 || s[i - 1] === ' ' || s[i - 1] === '\t')) {
+      return s.slice(0, i);
+    }
+  }
+  return s;
+}
+
+function parseYAML(text) {
+  const lines = text.split('\n');
+  let idx = 0;
+
+  function fail(line, reason) {
+    const err = new Error(reason);
+    err.line = line;
+    err.reason = reason;
+    throw err;
+  }
+
+  function indentOf(i) {
+    const ws = lines[i].match(/^[ \t]*/)[0];
+    if (ws.includes('\t')) fail(i + 1, 'tab indentation is not supported');
+    return ws.length;
+  }
+
+  function skipBlank() {
+    while (idx < lines.length && (lines[idx].trim() === '' || lines[idx].trimStart().startsWith('#'))) idx++;
+  }
+
+  function isSeqText(t) {
+    return t === '-' || t.startsWith('- ');
+  }
+
+  function quoteEnd(s, line) {
+    const q = s[0];
+    for (let i = 1; i < s.length; i++) {
+      if (q === '"' && s[i] === '\\') i++;
+      else if (s[i] === q) {
+        if (q === "'" && s[i + 1] === "'") i++;
+        else return i;
+      }
+    }
+    return fail(line, 'unterminated quoted scalar');
+  }
+
+  function decode(t, line) {
+    if (t === '' || t === '~' || t === 'null') return null;
+    if (t === 'true') return true;
+    if (t === 'false') return false;
+    if (t === '[]') return [];
+    if (t === '{}') return {};
+    if (t[0] === '"' || t[0] === "'") {
+      if (quoteEnd(t, line) !== t.length - 1) fail(line, 'unexpected text after a quoted scalar');
+      const body = t.slice(1, -1);
+      return t[0] === '"' ? body.replace(/\\(.)/g, (m, c) => (c === 'n' ? '\n' : c)) : body.replace(/''/g, "'");
+    }
+    if (isSeqText(t)) fail(line, 'nested sequences are not supported');
+    if ('|>'.includes(t[0])) fail(line, 'block scalars are not supported');
+    if ('[{'.includes(t[0])) fail(line, 'flow collections are not supported');
+    if ('&*!%@`'.includes(t[0])) fail(line, `unsupported construct: ${t[0]}`);
+    if (/^-?\d+(\.\d+)?$/.test(t) && String(Number(t)) === t) return Number(t);
+    return t;
+  }
+
+  // Returns { key, value } when the text opens a mapping entry, null when it is a scalar.
+  function splitKey(s, line) {
+    let colon = -1;
+    if (s[0] === '"' || s[0] === "'") {
+      const end = quoteEnd(s, line);
+      if (s[end + 1] !== ':' || (end + 2 < s.length && s[end + 2] !== ' ')) return null;
+      colon = end + 1;
+    } else {
+      for (let i = 0; i < s.length; i++) {
+        if (s[i] === ':' && (i + 1 === s.length || s[i + 1] === ' ')) { colon = i; break; }
+      }
+      if (colon < 0) return null;
+      if (s.slice(0, colon).includes(':')) fail(line, 'a colon inside a key requires quoting');
+    }
+    const raw = s.slice(0, colon).trim();
+    if (raw === '') fail(line, 'empty key');
+    return { key: decode(raw, line), value: s.slice(colon + 1).trim() };
+  }
+
+  function assign(obj, seen, kv, ownIndent, line) {
+    if (seen.has(kv.key)) fail(line, `duplicate key '${kv.key}'`);
+    seen.add(kv.key);
+    if (kv.value !== '') {
+      obj[kv.key] = decode(kv.value, line);
+      return;
+    }
+    skipBlank();
+    if (idx < lines.length && indentOf(idx) === ownIndent && isSeqText(lines[idx].trim())) {
+      obj[kv.key] = parseSeq(ownIndent);
+    } else {
+      obj[kv.key] = parseNode(ownIndent + 1);
+    }
+  }
+
+  function parseNode(minIndent) {
+    skipBlank();
+    if (idx >= lines.length) return null;
+    const ind = indentOf(idx);
+    if (ind < minIndent) return null;
+    return isSeqText(lines[idx].trim()) ? parseSeq(ind) : parseMapInto(ind, {}, new Set());
+  }
+
+  function parseSeq(indent) {
+    const arr = [];
+    for (;;) {
+      skipBlank();
+      if (idx >= lines.length || indentOf(idx) !== indent || !isSeqText(lines[idx].trim())) break;
+      const trimmed = stripComment(lines[idx]).trim();
+      const after = trimmed.slice(1);
+      const keyCol = indent + 1 + (after.length - after.trimStart().length);
+      const rest = after.trim();
+      idx += 1;
+      if (rest === '') {
+        arr.push(parseNode(indent + 1));
+        continue;
+      }
+      const kv = splitKey(rest, idx);
+      if (!kv) {
+        arr.push(decode(rest, idx));
+        continue;
+      }
+      const obj = {};
+      const seen = new Set();
+      assign(obj, seen, kv, keyCol, idx);
+      parseMapInto(keyCol, obj, seen);
+      arr.push(obj);
+    }
+    return arr;
+  }
+
+  function parseMapInto(indent, obj, seen) {
+    for (;;) {
+      skipBlank();
+      if (idx >= lines.length) break;
+      const ind = indentOf(idx);
+      if (ind > indent) fail(idx + 1, 'unexpected indentation');
+      if (ind < indent || isSeqText(lines[idx].trim())) break;
+      const line = stripComment(lines[idx]).trim();
+      idx += 1;
+      const kv = splitKey(line, idx);
+      if (!kv) fail(idx, 'expected "key: value"');
+      assign(obj, seen, kv, indent, idx);
+    }
+    return obj;
+  }
+
+  const root = parseNode(0);
+  skipBlank();
+  if (idx < lines.length) fail(idx + 1, 'unexpected content after the document');
+  if (root === null) return {};
+  if (Array.isArray(root)) fail(1, 'a top-level sequence is not supported');
+  return root;
+}
+
+// --------------------------------------------------------------------- writer
+
+function needsQuoting(s) {
+  return (
+    s === '' ||
+    s === 'null' || s === 'true' || s === 'false' || s === '~' ||
+    s !== s.trim() ||
+    /^-?\d+(\.\d+)?$/.test(s) ||
+    /:( |$)/.test(s) ||
+    s.includes('#') ||
+    s.includes('\n') ||
+    /^[-?:,[\]{}#&*!|>'"%@`]/.test(s)
+  );
+}
+
+function quote(s) {
+  if (!needsQuoting(s)) return s;
+  return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"';
+}
+
+function canonicalYAML(value) {
+  function isEmpty(v) {
+    return (Array.isArray(v) && v.length === 0) || (v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0);
+  }
+
+  function write(val, indent) {
+    const sp = ' '.repeat(indent);
+    if (val === null || val === undefined) return 'null';
+    if (typeof val === 'string') return quote(val);
+    if (typeof val !== 'object') return String(val);
+
+    if (Array.isArray(val)) {
+      if (!val.length) return '[]';
+      return val.map((item) => {
+        const s = write(item, 0);
+        if (!s.includes('\n')) return `${sp}- ${s}`;
+        const ls = s.split('\n');
+        return `${sp}- ${ls[0]}\n${ls.slice(1).map((x) => `${sp}  ${x}`).join('\n')}`;
+      }).join('\n');
+    }
+
+    const keys = Object.keys(val).sort();
+    if (!keys.length) return '{}';
+    return keys.map((key) => {
+      const v = val[key];
+      if (v === null || typeof v !== 'object' || isEmpty(v)) return `${sp}${quote(key)}: ${write(v, 0)}`;
+      const nested = write(v, 0).split('\n').map((x) => `${sp}  ${x}`).join('\n');
+      return `${sp}${quote(key)}:\n${nested}`;
+    }).join('\n');
+  }
+
+  return write(value, 0);
+}
+
+function serializeFrontmatter(tree) {
+  return `---\n${canonicalYAML(tree)}\n---\n`;
+}
+
+// ----------------------------------------------------------- tree comparison
+
+function parseTreeEqual(a, b, at = '') {
+  const here = at || 'root';
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') {
+    return { equal: a === b, path: here };
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) return { equal: false, path: here };
+
+  if (Array.isArray(a)) {
+    if (a.length !== b.length) return { equal: false, path: here };
+    for (let i = 0; i < a.length; i++) {
+      const r = parseTreeEqual(a[i], b[i], at ? `${at}[${i}]` : `[${i}]`);
+      if (!r.equal) return r;
+    }
+    return { equal: true };
+  }
+
+  const ka = Object.keys(a).sort();
+  const kb = Object.keys(b).sort();
+  for (const k of ka) {
+    if (!kb.includes(k)) return { equal: false, path: at ? `${at}.${k}` : k };
+  }
+  for (const k of kb) {
+    if (!ka.includes(k)) return { equal: false, path: at ? `${at}.${k}` : k };
+  }
+  for (const k of ka) {
+    const r = parseTreeEqual(a[k], b[k], at ? `${at}.${k}` : k);
+    if (!r.equal) return r;
+  }
+  return { equal: true };
+}
+
+// -------------------------------------------------------------------- gate
+
+const blocker = (code, origin, detail) => ({ code, origin, severity: 'error', blocks: true, detail });
+const warn = (code, origin, detail) => ({ code, origin, severity: 'warning', blocks: false, detail });
+
+function sortFindings(findings) {
+  const key = (f) => `${f.code} ${JSON.stringify(f.detail)}`;
+  return findings.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+}
+
+function rootFinding(observed) {
+  let observedType = 'absent';
+  if (observed !== undefined) {
+    if (observed === null) observedType = 'null';
+    else if (Array.isArray(observed)) observedType = 'sequence';
+    else if (typeof observed === 'object') observedType = 'mapping';
+    else observedType = typeof observed;
+  }
+  return blocker('ROOT_DECLARATION_NOT_EXACT', 'suite', {
+    observed: observed === undefined ? null : observed,
+    observed_type: observedType,
+  });
+}
+
+function readTree(file, services) {
+  const text = services.readFile(file);
+  const extracted = extractFrontmatter(text);
+  if (extracted.unterminated) {
+    const err = new Error('unterminated frontmatter block');
+    err.line = 0;
+    err.reason = err.message;
+    throw err;
+  }
+  return { tree: parseYAML(extracted.frontmatter), body: extracted.body, text };
+}
+
+// Step 1: the bundle root must declare exactly the string "0.2".
+function checkRoot(bundleRoot, services) {
+  const indexPath = path.join(bundleRoot, 'index.md');
+  if (!services.exists(indexPath)) return rootFinding(undefined);
+  let tree = {};
+  try {
+    tree = readTree(indexPath, services).tree;
+  } catch {
+    tree = {};
+  }
+  return tree.okf_version === '0.2' ? null : rootFinding(tree.okf_version);
+}
+
+// Step 2: the concept must resolve inside the bundle root.
+function inside(target, root) {
+  return target === root || target.startsWith(root + path.sep);
+}
+
+function readConcept(file, rel, services) {
+  if (!services.exists(file)) {
+    return { finding: blocker('FRONTMATTER_UNPARSEABLE', 'okf', { path: rel, line: 1, reason: 'file not found' }) };
+  }
+  try {
+    return readTree(file, services);
+  } catch (err) {
+    if (err.reason === undefined) throw err;
+    return {
+      finding: blocker('FRONTMATTER_UNPARSEABLE', 'okf', { path: rel, line: err.line + 1, reason: err.reason }),
+    };
+  }
+}
+
+// Step 3, section 11 test 3: a present index.md or log.md must parse.
+function checkBundleFiles(bundleRoot, services, findings) {
+  for (const name of ['index.md', 'log.md']) {
+    const file = path.join(bundleRoot, name);
+    if (!services.exists(file)) continue;
+    try {
+      readTree(file, services);
+    } catch (err) {
+      if (err.reason === undefined) throw err;
+      findings.push(blocker('BUNDLE_FILES_NONCONFORMING', 'okf', { file: name, line: err.line + 1, reason: err.reason }));
+    }
+  }
+}
+
+// Step 3: section 11 test 2 and the four producer obligations, on the merged tree.
+function checkConcept(tree, rel, findings) {
+  if (tree.type === undefined || tree.type === '') {
+    findings.push(blocker('TYPE_MISSING', 'okf', { path: rel }));
+  }
+
+  const entries = (key) => (Array.isArray(tree[key]) ? tree[key] : []);
+  const missing = (v) => v === undefined || v === null || v === '';
+
+  entries('sources').forEach((source, index) => {
+    if (source && typeof source === 'object' && missing(source.resource)) {
+      findings.push(blocker('SOURCE_RESOURCE_MISSING', 'okf', { path: rel, index }));
+    }
+  });
+
+  entries('generated').forEach((item, index) => {
+    if (item && typeof item === 'object' && missing(item.by)) {
+      findings.push(blocker('GENERATED_BY_MISSING', 'okf', { path: rel, index }));
+    }
+  });
+
+  if (tree.type === 'Attested Computation' && missing(tree.runtime)) {
+    findings.push(blocker('RUNTIME_MISSING', 'okf', { path: rel }));
+  }
+
+  for (const field of ['author', 'confirmed']) {
+    const values = Array.isArray(tree[field]) ? tree[field] : [tree[field]];
+    for (const value of values) {
+      if (typeof value !== 'string' || value === '') continue;
+      if (value.startsWith('human:') || NON_HUMAN_ACTORS.some((p) => value.startsWith(p))) continue;
+      findings.push(blocker('HUMAN_PREFIX_MISSING', 'okf', { path: rel, field, value }));
+    }
+  }
+}
+
+function sourceLinks(tree) {
+  return (Array.isArray(tree.sources) ? tree.sources : [])
+    .filter((s) => s && typeof s === 'object' && typeof s.resource === 'string' && s.resource !== '')
+    .map((s) => s.resource);
+}
+
+function checkLinks(tree, rel, bundleRoot, services, findings) {
+  for (const resource of sourceLinks(tree)) {
+    const file = path.resolve(bundleRoot, resource);
+    if (!inside(file, bundleRoot) || !services.exists(file)) {
+      findings.push(warn('UNRESOLVED_INTERNAL_LINK', 'okf', { path: rel, resource }));
+    }
+  }
+}
+
+// Step 4: a concept rebuilt from a blocked upstream is blocked too. Upstream findings
+// that do not block are surfaced unchanged so a SHOULD violation stays visible.
+function checkUpstreams(tree, rel, bundleRoot, services, findings) {
+  for (const resource of sourceLinks(tree)) {
+    const file = path.resolve(bundleRoot, resource);
+    if (!inside(file, bundleRoot) || !services.exists(file)) continue;
+    const upstream = readConcept(file, resource, services);
+    const upstreamFindings = [];
+    if (upstream.finding) {
+      upstreamFindings.push(upstream.finding);
+    } else {
+      checkConcept(upstream.tree, resource, upstreamFindings);
+      checkLinks(upstream.tree, resource, bundleRoot, services, upstreamFindings);
+    }
+    if (upstreamFindings.some((f) => f.blocks)) {
+      findings.push(blocker('DEPENDS_ON_BLOCKED_CONCEPT', 'suite', { path: rel, blocked_concept: resource }));
+    } else {
+      findings.push(...upstreamFindings);
+    }
+  }
+}
+
+// Step 6: the canonical bytes must re-parse to the same tree.
+function roundTripMismatch(tree, serialized) {
+  let reparsed;
+  try {
+    reparsed = parseYAML(extractFrontmatter(serialized).frontmatter);
+  } catch (err) {
+    return { construct: 'unknown', reason: err.reason || err.message };
+  }
+  const comparison = parseTreeEqual(tree, reparsed);
+  return comparison.equal ? null : { construct: comparison.path, reason: 'tree mismatch' };
+}
+
+function evaluate(request, services) {
+  const svc = { serializeFrontmatter, ...services };
+  const bundleRoot = path.resolve(request.payload.bundle);
+  const rel = request.payload.concept;
+  const findings = [];
+  const done = (result, data) => ({ result, data, findings: sortFindings(findings) });
+
+  const root = checkRoot(bundleRoot, svc);
+  if (root) {
+    findings.push(root);
+    return done('blocked', {});
+  }
+
+  const conceptPath = path.resolve(bundleRoot, rel);
+  if (!inside(conceptPath, bundleRoot)) {
+    findings.push(blocker('CONCEPT_OUTSIDE_BUNDLE', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
+
+  const current = readConcept(conceptPath, rel, svc);
+  if (current.finding) {
+    findings.push(current.finding);
+    return done('blocked', { path: rel });
+  }
+
+  const tree = { ...current.tree, ...(request.payload.set || {}) };
+  checkBundleFiles(bundleRoot, svc, findings);
+  checkConcept(tree, rel, findings);
+  checkLinks(tree, rel, bundleRoot, svc, findings);
+  checkUpstreams(tree, rel, bundleRoot, svc, findings);
+  if (findings.some((f) => f.blocks)) return done('blocked', { path: rel });
+
+  if ('verified' in tree && !Array.isArray(tree.verified)) tree.verified = [tree.verified];
+
+  const serialized = svc.serializeFrontmatter(tree);
+  const mismatch = roundTripMismatch(tree, serialized);
+  if (mismatch) {
+    findings.push(blocker('PARSE_TREE_MISMATCH', 'suite', { path: rel, ...mismatch }));
+    return done('blocked', { path: rel });
+  }
+
+  const rendered = serialized + current.body;
+  if (rendered === current.text) return done('ok', { written: false, path: rel });
+
+  svc.writeFile(conceptPath, rendered);
+  return done('ok', { written: true, path: rel });
+}
+
+module.exports = { evaluate, parseYAML, serializeFrontmatter };
