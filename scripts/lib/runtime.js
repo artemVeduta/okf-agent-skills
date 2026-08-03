@@ -8,7 +8,7 @@ const validation = require('./validation');
 function respond(request, result, data, findings) {
   return {
     protocol: 'okf-wrapper/1',
-    skill: 'okf-write',
+    skill: request.skill,
     operation: request.operation,
     result,
     scope: request.scope || null,
