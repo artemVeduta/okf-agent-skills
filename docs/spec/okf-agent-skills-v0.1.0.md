@@ -1,5 +1,7 @@
 # okf-agent-skills `v0.1.0` — implementation-ready specification
 
+> Decision #43 post-dates every rule in this file. For `v0.1.0`, the manual-operation guard, guard ledger, guard lock, preview/approval flow, durable operation store, recovery snapshots, rollback, crash reconciliation, migration writes, merge and split, archive relocation, and all cross-repository writes are cut. Tickets #56, #57, #58, #59, #61, #63, #65, and #69 are `NOT_PLANNED` for this release (#43, #44). Sections 5, 6, 7, and the guarded rows of section 10 are retained as accepted design for a later guarded release and are NOT `v0.1.0` obligations.
+
 Resolves [#8](https://github.com/artemVeduta/okf-agent-skills/issues/8). Synthesized from the 34
 closed decision tickets of the wayfinder map
 [Ship a production-ready cross-harness OKF skill suite](https://github.com/artemVeduta/okf-agent-skills/issues/1).
@@ -729,7 +731,7 @@ source of truth (#6).
 - At task entry or phase transition, automatic behavior MUST first pass activation, routing, scope, and bundle-admission checks. (#35, #36, #39)
 - At an evidence checkpoint or task completion, the lifecycle MUST choose exactly one of `create`, `revise`, `no-op`, or `abstain`. (#6)
 - Before mutation, the lifecycle MUST check owner, project mode, scope, evidence, and authorization. (#6)
-- Every mutation MUST require explicit user intent and MUST use the shared `okf-write` runtime and manual-operation guard. (#38)
+- Every bounded `v0.1.0` mutation MUST require explicit user intent and MUST use the shared `okf-write` runtime; the manual-operation guard is retained design for a later guarded release. (#38, #43)
 - Automatic hooks MUST remain read-only. (#35)
 - Orientation MUST remain bounded, read-only, and separate from task-specific lifecycle work. (#35, #36)
 - Orientation MUST NOT infer task intent, perform lifecycle maintenance, initialize state, retrieve task-specific context, or mutate OKF content. (#35, #36)
@@ -1841,6 +1843,8 @@ The fixed navigation vocabulary is:
 
 ### 5. Operation risk, approval, the manual-operation guard, and recovery
 
+> Decision #43: this section is retained design for a later guarded release and is not a `v0.1.0` obligation.
+
 #### Outcome vocabulary and composition
 
 - A command MUST expand into atomic effects before authorization is decided (#11).
@@ -2321,7 +2325,7 @@ post-operation validation bound to the approved plan passes
 #### Invocation is not approval
 
 - Every automatic hook MUST remain read-only (#35).
-- Every mutation MUST require explicit user intent and the shared manual-operation guard, regardless of native invocation controls (#35).
+- Every bounded `v0.1.0` mutation MUST require explicit user intent, regardless of native invocation controls. The shared manual-operation guard is retained design for a later guarded release. (#35, #43)
 - A harness adapter MUST NOT contain independent guard semantics (#35).
 - Installing, disabling, or uninstalling an adapter MUST NOT alter guard state (#35).
 - A command invocation MUST be treated as a request and MUST NOT be treated as approval, authority, or proof that mutation is safe (#39).
@@ -2333,7 +2337,7 @@ post-operation validation bound to the approved plan passes
 - A delegated writer MUST verify the operation class, MUST block a mismatch, and MUST NOT downgrade a broad effect to a bounded update (#38).
 - Preview, approval, and execution MUST stay bound to one operation identity, one bundle epoch, and one guard generation (#38).
 - A new writer, a session boundary, a target change, or preview drift MUST require a fresh plan and fresh approval (#38).
-- Every mutation MUST use the shared guarded write path, and native tools MUST NOT replace it (#38).
+- Every bounded `v0.1.0` mutation MUST use the shared write path, and native tools MUST NOT replace it. The guarded write path is retained design for a later guarded release. (#38, #43)
 - A harness that cannot attest a complete preview or an explicit confirmation MUST block the operation rather than weaken it (#19).
 
 #### Release evidence for this section
@@ -2346,6 +2350,8 @@ post-operation validation bound to the approved plan passes
 - Broad, destructive, identity-changing, or completeness-claiming work MUST require exhaustive validation (#7).
 
 ### 6. Migration
+
+> Decision #43: this section is retained design for a later guarded release and is not a `v0.1.0` obligation.
 
 #### Request and scope
 
@@ -2488,6 +2494,8 @@ post-operation validation bound to the approved plan passes
 - The operational receipt MUST NOT be OKF content or a semantic sidecar (#19).
 
 ### 7. Restructuring, archiving, and links
+
+> Decision #43: this section is retained design for a later guarded release and is not a `v0.1.0` obligation.
 
 #### Restructuring scope for `v0.1.0`
 
@@ -2751,9 +2759,10 @@ post-operation validation bound to the approved plan passes
 
 - `scripts/lib/` MUST contain pure-function shared modules. (#5)
 - `scripts/lib/` MUST NOT contain skills. (#5)
-- Shared runtime modules MUST own shared admission, validation, lifecycle, and guard behavior. (#4, #35)
+- Shared runtime modules MUST own shared admission, validation, and lifecycle behavior. The manual-operation guard is retained design for a later guarded release. (#4, #35, #43)
+- The `v0.1.0` shared module set MUST be exactly `protocol.js`, `runtime.js`, `admission.js`, `validation.js`, and `lifecycle.js`. `scripts/lib/guard.js` MUST NOT be part of this set. (#42, #43, #41)
 - Harness adapters MUST NOT duplicate or reimplement shared runtime semantics. (#4, #35)
-- A harness adapter MUST NOT contain independent authority, retrieval, or guard semantics. (#35)
+- A harness adapter MUST NOT contain independent authority or retrieval semantics. Guard semantics are retained design for a later guarded release. (#35, #43)
 - The previously planned shared retrieval runtime MUST NOT be implemented; LLM-guided native navigation replaces it. (#5, #36) [precedence: #36 over #5]
 
 #### Dependencies
@@ -2803,7 +2812,7 @@ post-operation validation bound to the approved plan passes
 - Adapters MUST fail closed when a required safeguard is unavailable. (#26)
 - Adapters MUST NOT claim a control that was not verified. (#26)
 - Automatic hooks and orientation seams MUST remain read-only. (#35)
-- Every mutation MUST require explicit user intent and the shared manual-operation guard, regardless of native invocation controls. (#35)
+- Every bounded `v0.1.0` mutation MUST require explicit user intent, regardless of native invocation controls. The shared manual-operation guard is retained design for a later guarded release. (#35, #43)
 
 #### Shared skill source versus harness adapters
 
@@ -2820,7 +2829,7 @@ post-operation validation bound to the approved plan passes
 - OpenCode adapters MUST keep required skill metadata present, and an omitted `description` MUST NOT be the explicit-only policy. (#17, #39) [precedence: #39 over #17]
 - Native `/okf-*` commands MUST remain the explicit OpenCode entry path. (#39)
 - A native command MUST be treated as a request, and it MUST NOT be treated as approval, authority, or proof that mutation is safe. (#39)
-- Mutation reached through the OpenCode prompt-injected command path MUST still pass the shared runtime, explicit intent, preview, approval, recovery, and guard gates. (#35, #39)
+- Mutation reached through the OpenCode prompt-injected command path MUST still pass the shared runtime and explicit-intent checks. Preview, approval, recovery, and guard gates are retained design for a later guarded release. (#35, #39, #43)
 
 #### Authoring contract: governing objective
 
@@ -3056,7 +3065,7 @@ The following classification governs adoption. (#26)
 
 - Automatic hooks MUST remain read-only. (#35)
 - Orientation seams MUST remain read-only. (#35)
-- Every mutation MUST require explicit user intent and the shared manual-operation guard, regardless of native invocation controls. (#35)
+- Every bounded `v0.1.0` mutation MUST require explicit user intent, regardless of native invocation controls. The shared manual-operation guard is retained design for a later guarded release. (#35, #43)
 - Automatic orientation MUST be marker-gated on every harness. (#35)
 
 #### Orientation context
@@ -3196,7 +3205,7 @@ The following classification governs adoption. (#26)
 - `okf-writer` MUST NOT create another agent. (#38)
 - Each agent MUST declare an explicit tool allowlist. (#38)
 - The reader's allowlist MUST contain native read and search tools only. (#38)
-- The writer's allowlist MUST contain native read and search tools plus the shared guarded write runner. (#38)
+- The writer's allowlist MUST contain native read and search tools plus the shared write runner. (#38, #43)
 - Neither role MUST have raw file-write, Git-history, network, or nested-agent authority by default. (#38)
 - Agent definitions MUST be inert release artifacts until explicit use. (#38)
 - A transient delegated read failure MAY fall back to the same bounded read inline with a `degraded` disclosure. (#38)
@@ -3222,17 +3231,17 @@ shared safety and authority rules > shipped agent rules > per-call delegation br
 
 #### Writer preflight and write authority
 
-- The writer MUST recheck the marker, routing, admission, target identity, current content, evidence, operation class, and guard state before execution. (#38)
+- The writer MUST recheck the marker, routing, admission, target identity, current content, evidence, and operation class before execution. Guard-state checks are retained design for a later guarded release. (#38, #43)
 - The writer MUST verify the operation class and MUST block a mismatch. (#38)
 - The writer MUST NOT downgrade a broad effect to a bounded update. (#38)
-- Every mutation MUST use the shared `okf-write` runtime and the manual-operation guard. (#38)
-- Native tools MUST NOT replace the shared guarded write path. (#38)
+- Every bounded `v0.1.0` mutation MUST use the shared `okf-write` runtime. (#38, #43)
+- Native tools MUST NOT replace the shared write path. (#38, #43)
 - The writer MAY read admitted files and source evidence. (#38)
 - The writer MUST write only approved OKF targets and allowed derived artifacts. (#38)
 - The writer MUST NOT edit source code, commit, push, reset, stash, switch branches, or change unrelated files. (#38)
 - The writer MUST operate in the exact repository instance and worktree named by the brief. (#38)
-- Only one active guarded writer operation MAY run for one bundle. (#38)
-- Independent bundles MAY run guarded writer operations in parallel when their guards permit it. (#38)
+- The one-active-guarded-writer rule is retained design for a later guarded release. (#38, #43)
+- Parallel guarded writer operations are retained design for a later guarded release. (#38, #43)
 - A cross-repository write MUST require exact pre-existing target-side foreign-write authority for the named source instance, target bundle, and effects. (#38, #37)
 - Delegation MUST NOT create or widen foreign-write authority. (#38)
 - The main session or the user MUST own approval. (#38)
@@ -3313,7 +3322,7 @@ adapter defaults < user/global settings < project/worktree settings < current-se
 - Delegation MUST NOT change `.okf-active`. (#38)
 - Delegation MUST NOT change `.okf-workspace.json`. (#38)
 - Delegation MUST NOT change the automatic-write ceiling. (#38)
-- Delegation MUST NOT change the shared manual-operation guard. (#38)
+- Delegation MUST NOT change the retained-design manual-operation guard. (#38, #43)
 
 #### Harness capability facts and their adapter consequences
 
@@ -3348,7 +3357,7 @@ adapter defaults < user/global settings < project/worktree settings < current-se
 
 #### Acceptance evidence
 
-- `v0.1.0` MUST include deterministic fixtures for inline and delegated reads, inline and delegated writes, role and tool allowlists, skill binding, brief precedence, incomplete and conflicting briefs, operation-class mismatch, stale handoff, target drift, per-bundle writer locking, same-worktree checks, approval and guard enforcement, structured receipts, partial and indeterminate outcomes, settings precedence, invalid settings, and semantic parity across all three native wrappers. (#38)
+- `v0.1.0` MUST include deterministic wrapper-seam fixtures for inline and delegated reads, inline and delegated writes, role and tool allowlists, skill binding, brief precedence, incomplete and conflicting briefs, operation-class mismatch, stale handoff, target drift, same-worktree checks, structured receipts, partial and indeterminate outcomes, settings precedence, invalid settings, and semantic parity across all three native wrappers. Adapter fixtures are the release gate; a real harness is exercised manually for dogfooding and publish, not as a CI process test. (#38, #66, #5, #26, #10, #15)
 - Live cross-harness process tests MUST remain deferred to `v0.2.0`. (#38)
 
 ### 10. The operation map
@@ -3360,22 +3369,22 @@ The table uses `A` for allowed, `N` for notice, `P` for occurrence-bound preview
 | Atomic effect | Owning skill | Shared runtime responsibility | Invocation class | Code-backed U | Code-backed M | Code-backed H | Knowledge-only U | Knowledge-only M | Knowledge-only H |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|
 | Read, validate, or read-only analysis | `okf-read` | Bundle admission, native navigation, and validation | Not assigned | A | A | A | A | A | A |
-| Create a small evidence-backed concept | `okf-write` | Evidence, mode, ownership, semantic-preservation, and guarded write checks | Not assigned | N | N | N | N | N | N |
-| Small evidence-backed claim update | `okf-write` | Evidence, mode, ownership, semantic-preservation, and guarded write checks | Not assigned | N | N | N | N | N |
-| Small non-claim metadata or formatting update | `okf-write` | Semantic-preservation and guarded write checks | Not assigned | N | N | N | N | N |
-| Add qualifying machine verification | `okf-write` | Verification-evidence validation and guarded write checks | Not assigned | N | N | N | N | N |
+| Create a small evidence-backed concept | `okf-write` | Evidence, mode, ownership, and semantic-preservation validation | Not assigned | N | N | N | N | N | N |
+| Small evidence-backed claim update | `okf-write` | Evidence, mode, ownership, and semantic-preservation validation | Not assigned | N | N | N | N | N | N |
+| Small non-claim metadata or formatting update | `okf-write` | Semantic-preservation validation | Not assigned | N | N | N | N | N | N |
+| Add qualifying machine verification | `okf-write` | Verification-evidence validation | Not assigned | N | N | N | N | N | N |
 | Add machine verification without complete qualifying evidence | `okf-write` | Verification-evidence validation and fail-closed guarded write checks | Not assigned | B | B | B | B | B | B |
 | Record exact human verification | `okf-review` | Review-evidence and verifier-identity validation, then guarded write execution | User-invoked | P | P | P | P | P | P |
 | Infer or fabricate human verification | `okf-review` | Verification validation and refusal reporting | Not assigned | B | B | B | B | B | B |
 | Standalone removal of verification | `okf-review` | Verification-event validation and guarded write checks | User-invoked | A | P | P | A | P | P |
 | Derive or display current staleness | `okf-review` | Review-dependency observation and staleness evaluation | Not assigned | A | A | A | A | A | A |
-| Set `stale_after` from explicit evidence | `okf-review` | Evidence validation and guarded write checks | Not assigned | N | N | N | N | N | N |
+| Set `stale_after` from explicit evidence | `okf-review` | Evidence validation and write checks | Not assigned | N | N | N | N | N | N |
 | Choose or change `stale_after` by judgment | `okf-review` | Review policy, preview, approval, and guarded write checks | User-invoked | P | P | P | P | P | P |
 | `draft -> stable` | `okf-write` | Status validation, preview, approval, and guarded write checks | User-invoked | P | P | P | P | P | P |
 | `stable -> deprecated` | `okf-write` | Status validation, preview, approval, and guarded write checks | User-invoked | P | P | P | P | P | P |
 | `deprecated -> stable` | `okf-write` | Status validation, preview, approval, and guarded write checks | User-invoked | P | P | P | P | P | P |
 | Write an unsupported status value | `okf-write` | OKF validation and fail-closed guarded write checks | Not assigned | B | B | B | B | B | B |
-| Add or remove one semantic relationship | `okf-write` | Relationship validation and guarded write checks | Not assigned | N | N | N | N | N | N |
+| Add or remove one semantic relationship | `okf-write` | Relationship validation and write checks | Not assigned | N | N | N | N | N | N |
 | Move or rename | `okf-write` | Identity, link, recovery, operation-manifest, journal, and guarded write checks | User-invoked | P+R | P+R | P+R | P+R | P+R | P+R |
 | Broad inbound-link or graph rewrite | `okf-write` | Link, identity, recovery, operation-manifest, journal, and guarded write checks | User-invoked | P+R | P+R | P+R | P+R | P+R | P+R |
 | Create merge or split outputs | `okf-write` | Restructuring, provenance, identity, recovery, operation-manifest, journal, and guarded write checks | User-invoked | P+R | P+R | P+R | P+R | P+R | P+R |
@@ -3391,6 +3400,7 @@ The table uses `A` for allowed, `N` for notice, `P` for occurrence-bound preview
 #### Composite operation placement
 
 - The `okf` router MUST dispatch each request to the owning skill in the table and MUST NOT implement a second authorization rule. (#5, #35)
+- Router dispatch MUST select the owner only from the request's fixed `operation` field against the sealed operation table. An unrecognized operation MUST return the defined unknown-operation result. The `guard.prepare`, `guard.confirm`, and `guard.execute` operations MUST NOT be in the `v0.1.0` table. (#42, #43, #41)
 - `okf-lifecycle` MUST own `init`, diff-scoped synchronization, full-project synchronization, migration, and compaction. (#5, #6, #19)
 - Incremental synchronization MUST be automatic narrow maintenance for directly affected concepts, declared review dependencies, and mechanical derivatives during ordinary work, and MUST be owned by `okf-lifecycle` without the manual gate used by broad synchronization. (#5, #6) [precedence: #6 over #5]
 - Diff-scoped synchronization MUST be explicit pre-PR reconciliation over the current diff and its declared knowledge scope. (#6)
@@ -3406,7 +3416,9 @@ The table uses `A` for allowed, `N` for notice, `P` for occurrence-bound preview
 
 #### Guard confirmation placement
 
-- The shared guard runtime MUST own the occurrence-bound request, preview, confirmation, execution, token, epoch, and ledger checks. (#29, #31)
+> Decision #43: this subsection is deferred design for a later guarded release and is not a `v0.1.0` obligation.
+
+- The shared guard runtime's occurrence-bound request, preview, confirmation, execution, token, epoch, and ledger checks are retained design for a later guarded release. (#29, #31, #43)
 - The `okf` router MUST own the user-invoked confirmation sequence and MUST dispatch the confirmed operation to its owning skill; no separate guard skill MAY be added. (#5, #29, #35, #38) [precedence: #38 over #5]
 - `okf-review` MUST read, validate, and report guard state, and MUST NOT mutate the reviewed subject as a side effect. (#5, #6)
 - `okf-review` MAY prepare or report a preview and MAY verify that approval exists, but MUST NOT confirm, self-approve, or execute the reviewed operation. (#29, #38)
@@ -3455,9 +3467,7 @@ carries no citation is an error; here it is the point. #9 may revise these; noth
   contract. No behavior that the wrapper seam can express MAY rely on a unit test as its only
   coverage, and a unit test that obstructs a refactor of `scripts/lib/` is deleted rather than
   defended. This reconciles the one-seam rule with the unit tests #9 requires.
-- A guard, journal, or recovery state that a test needs MUST be staged on disk as a fixture, and the
-  wrapper re-run against it. Crash points are reached by staging the durable record that a crash
-  would have left, not by calling into the state machine.
+> Decision #43: the fixture rule for staging guard, journal, or recovery state on disk is deferred design for a later guarded release and is not a `v0.1.0` obligation.
 
 ### Test classes
 
@@ -3472,10 +3482,8 @@ The skill-authoring contract fixes three classes, and all three ship in `v0.1.0`
 
 ### Coverage obligations
 
-- Every cell of the operation map that yields `blocked`, `approval`, or `recovery` MUST have a
-  fixture test proving the refusal, in both project modes.
-- Every fail-closed condition on guard state — missing, unreadable, corrupt, insecure, or
-  newer-schema — MUST have a fixture test (#31).
+> Decision #43: the fixture obligation for every operation-map approval or recovery cell is deferred design for a later guarded release and is not a `v0.1.0` obligation.
+> Decision #43: the fixture obligation for every fail-closed guard-state condition is deferred design for a later guarded release and is not a `v0.1.0` obligation.
 - Every orientation result value MUST have a fixture test, including the degraded and failed cases
   (#39).
 - Bundle admission MUST have a fixture test per gate outcome (#27).
@@ -3516,9 +3524,21 @@ Out of scope for `v0.1.0`, each already ruled out by a decision:
 - Automatic mutation from any hook (#35).
 - Automatic archive, deletion, compaction, or rewrite triggered by a growth signal (#7).
 - Introducing Husky into a target project. Integrate only where it already exists (map #1).
+- The manual-operation guard, guard ledger, guard lock, preview/approval flow, durable operation store,
+  recovery snapshot, rollback, crash reconciliation, migration writes, merge and split, archive
+  relocation, and cross-repository writes (#43, #44; #56, #57, #58, #59, #61, #63, #65, #69).
 
 ## Further Notes
 
+Decision #43 implementation sequence, derived from the surviving blocking graph, is:
+
+- Wave 1: #45, #46, #48.
+- Wave 2: #47, #49, #52.
+- Wave 3: #50, #53.
+- Wave 4: #51, #54, #60, #66.
+- Wave 5: #55, #62, #64, #67, #68.
+
+Tickets inside one wave MAY run in parallel. (#41)
 
 
 ## Open Items
@@ -3531,40 +3551,41 @@ Out of scope for `v0.1.0`, each already ruled out by a decision:
 - Each row below MUST be closed by an explicit recorded decision before the behavior it blocks is implemented (#7).
 - A file under `docs/research/` MUST NOT close a row below; a research note is evidence and hypothesis until an accepted repository decision promotes it (#26).
 - A row that is closed later MUST be closed by naming the decision, not by observing that an implementation already chose a value (#26).
+- A `Deferred` row blocks no `v0.1.0` work; only an `Open` row MAY block a ticket. (#43)
 
 #### Open-item table
 
-| Item | What it blocks | Why no ticket supplies it | Smallest decision that closes it |
-|---|---|---|---|
-| Durable operation-store location | Every broad, destructive, identity-changing, and cross-repository operation; all crash recovery | #7 requires a separate durable store outside all mutation targets and outside the guard ledger that survives repository replacement and the writing machine, and #37 repeats the requirement for cross-repository moves, but neither names a location; #31 names a location only for the guard ledger, which the store must sit outside of | Name one filesystem location for the operation store that is outside every bundle, outside every Git common directory used for guard state, and outside the repository |
-| Operation-store schema version identifier | Fail-closed handling of unknown-schema records; forward compatibility of stored operations | #7 says unknown-schema data is `indeterminate` and blocks execution or recovery claims, but names no version value and no accepted-version set; #31 versions the guard ledger schema without naming a value either | Name the schema version value `v0.1.0` writes and the set of versions it accepts |
-| Operation-store record framing and torn-record detection | Distinguishing a complete record from a valid-looking prefix after a crash | #7 requires the record be written completely, flushed, atomically replaced, and content-verified, and classifies torn or truncated data as `indeterminate`, but supplies no framing or integrity check by which torn data is recognized; #30 records that a torn manifest with a valid-looking prefix is unhandled | Name the per-record integrity check that a reader applies before accepting a record as complete |
-| Operation-store retention window | Pruning policy; disk growth; how long a settled operation stays recoverable | No ticket states a retention period; #7 requires survival across repository replacement but sets no upper bound; #31 sets a retention rule only for guard spent records | Name how long a settled operation's manifest and journal are retained, and what removes them |
-| Operation-store behavior when bundle identity changes mid-operation | Resume and reconciliation after a bundle root is moved while an operation is in flight | Bundle identity is owner identity plus bundle-root path and moving the root changes identity (`CONTEXT.md`, #22); #31 keys guard state on that identity; #7 and #37 key operations on target identity; no ticket states what happens to an in-flight operation whose target identity no longer exists | State whether an operation whose bundle identity changed is reconciled, orphaned and blocked, or discarded, and what the operator must do next |
-| Recovery snapshot storage location and mechanism | Every recovery gate; every rollback | #11 requires a content-addressed snapshot outside the mutation target and #7 requires an independent snapshot with a disposable restore, but neither names a storage location or mechanism; #7 and #30 add only the constraint that the mechanism must not reserialize content | Name where snapshots are stored and the mechanism that captures and restores bytes without reserializing them |
-| Recovery snapshot scope selector | What a snapshot must contain before an operation may execute | #11 requires a snapshot of the affected bundles and "relevant untracked files" and #37 repeats it for both repositories; neither defines which untracked files are relevant | Define the rule that decides which untracked paths enter the snapshot |
-| Recovery snapshot content addressing and completeness proof | The pass condition of recovery evidence; the claim that a snapshot covers its declared scope | #7 requires an independent content-addressed snapshot and matching restored bytes or hashes, but names no content-address algorithm and no record that proves the snapshot covers the declared scope | Name the content-address algorithm and the completeness record a snapshot carries |
-| Recovery snapshot discard timing | Cleanup after a settled operation; whether a snapshot survives to a later repair | No ticket states when a snapshot may be discarded; #7 requires it for the recovery gate and #37 requires it for both repositories, and both stop there | State the event after which a snapshot may be discarded |
-| Enumerated post-operation checks and per-check pass criteria | Every claim that an operation succeeded; the `ValidationVerdict` and `PostOpChecks` results | #7 names the check families — OKF conformance, suite checks, identity, link, provenance, trust, and post-operation validation bound to the approved plan — but enumerates no individual check and states no per-check pass condition; #30 carried these across as explicitly opaque | Enumerate each post-operation check and state its observable pass condition |
-| Crash-point reconciliation table | Recovery from every interrupted operation | #30 supplies the record ordering (`INTENT{undo}` → mutate → `OUTCOME`, sealed manifest before the first mutation, spend and epoch advance between the last `OUTCOME` and `SETTLED`) and #31 supplies the ledger `in-flight`/`failed`/unknown outcomes, but no ticket maps every crash point to a next action; #7 classifies missing, torn, corrupt, truncated, and unknown-schema data as `indeterminate` without stating the reconciliation step | Publish one table mapping each crash point — including a missing manifest, a torn record, a dangling `INTENT`, a partial inverse, and ambiguous filesystem state — to its next action |
-| Result label for a reconciled identical-byte concurrent foreign write | Whether an operation may settle clean after a foreign session produced identical bytes | #30 records that reconciliation cannot distinguish authorship and reads bytes equal to the expected hash as done, and lists this as an accepted cost rather than a reported outcome; #7 records foreign mutation only on observed drift; #37 defines `partially-applied` and `indeterminate` for other cross-repository outcomes | State whether this case settles `clean` or is recorded as an ambiguity that makes the terminal `dirty` |
-| New-bundle write-gate bootstrap exception | `okf init`; migration into a repository with no bundle; adoption of a bundle root that does not yet exist | #21 gates mutation on a pre-existing bundle-root `index.md` whose parsed `okf_version` is exactly `"0.2"` and defines an adoption operation only for a bundle root that already exists; #19 creates new bundles through migration; #35 allows guarded initialization; none states the predicate under which the first write to a non-existent bundle root is permitted | State the exact condition under which creating a bundle root is permitted without a pre-existing `okf_version: "0.2"` declaration, and the atomicity requirement for that first write |
-| Guard ledger schema version identifier | Fail-closed handling of unreadable or newer ledger state | #31 requires a schema-versioned ledger and fails closed on an unsupported version, but names no version value and no accepted-version set | Name the ledger schema version value `v0.1.0` writes and the set of versions it accepts |
-| Guard lock filename and locking mechanism | Concurrent-session coordination; the exclusive execution lock | #31 says the lock lives beside the ledger and that failure to lock fails closed, but names neither the lock artifact nor the operating-system mechanism | Name the lock artifact and the mechanism that acquires and releases it |
-| `<bundle-key>` encoding | The guard ledger directory name; whether two bundles can collide on one key | #31 says `<bundle-key>` derives from the canonical bundle identity rather than a display name; #22 defines bundle identity as owner identity plus bundle-root path; no ticket defines the encoding from that identity to a filesystem-safe key | Define the encoding from bundle identity to `<bundle-key>`, including its collision property |
-| Canonical multi-bundle lock ordering key | Cross-repository moves; any operation holding more than one bundle lock | #37 requires all affected bundle locks to use one deterministic canonical order but names no ordering key | Name the value the lock order sorts on |
-| Write-authority finding code set | The reported outcome of a refused foreign write | #37 requires a distinct `WRITE_AUTHORITY` gate and gives `WRITE_NOT_AUTHORIZED` only as an example, explicitly excluding `INVALID` and `ACCESS_DENIED`; #22 fixes the admission finding set with no write-authority code | Enumerate the write-authority finding codes and the condition that emits each |
-| Wrapper input protocol | Every harness adapter invocation of the shared runtime | #5 says harness adapters exec the per-skill wrapper scripts and read stdout, and stops there; no ticket states how the operation, target, and settings reach the wrapper | State how a wrapper receives its input |
-| Wrapper stdout schema | Adapter parsing of every result; semantic parity across harnesses | #5 says adapters read stdout; #6, #36, #38, and #39 fix result vocabularies but no ticket fixes the serialization the adapter parses | Define the stdout document shape and the field that carries each fixed result label |
-| Wrapper exit-code contract | Adapter distinction between a reported refusal and a runtime failure | No ticket assigns meaning to a wrapper exit code; #5 mentions only stdout | Assign a meaning to each exit code the wrappers use |
-| Router dispatch protocol | Every routed operation; behavior on an unknown sub-command | #5 says the router `SKILL.md` dispatches to sub-skills; no ticket states the dispatch grammar, the argument shape, or the result when no sub-skill matches | State how the router selects a sub-skill and what it returns when none matches |
-| Shared module public interfaces | Every skill and adapter that calls admission, validation, lifecycle, or guard behavior | #5 makes the shared modules library-only pure functions and assigns them admission, validation, lifecycle, and guard behavior; #36 defines portable roles for enumerate, search, read, and scope enforcement but states that exact tool names are not shared policy; no ticket fixes a module boundary or a callable signature | Name each shared module and the operations it exposes |
-| Adapter package location and per-adapter install command | Installation and upgrade of the three native adapters | #5 fixes the base install command and says the three plugins are installed globally; #35 says three thin adapters are separately installable from the same tag; #4 records the base install syntax only; no ticket gives a per-adapter package location or command | State, for each of Claude Code, Codex, and OpenCode, where its adapter lives in the release and the command that installs it |
-| Complete atomic-effect ownership table | Assigning every effect to a skill, a runtime module, and an invocation class | #11 enumerates the atomic effects and their authorization outcomes; #5 assigns broad operation groups to four skills; #38 assigns bounded writes to `okf-writer`; no ticket maps every atomic effect to an owning skill, runtime module, and invocation class | Publish one table with a row for every atomic effect in the authorization matrix and a column for owning skill, runtime module, and invocation class |
-| Owning skill for incremental synchronization | Where automatic narrow maintenance executes | #6 defines incremental synchronization as automatic narrow maintenance; #5 assigns `sync` to the manual-gated `okf-lifecycle` skill without separating the modes; no ticket names the skill or module that performs the incremental mode | Name the skill and runtime module that own incremental synchronization |
-| Implementation sequence | The order in which the skills, shared runtime, guard state machine, and adapters reach completion | #1 records the sequence as not yet specified and assigns it to the specification and implementation tickets; no closed ticket supplies it | State the completion order, or record an explicit deferral |
-| Coexistence with the existing third-party OKF skill | Release positioning and installation conflicts | #1 records that whether to replace, extend, or coexist with `fabricioctelles/okf-open-knowledge-format` is not yet specified; no closed ticket supplies it | Choose replace, extend, or coexist, or record an explicit deferral |
-| Support-ceiling fixture corpora and strata | Any calibrated claim about the declared support ceiling | #36 requires fixture evidence before a calibrated support-ceiling claim and lists the fixture subjects, but names no corpora, no scale strata, and no acceptance condition; #1 records the fixture evidence as not yet specified | Name the fixture corpora and strata, and the observation that makes the ceiling calibrated |
+| Item | Status | What it blocks | Why no ticket supplies it | Smallest decision that closes it |
+|---|---|---|---|---|
+| Durable operation-store location | Deferred (#43) | Every broad, destructive, identity-changing, and cross-repository operation; all crash recovery | #7 requires a separate durable store outside all mutation targets and outside the guard ledger that survives repository replacement and the writing machine, and #37 repeats the requirement for cross-repository moves, but neither names a location; #31 names a location only for the guard ledger, which the store must sit outside of | Name one filesystem location for the operation store that is outside every bundle, outside every Git common directory used for guard state, and outside the repository |
+| Operation-store schema version identifier | Deferred (#43) | Fail-closed handling of unknown-schema records; forward compatibility of stored operations | #7 says unknown-schema data is `indeterminate` and blocks execution or recovery claims, but names no version value and no accepted-version set; #31 versions the guard ledger schema without naming a value either | Name the schema version value `v0.1.0` writes and the set of versions it accepts |
+| Operation-store record framing and torn-record detection | Deferred (#43) | Distinguishing a complete record from a valid-looking prefix after a crash | #7 requires the record be written completely, flushed, atomically replaced, and content-verified, and classifies torn or truncated data as `indeterminate`, but supplies no framing or integrity check by which torn data is recognized; #30 records that a torn manifest with a valid-looking prefix is unhandled | Name the per-record integrity check that a reader applies before accepting a record as complete |
+| Operation-store retention window | Deferred (#43) | Pruning policy; disk growth; how long a settled operation stays recoverable | No ticket states a retention period; #7 requires survival across repository replacement but sets no upper bound; #31 sets a retention rule only for guard spent records | Name how long a settled operation's manifest and journal are retained, and what removes them |
+| Operation-store behavior when bundle identity changes mid-operation | Deferred (#43) | Resume and reconciliation after a bundle root is moved while an operation is in flight | Bundle identity is owner identity plus bundle-root path and moving the root changes identity (`CONTEXT.md`, #22); #31 keys guard state on that identity; #7 and #37 key operations on target identity; no ticket states what happens to an in-flight operation whose target identity no longer exists | State whether an operation whose bundle identity changed is reconciled, orphaned and blocked, or discarded, and what the operator must do next |
+| Recovery snapshot storage location and mechanism | Deferred (#43) | Every recovery gate; every rollback | #11 requires a content-addressed snapshot outside the mutation target and #7 requires an independent snapshot with a disposable restore, but neither names a storage location or mechanism; #7 and #30 add only the constraint that the mechanism must not reserialize content | Name where snapshots are stored and the mechanism that captures and restores bytes without reserializing them |
+| Recovery snapshot scope selector | Deferred (#43) | What a snapshot must contain before an operation may execute | #11 requires a snapshot of the affected bundles and "relevant untracked files" and #37 repeats it for both repositories; neither defines which untracked files are relevant | Define the rule that decides which untracked paths enter the snapshot |
+| Recovery snapshot content addressing and completeness proof | Deferred (#43) | The pass condition of recovery evidence; the claim that a snapshot covers its declared scope | #7 requires an independent content-addressed snapshot and matching restored bytes or hashes, but names no content-address algorithm and no record that proves the snapshot covers the declared scope | Name the content-address algorithm and the completeness record a snapshot carries |
+| Recovery snapshot discard timing | Deferred (#43) | Cleanup after a settled operation; whether a snapshot survives to a later repair | No ticket states when a snapshot may be discarded; #7 requires it for the recovery gate and #37 requires it for both repositories, and both stop there | State the event after which a snapshot may be discarded |
+| Enumerated post-operation checks and per-check pass criteria | Open | Every claim that an operation succeeded; the `ValidationVerdict` and `PostOpChecks` results | #7 names the check families — OKF conformance, suite checks, identity, link, provenance, trust, and post-operation validation bound to the approved plan — but enumerates no individual check and states no per-check pass condition; #30 carried these across as explicitly opaque | Enumerate each post-operation check and state its observable pass condition |
+| Crash-point reconciliation table | Deferred (#43) | Recovery from every interrupted operation | #30 supplies the record ordering (`INTENT{undo}` → mutate → `OUTCOME`, sealed manifest before the first mutation, spend and epoch advance between the last `OUTCOME` and `SETTLED`) and #31 supplies the ledger `in-flight`/`failed`/unknown outcomes, but no ticket maps every crash point to a next action; #7 classifies missing, torn, corrupt, truncated, and unknown-schema data as `indeterminate` without stating the reconciliation step | Publish one table mapping each crash point — including a missing manifest, a torn record, a dangling `INTENT`, a partial inverse, and ambiguous filesystem state — to its next action |
+| Result label for a reconciled identical-byte concurrent foreign write | Deferred (#43) | Whether an operation may settle clean after a foreign session produced identical bytes | #30 records that reconciliation cannot distinguish authorship and reads bytes equal to the expected hash as done, and lists this as an accepted cost rather than a reported outcome; #7 records foreign mutation only on observed drift; #37 defines `partially-applied` and `indeterminate` for other cross-repository outcomes | State whether this case settles `clean` or is recorded as an ambiguity that makes the terminal `dirty` |
+| New-bundle write-gate bootstrap exception | Open | `okf init`; migration into a repository with no bundle; adoption of a bundle root that does not yet exist | #21 gates mutation on a pre-existing bundle-root `index.md` whose parsed `okf_version` is exactly `"0.2"` and defines an adoption operation only for a bundle root that already exists; #19 creates new bundles through migration; #35 allows guarded initialization; none states the predicate under which the first write to a non-existent bundle root is permitted | State the exact condition under which creating a bundle root is permitted without a pre-existing `okf_version: "0.2"` declaration, and the atomicity requirement for that first write |
+| Guard ledger schema version identifier | Deferred (#43) | Fail-closed handling of unreadable or newer ledger state | #31 requires a schema-versioned ledger and fails closed on an unsupported version, but names no version value and no accepted-version set | Name the ledger schema version value `v0.1.0` writes and the set of versions it accepts |
+| Guard lock filename and locking mechanism | Deferred (#43) | Concurrent-session coordination; the exclusive execution lock | #31 says the lock lives beside the ledger and that failure to lock fails closed, but names neither the lock artifact nor the operating-system mechanism | Name the lock artifact and the mechanism that acquires and releases it |
+| `<bundle-key>` encoding | Deferred (#43) | The guard ledger directory name; whether two bundles can collide on one key | #31 says `<bundle-key>` derives from the canonical bundle identity rather than a display name; #22 defines bundle identity as owner identity plus bundle-root path; no ticket defines the encoding from that identity to a filesystem-safe key | Define the encoding from bundle identity to `<bundle-key>`, including its collision property |
+| Canonical multi-bundle lock ordering key | Deferred (#43) | Cross-repository moves; any operation holding more than one bundle lock | #37 requires all affected bundle locks to use one deterministic canonical order but names no ordering key | Name the value the lock order sorts on |
+| Write-authority finding code set | Deferred (#43) | The reported outcome of a refused foreign write | #37 requires a distinct `WRITE_AUTHORITY` gate and gives `WRITE_NOT_AUTHORIZED` only as an example, explicitly excluding `INVALID` and `ACCESS_DENIED`; #22 fixes the admission finding set with no write-authority code | Enumerate the write-authority finding codes and the condition that emits each |
+| Wrapper input protocol | Closed (#42) | Every harness adapter invocation of the shared runtime | #5 says harness adapters exec the per-skill wrapper scripts and read stdout, and stops there; no ticket states how the operation, target, and settings reach the wrapper | **Adopted (#42):** a wrapper reads exactly one UTF-8 JSON object from `stdin` and handles one request per process; `argv` is startup only and environment variables carry no semantic request data. |
+| Wrapper stdout schema | Closed (#42) | Adapter parsing of every result; semantic parity across harnesses | #5 says adapters read stdout; #6, #36, #38, and #39 fix result vocabularies but no ticket fixes the serialization the adapter parses | **Adopted (#42):** exactly one newline-terminated JSON object on `stdout`, carrying `protocol`, `skill`, `operation`, `result`, `scope`, `evidence_limits`, `data`, `findings`, and `next_action`. Stdout carries no log text. |
+| Wrapper exit-code contract | Closed (#42) | Adapter distinction between a reported refusal and a runtime failure | No ticket assigns meaning to a wrapper exit code; #5 mentions only stdout | **Adopted (#42):** `0` one valid response was emitted, including `blocked`, `abstained`, and `failed` results; `64` invalid wrapper input; `70` internal or serialization failure, which still emits one complete response. |
+| Router dispatch protocol | Closed (#42) | Every routed operation; behavior on an unknown sub-command | #5 says the router `SKILL.md` dispatches to sub-skills; no ticket states the dispatch grammar, the argument shape, or the result when no sub-skill matches | **Adopted (#42):** the router selects an owner only from the fixed `operation` field against a sealed operation table, and returns the defined unknown-operation result when no entry matches. Per #43 and the #41 decision record, `guard.prepare`, `guard.confirm`, and `guard.execute` are not entries of the `v0.1.0` table. |
+| Shared module public interfaces | Closed (#42) | Every skill and adapter that calls admission, validation, lifecycle, or guard behavior | #5 makes the shared modules library-only pure functions and assigns them admission, validation, lifecycle, and guard behavior; #36 defines portable roles for enumerate, search, read, and scope enforcement but states that exact tool names are not shared policy; no ticket fixes a module boundary or a callable signature | **Adopted (#42):** `protocol.js`, `runtime.js`, `admission.js`, `validation.js`, `lifecycle.js`. Per #43 and the #41 decision record, `scripts/lib/guard.js` is **not** part of the `v0.1.0` module set. |
+| Adapter package location and per-adapter install command | Open | Installation and upgrade of the three native adapters | #5 fixes the base install command and says the three plugins are installed globally; #35 says three thin adapters are separately installable from the same tag; #4 records the base install syntax only; no ticket gives a per-adapter package location or command | State, for each of Claude Code, Codex, and OpenCode, where its adapter lives in the release and the command that installs it |
+| Complete atomic-effect ownership table | Open | Assigning every effect to a skill, a runtime module, and an invocation class | #11 enumerates the atomic effects and their authorization outcomes; #5 assigns broad operation groups to four skills; #38 assigns bounded writes to `okf-writer`; no ticket maps every atomic effect to an owning skill, runtime module, and invocation class | Publish one table with a row for every atomic effect in the authorization matrix and a column for owning skill, runtime module, and invocation class |
+| Owning skill for incremental synchronization | Closed (#42) | Where automatic narrow maintenance executes | #6 defines incremental synchronization as automatic narrow maintenance; #5 assigns `sync` to the manual-gated `okf-lifecycle` skill without separating the modes; no ticket names the skill or module that performs the incremental mode | **Adopted (#42):** `okf-lifecycle` with `scripts/lib/lifecycle.js` orchestrates incremental synchronization; every mutation goes through `okf-write`. |
+| Implementation sequence | Closed (#41) | The order in which the skills, shared runtime, guard state machine, and adapters reach completion | #1 records the sequence as not yet specified and assigns it to the specification and implementation tickets; no closed ticket supplies it | **Adopted (#41):** wave 1 — #45, #46, #48; wave 2 — #47, #49, #52; wave 3 — #50, #53; wave 4 — #51, #54, #60, #66; wave 5 — #55, #62, #64, #67, #68. Derived from the blocking graph; tickets inside a wave may run in parallel. |
+| Coexistence with the existing third-party OKF skill | Open | Release positioning and installation conflicts | #1 records that whether to replace, extend, or coexist with `fabricioctelles/okf-open-knowledge-format` is not yet specified; no closed ticket supplies it | Choose replace, extend, or coexist, or record an explicit deferral |
+| Support-ceiling fixture corpora and strata | Open | Any calibrated claim about the declared support ceiling | #36 requires fixture evidence before a calibrated support-ceiling claim and lists the fixture subjects, but names no corpora, no scale strata, and no acceptance condition; #1 records the fixture evidence as not yet specified | Name the fixture corpora and strata, and the observation that makes the ceiling calibrated |
 
 #### Terms used normatively that `CONTEXT.md` does not define
 
