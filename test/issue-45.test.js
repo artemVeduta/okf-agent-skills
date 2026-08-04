@@ -16,6 +16,8 @@ const responseKeys = ['protocol', 'skill', 'operation', 'result', 'scope', 'evid
 function copyBundle() {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'okf-45-'));
   fs.cpSync(path.join(fixtures, 'base'), target, { recursive: true });
+  fs.mkdirSync(path.join(target, '.git'));
+  fs.writeFileSync(path.join(target, '.okf-active'), '');
   return target;
 }
 
@@ -28,7 +30,7 @@ function request(bundle, concept = 'concept.md', set = { title: 'Changed title' 
     protocol: 'okf-wrapper/1',
     skill: 'okf-write',
     operation: 'revise',
-    payload: { bundle, concept, set, ...extra.payload },
+    payload: { bundle, concept, set, cwd: bundle, ...extra.payload },
     ...extra,
   };
 }
@@ -456,7 +458,8 @@ test('an unterminated frontmatter block is a parse failure, not an absent one', 
 });
 
 test('unsupported operations are valid blocked responses', () => {
-  const result = runWrapper({ protocol: 'okf-wrapper/1', skill: 'okf-write', operation: 'delete', payload: {} });
+  const bundle = copyBundle();
+  const result = runWrapper({ protocol: 'okf-wrapper/1', skill: 'okf-write', operation: 'delete', payload: { cwd: bundle } });
   assert.equal(result.status, 0);
   assert.equal(result.stderr, '');
   assert.equal(result.response.result, 'blocked');

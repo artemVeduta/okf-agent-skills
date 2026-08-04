@@ -1,7 +1,7 @@
 /*
-The default filesystem binding both wrappers inject. The runtime never calls `fs`
+The default filesystem binding all wrappers inject. The runtime never calls `fs`
 directly: every filesystem observation arrives through this object, so a test can
-substitute one. Keeping the binding here stops the two wrapper entry points from
+substitute one. Keeping the binding here stops the wrapper entry points from
 carrying separate copies of the same path-walking code.
 */
 
@@ -30,5 +30,13 @@ module.exports = {
   isFile: (file) => fs.statSync(file).isFile(),
   isLink: (file) => { try { return fs.lstatSync(file).isSymbolicLink(); } catch { return false; } },
   access: (file) => { try { fs.accessSync(file, fs.constants.R_OK); return true; } catch { return false; } },
+  activationMarker: (root) => {
+    try {
+      const marker = fs.lstatSync(path.join(root, '.okf-active'));
+      return marker.isFile() && marker.size === 0 ? 'valid' : 'invalid';
+    } catch (error) {
+      return error.code === 'ENOENT' ? 'absent' : 'invalid';
+    }
+  },
   gitRootOf,
 };

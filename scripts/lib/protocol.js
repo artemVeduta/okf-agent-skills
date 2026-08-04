@@ -1,8 +1,3 @@
-/*
-PROVISIONAL (spec section 11 open item): the accepted request field set and the
-response key order below are invented pending the #42 wrapper contract decision.
-*/
-
 const requestKeys = ['protocol', 'skill', 'operation', 'payload', 'task_kind', 'scope', 'target', 'settings', 'invocation', 'brief'];
 const responseKeys = ['protocol', 'skill', 'operation', 'result', 'scope', 'evidence_limits', 'data', 'findings', 'next_action'];
 
@@ -26,7 +21,16 @@ function parseRequest(text, expectedSkill) {
   if (obj.skill !== expectedSkill) throw new Error(`Expected skill ${expectedSkill}, got ${obj.skill}`);
   if (!obj.operation) throw new Error('Missing operation');
   if (!isPlainObject(obj.payload)) throw new Error('Missing payload');
-  if (obj.operation === 'revise' && (!obj.payload.bundle || !obj.payload.concept)) {
+  if (obj.invocation !== undefined && !['explicit', 'automatic'].includes(obj.invocation)) {
+    throw new Error('Invalid invocation');
+  }
+  if (obj.operation === 'revise' && (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '')) {
+    throw new Error('Missing payload.cwd');
+  }
+  if (obj.operation === 'revise' && (
+    typeof obj.payload.bundle !== 'string' || obj.payload.bundle === '' ||
+    typeof obj.payload.concept !== 'string' || obj.payload.concept === ''
+  )) {
     throw new Error('Missing payload.bundle or payload.concept');
   }
   if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');

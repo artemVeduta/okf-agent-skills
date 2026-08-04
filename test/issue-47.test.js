@@ -10,15 +10,18 @@ const readWrapper = path.join(repo, 'scripts', 'okf-read.js');
 const writeWrapper = path.join(repo, 'scripts', 'okf-write.js');
 
 function temporaryRoot(prefix = 'okf-47-') { return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); }
+function activate(root) { fs.writeFileSync(path.join(root, '.okf-active'), ''); }
 function repository(prefix = 'okf-47-repo-') {
   const root = temporaryRoot(prefix);
   fs.mkdirSync(path.join(root, '.git'));
+  activate(root);
   return root;
 }
 function bundle(root, relative = '.') {
   const dir = path.join(root, relative);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  activate(root);
   return dir;
 }
 function concept(dir, name, body = '# Concept\n') { fs.writeFileSync(path.join(dir, `${name}.md`), body); }

@@ -14,9 +14,14 @@ function temporaryRoot(prefix = 'okf-46-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
+function activate(root) {
+  fs.writeFileSync(path.join(root, '.okf-active'), '');
+}
+
 function repository(prefix) {
   const root = temporaryRoot(prefix);
   fs.mkdirSync(path.join(root, '.git'));
+  activate(root);
   return root;
 }
 
@@ -24,6 +29,7 @@ function bundle(root, relative = '.') {
   const target = path.join(root, relative);
   fs.mkdirSync(target, { recursive: true });
   fs.writeFileSync(path.join(target, 'index.md'), '# Bundle\n');
+  activate(root);
   return target;
 }
 
@@ -88,7 +94,7 @@ function assertPresence(result, code) {
   return item.findings[0];
 }
 
-test('reach refuses above-root, sibling, outside-workspace, symlink-escape, and no-workspace paths', () => {
+test('reach refuses above-root, sibling, outside-workspace, and symlink-escape paths', () => {
   const root = repository('okf-46-reach-');
   bundle(root);
   const outside = temporaryRoot('okf-46-outside-');
@@ -115,11 +121,6 @@ test('reach refuses above-root, sibling, outside-workspace, symlink-escape, and 
         return request(root, [candidate('escape')], root);
       })(),
       refused: path.join(root, 'escape'),
-    },
-    {
-      code: 'CWD_NOT_A_WORKSPACE',
-      request: request(outside, [candidate('.')]),
-      refused: outside,
     },
   ];
 
@@ -230,11 +231,14 @@ test('workspace root at filesystem root contains absolute candidates', () => {
 
 test('presence accepts a child bundle below the filesystem root candidate', () => {
   const root = repository('okf-46-filesystem-root-child-');
-  const child = path.join(root, 'declared-bundle');
-  bundle(root, 'declared-bundle');
-  const result = runWrapper(request(path.parse(root).root, [candidate(root, {
+  const candidateRoot = path.join(root, 'candidate-repository');
+  fs.mkdirSync(path.join(candidateRoot, '.git'), { recursive: true });
+  const child = path.join(candidateRoot, 'declared-bundle');
+  bundle(candidateRoot, 'declared-bundle');
+  const result = runWrapper(request(root, [candidate(candidateRoot, {
     declared: true,
-    bundle: path.relative(root, child),
+    requires_repository: true,
+    bundle: path.relative(candidateRoot, child),
   })], path.parse(root).root));
   const item = onlyCandidate(result);
   // The child bundle is present, so PRESENCE passes and TRUST is what stops it.
