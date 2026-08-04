@@ -527,7 +527,9 @@ test('the repository has no dependency manifest and scripts use only built-ins o
   assert.equal(fs.existsSync(path.join(repo, 'package.json')), false);
   const scripts = path.join(repo, 'scripts');
   assert.equal(fs.existsSync(scripts), true);
-  assert.deepEqual(fs.readdirSync(path.join(scripts, 'lib')).sort(), ['protocol.js', 'runtime.js', 'validation.js']);
+  assert.deepEqual(fs.readdirSync(path.join(scripts, 'lib')).sort(), [
+    'admission.js', 'presence.js', 'protocol.js', 'reach.js', 'runtime.js', 'validation.js',
+  ]);
 
   const files = [];
   function visit(dir) {
@@ -542,7 +544,7 @@ test('the repository has no dependency manifest and scripts use only built-ins o
   for (const file of files) {
     const source = fs.readFileSync(file, 'utf8');
     for (const match of source.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)) {
-      const name = match[1];
+      const name = match[1].replace(/^node:/, '');
       assert.ok(name.startsWith('.') || Module.builtinModules.includes(name), `${file}: ${name}`);
     }
   }
