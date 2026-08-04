@@ -4,6 +4,7 @@ const admission = require('./admission');
 const routing = require('./routing');
 
 const skills = new Set(['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review']);
+const navigationResults = new Set(['ok', 'degraded', 'not-configured', 'unavailable']);
 const routerOwners = new Map([
   ['enumerate', 'okf-read'], ['search', 'okf-read'], ['read', 'okf-read'], ['validate', 'okf-read'],
   ['create', 'okf-write'], ['revise', 'okf-write'], ['format', 'okf-write'], ['machine-verify', 'okf-write'],
@@ -36,6 +37,43 @@ function admitAndRoute(request, services, router) {
   const admitted = admission.admit(request, services);
   const routed = router(admitted.data, request.payload, services);
   return respond(request, routed.result, { ...admission.redact(admitted.data), ...routed.data }, [...admitted.findings, ...routed.findings]);
+}
+
+function admitAndNavigate(request, services, router) {
+  const admitted = admission.admitRead(request, services);
+  const routed = router(admitted.data, request.payload, services);
+  const candidates = Array.isArray(admitted.data.candidates) ? admitted.data.candidates : [];
+  const active = candidates.filter((candidate) => candidate.state === 'active');
+  const partial = admitted.findings.length > 0 || admitted.data.coverage === 'non-exhaustive' || candidates.some((candidate) => (
+    (candidate.required === true && candidate.state !== 'active') ||
+    (candidate.state === 'active' && Array.isArray(candidate.findings) && candidate.findings.some((finding) => finding.blocks))
+  ));
+  const findings = [...routed.findings];
+  let data = routed.data;
+  let result = navigationResults.has(routed.result) ? routed.result : 'unavailable';
+  if (active.length === 0) {
+    result = 'unavailable';
+    findings.push({
+      code: 'unreadable',
+      origin: 'suite',
+      severity: 'error',
+      blocks: false,
+      detail: { gate: 'navigation', reason: 'no_admitted_bundle' },
+    });
+  } else if (partial) {
+    result = 'degraded';
+    if (data && typeof data === 'object' && Object.hasOwn(data, 'coverage')) {
+      data = { ...data, coverage: 'non-exhaustive' };
+    }
+    findings.push({
+      code: 'unreadable',
+      origin: 'suite',
+      severity: 'error',
+      blocks: false,
+      detail: { gate: 'navigation', reason: 'admission_incomplete' },
+    });
+  }
+  return respond(request, result, data, findings);
 }
 
 function unknownOperation(request) {
@@ -138,6 +176,8 @@ function runActive(skill, request, services) {
   if (skill === 'okf-read') {
     if (request.operation === 'validate') return validateRead(request, services);
     if (request.operation === 'resolve') return admitAndRoute(request, services, routing.resolve);
+    if (request.operation === 'read') return admitAndNavigate(request, services, routing.read);
+    if (request.operation === 'search') return admitAndNavigate(request, services, routing.search);
     if (request.operation !== 'admit') return unknownOperation(request);
     const outcome = admission.admit(request, services);
     return respond(request, outcome.result, admission.redact(outcome.data), outcome.findings);
@@ -157,10 +197,22 @@ function run(skill, request, services) {
   const activation = activationState(request, services);
   if (activation === 'absent') {
     if (request.invocation === 'automatic') return null;
+    if (request.operation === 'read' || request.operation === 'search') {
+      return respond(request, 'not-configured', routing.notConfiguredData(request.operation), []);
+    }
     return respond(request, 'not-configured', {}, []);
   }
   if (activation === 'invalid-input') return runActive(skill, request, services);
   if (activation !== 'valid') {
+    if (request.operation === 'read' || request.operation === 'search') {
+      return respond(request, 'unavailable', routing.notConfiguredData(request.operation), [{
+        code: 'unreadable',
+        origin: 'suite',
+        severity: 'error',
+        blocks: false,
+        detail: { gate: 'activation', reason: 'marker_invalid' },
+      }]);
+    }
     return respond(request, 'blocked', { code: 'ACTIVATION_MARKER_INVALID' }, [{
       code: 'ACTIVATION_MARKER_INVALID',
       origin: 'suite',

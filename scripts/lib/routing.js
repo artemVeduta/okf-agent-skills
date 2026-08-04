@@ -5,6 +5,7 @@
  */
 
 const path = require('node:path');
+const navigation = require('./navigation');
 
 const WORKSPACE = 'okf-workspace://';
 
@@ -61,28 +62,27 @@ function ordered(data, payload) {
   return [...tiered, ...all.filter((x) => !tiered.includes(x))];
 }
 
-function resolve(data, payload, services) {
+function locate(data, payload, services) {
   const candidates = activeCandidates(data);
   const target = payload.target;
   const workspace = typeof target === 'string' && target.startsWith(WORKSPACE);
   let concept = target;
   let eligible = candidates;
-  const findings = [];
   if (workspace) {
     const slash = target.indexOf('/', WORKSPACE.length);
     const alias = slash < 0 ? target.slice(WORKSPACE.length) : target.slice(WORKSPACE.length, slash);
     concept = slash < 0 ? '' : target.slice(slash + 1);
     const declared = (data.manifest && data.manifest.bundles || []).find((x) => x.alias === alias);
     const match = candidates.find((x) => x.bundle_alias === alias);
-    if (!declared || !match) return refuse(missing('workspace_alias'), diagnostic('workspace_alias_inactive_or_missing'));
+    if (!declared || !match) return { eligible, findings: [missing('workspace_alias'), diagnostic('workspace_alias_inactive_or_missing')] };
     eligible = [match];
   } else if (payload.link_from_bundle !== undefined) {
     eligible = candidates.filter((x) => x.bundle_alias === payload.link_from_bundle);
   } else {
     eligible = ordered(data, payload);
   }
-  if (!concept || concept.endsWith('.md') || concept.includes('..')) return refuse(missing('invalid_concept'));
-  if (!workspace && payload.explicit_bundle !== undefined && eligible.length === 0) return refuse(missing('explicit_bundle'));
+  if (!concept || concept.endsWith('.md') || concept.includes('..')) return { eligible, findings: [missing('invalid_concept')] };
+  if (!workspace && payload.explicit_bundle !== undefined && eligible.length === 0) return { eligible, findings: [missing('explicit_bundle')] };
   const found = [];
   for (const candidate of eligible) {
     const file = path.join(candidate.bundle_root, `${concept}.md`);
@@ -96,7 +96,14 @@ function resolve(data, payload, services) {
     if (seenRoots.has(root)) continue;
     seenRoots.add(root); unique.push(item);
   }
-  if (!unique.length) return refuse(missing('concept_not_found'));
+  return { concept, eligible, unique, workspace, findings: unique.length ? [] : [missing('concept_not_found')] };
+}
+
+function resolve(data, payload, services) {
+  const route = locate(data, payload, services);
+  if (route.findings.length) return refuse(...route.findings);
+  const { concept, unique } = route;
+  const findings = [];
   const selected = shape(unique[0].candidate, concept, unique[0].file);
   const lower = unique.slice(1).map((item) => shape(item.candidate, concept, item.file));
   if (lower.length) findings.push(diagnostic('duplicate_concept_id'));
@@ -146,4 +153,12 @@ function routeWrite(data, payload) {
   return { result: 'ok', data: { target: { bundle_alias: target.bundle_alias, bundle_root: target.bundle_root, path: path.relative(target.bundle_root, file) } }, findings: [] };
 }
 
-module.exports = { resolve, routeWrite };
+function read(data, payload, services) {
+  return navigation.read(data, payload, services, locate, activeCandidates);
+}
+
+function search(data, payload, services) {
+  return navigation.search(data, payload, services, activeCandidates);
+}
+
+module.exports = { resolve, routeWrite, read, search, notConfiguredData: navigation.notConfiguredData };

@@ -740,4 +740,4 @@ function validateRead(bundleRoot, services, options = {}) {
   };
 }
 
-module.exports = { evaluate, parseYAML, serializeFrontmatter, validateRead };
+module.exports = { evaluate, parseFrontmatter, parseYAML, serializeFrontmatter, validateRead };

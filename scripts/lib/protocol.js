@@ -50,6 +50,14 @@ function parseRequest(text, expectedSkill) {
     }
   }
   if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');
+  if (obj.operation === 'read') {
+    if (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '') throw new Error('Missing payload.cwd');
+    if (typeof obj.payload.target !== 'string' || obj.payload.target === '') throw new Error('Missing payload.target');
+  }
+  if (obj.operation === 'search') {
+    if (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '') throw new Error('Missing payload.cwd');
+    if (typeof obj.payload.query !== 'string' || obj.payload.query === '') throw new Error('Missing payload.query');
+  }
   if (obj.operation === 'route' && typeof obj.payload.concept !== 'string') throw new Error('Missing payload.concept');
 
   return obj;

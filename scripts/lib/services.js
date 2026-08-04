@@ -22,10 +22,14 @@ function gitRootOf(start) {
 
 function listFiles(root) {
   const files = [];
+  let complete = true;
 
   function visit(directory) {
     try {
-      if (fs.lstatSync(directory).isSymbolicLink()) return;
+      if (fs.lstatSync(directory).isSymbolicLink()) {
+        complete = false;
+        return;
+      }
       for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
         const file = path.join(directory, entry.name);
         if (entry.isDirectory()) {
@@ -34,11 +38,15 @@ function listFiles(root) {
           files.push(file);
         }
       }
-    } catch {}
+    } catch {
+      complete = false;
+    }
   }
 
   visit(path.resolve(root));
-  return files.sort();
+  files.sort();
+  Object.defineProperty(files, 'complete', { value: complete, enumerable: false, writable: true });
+  return files;
 }
 
 // Access and link probes are fallible queries whose failure is a status, never a

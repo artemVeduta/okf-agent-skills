@@ -531,7 +531,7 @@ test('the repository has no dependency manifest and scripts use only built-ins o
   const scripts = path.join(repo, 'scripts');
   assert.equal(fs.existsSync(scripts), true);
   assert.deepEqual(fs.readdirSync(path.join(scripts, 'lib')).sort(), [
-    'admission.js', 'manifest.js', 'presence.js', 'protocol.js', 'reach.js', 'routing.js',
+    'admission.js', 'manifest.js', 'navigation.js', 'presence.js', 'protocol.js', 'reach.js', 'routing.js',
     'runtime.js', 'services.js', 'trust.js', 'validation.js',
   ]);
 
