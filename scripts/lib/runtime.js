@@ -183,7 +183,14 @@ function runActive(skill, request, services) {
     return respond(request, outcome.result, admission.redact(outcome.data), outcome.findings);
   }
   if (skill === 'okf') return routerRun(request, services);
-  if (skill === 'okf-lifecycle' || skill === 'okf-review') return unknownOperation(request);
+  if (skill === 'okf-review') {
+    if (request.operation === 'review') {
+      const outcome = validation.evaluateReview(request, services);
+      return respond(request, outcome.result, outcome.data, outcome.findings);
+    }
+    return unknownOperation(request);
+  }
+  if (skill === 'okf-lifecycle') return unknownOperation(request);
   if (request.operation === 'route') return admitAndRoute(request, services, routing.routeWrite);
   if (request.operation !== 'revise') return unknownOperation(request);
 

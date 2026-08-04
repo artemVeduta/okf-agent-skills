@@ -135,7 +135,6 @@ test('unknown third-party frontmatter survives a real mutation as an equal parse
   assert.deepEqual(treeOf(path.join(bundle, 'concept.md')), {
     type: 'Note',
     title: 'Changed title',
-    verified: ['human: reviewer'],
     third_party: {
       string: 'hello',
       integer: 7,
@@ -150,6 +149,7 @@ test('unknown third-party frontmatter survives a real mutation as an equal parse
       mapping_sequence: [{ name: 'alpha', value: 1 }, { name: 'beta', value: false }],
     },
   });
+  assert.ok(finding(result.response, 'INLINE_VERIFICATION_INVALIDATED'));
   // Comments, mapping order, quote style, and scalar spelling are deliberately not asserted.
 });
 
@@ -238,6 +238,16 @@ test('verified is read bare or as a list and always written as a list', () => {
   assert.deepEqual(treeOf(path.join(bundle, 'concept.md')).verified, ['human: other']);
 });
 
+test('a written trust tier blocks revisions', () => {
+  const bundle = copyBundle();
+  const conceptPath = path.join(bundle, 'concept.md');
+  const before = fs.readFileSync(conceptPath);
+  const result = runWrapper(request(bundle, 'concept.md', { trust_tier: 'machine-confirmed' }));
+  assert.equal(result.response.result, 'blocked');
+  assert.ok(finding(result.response, 'WRITTEN_TRUST_TIER'));
+  assert.deepEqual(fs.readFileSync(conceptPath), before);
+});
+
 test('section, producer, and parse-tree blockers propagate only to derivatives', () => {
   const cases = [
     {
@@ -286,7 +296,13 @@ test('section, producer, and parse-tree blockers propagate only to derivatives',
 
     const independent = runWrapper(request(bundle, 'independent.md'));
     assert.equal(independent.response.result, 'ok');
-    assert.deepEqual(independent.response.findings, []);
+    assert.deepEqual(independent.response.findings, [{
+      code: 'INLINE_VERIFICATION_INVALIDATED',
+      origin: 'suite',
+      severity: 'warning',
+      blocks: false,
+      detail: { path: 'independent.md' },
+    }]);
   }
 });
 

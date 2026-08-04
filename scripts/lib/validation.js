@@ -502,12 +502,26 @@ function evaluate(request, services) {
     return done('blocked', { path: rel });
   }
 
-  const tree = { ...current.tree, ...(request.payload.set || {}) };
+  const set = request.payload.set || {};
+  const tree = { ...current.tree, ...set };
+  if (Object.hasOwn(tree, 'trust_tier')) {
+    findings.push(blocker('WRITTEN_TRUST_TIER', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
   checkBundleFiles(bundleRoot, svc, findings);
   checkConcept(tree, rel, findings);
   checkLinks(tree, rel, bundleRoot, svc, findings);
   checkUpstreams(tree, rel, bundleRoot, svc, findings);
   if (findings.some((f) => f.blocks)) return done('blocked', { path: rel });
+
+  const verificationPreservingFields = new Set(['status', 'stale_after', 'generated', 'verified', 'format']);
+  const verificationInvalidated = Object.keys(set).some((field) => (
+    !verificationPreservingFields.has(field) && !parseTreeEqual(current.tree[field], set[field]).equal
+  ));
+  if (verificationInvalidated) {
+    delete tree.verified;
+    findings.push(warn('INLINE_VERIFICATION_INVALIDATED', 'suite', { path: rel }));
+  }
 
   if ('verified' in tree && !Array.isArray(tree.verified)) tree.verified = [tree.verified];
 
@@ -743,4 +757,119 @@ function validateRead(bundleRoot, services, options = {}) {
   };
 }
 
-module.exports = { evaluate, parseFrontmatter, parseYAML, serializeFrontmatter, validateRead };
+function reviewFinding(code, blocks, detail) {
+  return { code, origin: 'suite', severity: blocks ? 'error' : 'warning', blocks, detail };
+}
+
+function reviewVerifiers(bundleRoot, services) {
+  try {
+    const index = readTree(path.join(bundleRoot, 'index.md'), services).tree.review_verifiers;
+    return typeof index === 'string' ? [index] : Array.isArray(index) ? index.filter((value) => typeof value === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function verificationTier(tree, rel, verifiers, findings) {
+  const events = tree.verified === undefined ? [] : (Array.isArray(tree.verified) ? tree.verified : [tree.verified]);
+  let machine = false;
+  let human = false;
+  const unqualified = (index, reason) => findings.push(reviewFinding('UNQUALIFIED_VERIFICATION', false, { path: rel, index, reason }));
+
+  events.forEach((event, index) => {
+    if (typeof event === 'string') return unqualified(index, 'legacy string event');
+    if (!event || typeof event !== 'object' || Array.isArray(event)) return unqualified(index, 'invalid event');
+    if (event.kind === 'machine') {
+      if (typeof event.by !== 'string' || event.by === '') return unqualified(index, 'missing machine by');
+      if (event.coverage !== 'complete-current-concept') return unqualified(index, 'incomplete machine coverage');
+      machine = true;
+      return;
+    }
+    if (event.kind === 'human') {
+      if (typeof event.verifier !== 'string' || event.verifier === '') return unqualified(index, 'missing human verifier');
+      if (event.coverage !== 'complete-current-concept') return unqualified(index, 'incomplete human coverage');
+      if (!verifiers.includes(event.verifier)) return unqualified(index, 'unapproved human verifier');
+      human = true;
+      return;
+    }
+    unqualified(index, 'unknown verification kind');
+  });
+
+  return human ? 'human-reviewed' : machine ? 'machine-confirmed' : 'unverified';
+}
+
+function configuredReview(bundleRoot, rel, services) {
+  const configPath = path.join(bundleRoot, '.okf-review.json');
+  if (!services.exists(configPath)) return { state: 'not configured' };
+  let config;
+  try {
+    config = JSON.parse(readText(services.readFile(configPath)));
+  } catch {
+    return { state: 'unobservable' };
+  }
+  const dependencies = config && config.concepts && config.concepts[rel] && config.concepts[rel].dependencies;
+  if (!Array.isArray(dependencies) || dependencies.length === 0) return { state: 'not configured' };
+
+  const observed = dependencies.map((dependency) => {
+    if (!dependency || typeof dependency.path !== 'string' || dependency.path === '') return { state: 'unobservable' };
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(dependency.path)) return { path: dependency.path, state: 'unobservable' };
+    const file = path.resolve(bundleRoot, dependency.path);
+    if (!inside(file, bundleRoot) || file === bundleRoot) return { path: dependency.path, state: 'unobservable' };
+    if (!services.exists(file)) return { path: dependency.path, state: 'unavailable' };
+    if (!Object.hasOwn(dependency, 'baseline')) return { path: dependency.path, state: 'review needed: no baseline' };
+    try {
+      return { path: dependency.path, state: readText(services.readFile(file)) === dependency.baseline ? 'clean' : 'changed' };
+    } catch {
+      return { path: dependency.path, state: 'unobservable' };
+    }
+  });
+  const states = observed.map((dependency) => dependency.state);
+  const state = states.includes('unobservable') ? 'unobservable'
+    : states.includes('review needed: no baseline') ? 'review needed: no baseline'
+      : states.includes('changed') ? 'changed'
+        : states.includes('unavailable') ? 'unavailable' : 'clean';
+  return { state, dependencies: observed };
+}
+
+function evaluateReview(request, services) {
+  const bundleRoot = path.resolve(request.payload.bundle);
+  const rel = request.payload.concept;
+  const conceptPath = path.resolve(bundleRoot, rel);
+  const findings = [];
+  const fallback = {
+    path: rel,
+    trust_tier: 'unverified',
+    staleness: { state: 'not configured' },
+    review_dependencies: { state: 'unobservable' },
+  };
+  if (!inside(conceptPath, bundleRoot) || conceptPath === bundleRoot || !services.exists(conceptPath)) {
+    return { result: 'failed/incomplete', data: fallback, findings };
+  }
+
+  let tree;
+  try {
+    tree = readTree(conceptPath, services).tree;
+  } catch {
+    return { result: 'failed/incomplete', data: fallback, findings };
+  }
+  const today = typeof request.payload.today === 'string' ? request.payload.today : new Date().toISOString().slice(0, 10);
+  const staleness = typeof tree.stale_after === 'string'
+    ? { state: today >= tree.stale_after ? 'stale' : 'current', stale_after: tree.stale_after }
+    : { state: 'not configured' };
+  const reviewDependencies = configuredReview(bundleRoot, rel, services);
+  const data = {
+    path: rel,
+    trust_tier: verificationTier(tree, rel, reviewVerifiers(bundleRoot, services), findings),
+    staleness,
+    review_dependencies: reviewDependencies,
+  };
+  if (Object.hasOwn(tree, 'trust_tier')) {
+    findings.push(reviewFinding('WRITTEN_TRUST_TIER', true, { path: rel }));
+  }
+  const result = findings.some((finding) => finding.blocks) ? 'blocked'
+    : reviewDependencies.state === 'unobservable' ? 'failed/incomplete'
+      : ['review needed: no baseline', 'changed', 'unavailable'].includes(reviewDependencies.state) ? 'review needed' : 'no-op';
+  return { result, data, findings: sortFindings(findings) };
+}
+
+module.exports = { evaluate, evaluateReview, parseFrontmatter, parseYAML, serializeFrontmatter, validateRead };
