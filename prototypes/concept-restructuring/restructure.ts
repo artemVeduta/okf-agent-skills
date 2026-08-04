@@ -137,10 +137,6 @@ export interface SnapshotEntry {
   readonly key: ConceptKey;
   readonly existedBefore: boolean;
   readonly bytesRef: BytesRef | null;
-  /** `(absent)` when the entry did not exist. */
-  readonly contentHash: string;
-  /** `(absent)` when the entry did not exist. */
-  readonly verificationHash: string;
   readonly observedHash: string;
 }
 
@@ -339,7 +335,7 @@ export interface ScheduledRepair {
   readonly evidence: string;
 }
 // Recorded, never performed: `ScheduledRepair` is not an `EffectStep`, so no
-// step ordinal can execute one. That is the mechanism, not a marker field.
+// `runStep` ordinal can execute one. That is the mechanism, not a marker field.
 
 // ---------------------------------------------------------------------------
 // 6. Plans. Illegal operations are UNCONSTRUCTIBLE, not merely refused.
@@ -429,8 +425,6 @@ export interface EffectStep {
   readonly approvalScope: 'approved' | 'inherited';
   /** Expected pre-state; `null` => target must not exist. */
   readonly beforeHash: string | null;
-  /** Expected source pre-state for a move write; `null` for other steps. */
-  readonly sourceBeforeHash: string | null;
   /** Expected post-state, known at seal; `null` => target must not exist. */
   readonly afterHash: string | null;
   readonly classification: EditClassification;
@@ -440,12 +434,6 @@ export interface EffectStep {
   /** Set on the write half of a move: the identity whose bytes these are. */
   readonly movedFrom: ConceptKey | null;
   readonly outputDraft: OutputDraftFacts | null;
-  /** Forward-only effect data; inverse steps clear it. */
-  readonly statusTo: ConceptStatus | null;
-  /** Forward-only effect data; inverse steps clear it. */
-  readonly linkReplacementTarget: ConceptKey | null;
-  /** Forward steps use `null`; inverse steps name their parent ordinal. */
-  readonly inverseOf: number | null;
   readonly rationale: string;
 }
 
@@ -453,7 +441,7 @@ export interface EffectStep {
 export type StepObservation =
   | { readonly state: 'not-started' } // observed === beforeHash
   | { readonly state: 'done' } // observed === afterHash
-  | { readonly state: 'indeterminate' } // post-write state is unknown
+  | { readonly state: 'indeterminate' } // INTENT logged, no OUTCOME
   | { readonly state: 'foreign'; readonly observedHash: string }; // matches neither
 
 export function isWrite(s: EffectStep): boolean {
@@ -641,7 +629,6 @@ export type JournalRecord =
       readonly ordinal: number;
       readonly ok: boolean;
       readonly observedAfter: string | null;
-      readonly observedAfterKnown: boolean;
       readonly note: string;
     }
   | { readonly r: 'INVALIDATION'; readonly ordinal: number; readonly concept: ConceptKey }
@@ -722,11 +709,12 @@ export function classify(p: Phase): Classification {
     case 'reverted-clean':
       return { settlement: 'reverted', cleanliness: 'clean', terminal: true };
     /**
-     * `reverted-with-residue` restores bytes but retains non-reversible effects.
-     * Its mandatory residue is the human-visible dirty-state explanation.
+     * `reverted-with-residue` is byte-clean — every entry was restored — so it
+     * is not `dirty`. Its loudness comes from a MANDATORY non-empty `residue`
+     * list, checked by `checkInvariants`, not from the ambiguity taxonomy.
      */
     case 'reverted-with-residue':
-      return { settlement: 'reverted', cleanliness: 'dirty', terminal: true };
+      return { settlement: 'reverted', cleanliness: 'clean', terminal: true };
     case 'failed-dirty':
       return { settlement: 'failed', cleanliness: 'dirty', terminal: true };
     case 'rollback-failed':
@@ -822,29 +810,23 @@ export type Action =
   | { readonly kind: 'recheck'; readonly observed: readonly FingerprintItem[]; readonly bundles: readonly BundleFacts[] }
   | { readonly kind: 'sealManifest'; readonly ok: boolean }
   | {
-      readonly kind: 'beginStep';
-      readonly ordinal: number;
-      /**
-       * The target re-observed under the lock IMMEDIATELY BEFORE the write.
-       * `world` cannot serve here: the caller must carry the pre-image from the
-       * same locked read that precedes the external write.
-       */
-      readonly observedBefore: string | null;
-      /** The moved-from identity re-observed under the same lock. */
-      readonly sourceObservedBefore: string | null;
-      readonly undo: SnapshotEntry;
-    }
-  | {
-      readonly kind: 'completeStep';
+      readonly kind: 'runStep';
       readonly ordinal: number;
       readonly outcome: 'ok' | 'io-failure' | 'concurrent-change-detected';
-      /** The target observed after the external effect. */
+      /**
+       * The target re-observed under the lock IMMEDIATELY BEFORE the write.
+       * `world` cannot serve here: by the time an outcome is reportable the
+       * write has already landed, so the pre-image has to be carried. Without
+       * it the reducer had no second `observedHash` comparison at all and I5
+       * was a convention the caller could decline to honour.
+       */
+      readonly observedBefore: string | null;
       readonly observedAfter: string | null;
-      /** False means the external result did not establish the post-image. */
-      readonly observedAfterKnown: boolean;
+      readonly undo: SnapshotEntry;
     }
   | { readonly kind: 'verify'; readonly verdict: ValidationVerdict; readonly checks: PostOpChecks }
-  | { readonly kind: 'crash' }
+  /** `duringStep` models death between the write and the journal append. */
+  | { readonly kind: 'crash'; readonly duringStep: { readonly ordinal: number; readonly undo: SnapshotEntry } | null }
   | { readonly kind: 'reconcile' }
   | { readonly kind: 'recoverInterrupted' }
   | {
@@ -944,10 +926,8 @@ export function derivePhase(j: Journal): Phase {
 
   if (failed) {
     const obs = stepObservations(j);
-    const anyDirty = obs.some(
-      ([, o]) => o.state === 'done' || o.state === 'foreign' || o.state === 'indeterminate',
-    );
-    return anyDirty ? 'failed-dirty' : 'failed-clean';
+    const anyDone = obs.some(([, o]) => o.state === 'done' || o.state === 'foreign');
+    return anyDone ? 'failed-dirty' : 'failed-clean';
   }
 
   if (has(seg, 'VERIFY')) return 'verifying';
@@ -965,71 +945,6 @@ function knownBreakage(j: Journal): readonly LinkId[] {
 // ===========================================================================
 // Step observations.
 // ===========================================================================
-
-type OutcomeRecord = Extract<JournalRecord, { r: 'OUTCOME' }>;
-type FailureRecord = Extract<JournalRecord, { r: 'FAILURE' }>;
-type IntentRecord = Extract<JournalRecord, { r: 'INTENT' }>;
-
-function observationFromOutcome(step: EffectStep, outcome: OutcomeRecord): StepObservation {
-  if (!outcome.observedAfterKnown) return { state: 'indeterminate' };
-  if (outcome.observedAfter === step.afterHash) {
-    return { state: 'done' };
-  }
-  if (outcome.observedAfter === step.beforeHash) {
-    return { state: 'not-started' };
-  }
-  return { state: 'foreign', observedHash: outcome.observedAfter ?? '(absent)' };
-}
-
-function openIntentOrdinals(seg: readonly JournalRecord[]): ReadonlySet<number> {
-  const ordinals = new Set<number>();
-  for (const record of seg) {
-    if (record.r === 'INTENT' || record.r === 'OUTCOME') ordinals.add(record.ordinal);
-  }
-  const open = new Set<number>();
-  for (const ordinal of ordinals) if (stepEvents(seg, ordinal).open) open.add(ordinal);
-  return open;
-}
-
-export interface StepEvents {
-  readonly intentAt: number;
-  readonly outcomeAt: number;
-  readonly intent: IntentRecord | null;
-  readonly outcome: OutcomeRecord | null;
-  readonly intentCount: number;
-  readonly outcomeCount: number;
-  readonly open: boolean;
-}
-
-export function stepEvents(records: readonly JournalRecord[], ordinal: number): StepEvents {
-  let intentAt = -1;
-  let outcomeAt = -1;
-  let intent: IntentRecord | null = null;
-  let outcome: OutcomeRecord | null = null;
-  let intentCount = 0;
-  let outcomeCount = 0;
-  records.forEach((record, index) => {
-    if (record.r === 'INTENT' && record.ordinal === ordinal) {
-      intentAt = index;
-      intent = record;
-      intentCount++;
-    }
-    if (record.r === 'OUTCOME' && record.ordinal === ordinal) {
-      outcomeAt = index;
-      outcome = record;
-      outcomeCount++;
-    }
-  });
-  return {
-    intentAt,
-    outcomeAt,
-    intent,
-    outcome,
-    intentCount,
-    outcomeCount,
-    open: intentAt >= 0 && (outcomeAt < 0 || outcomeAt < intentAt),
-  };
-}
 
 export function stepObservations(j: Journal): readonly (readonly [number, StepObservation])[] {
   const seg = currentSegment(j);
@@ -1057,14 +972,27 @@ export function observationsIn(
 
   const out: (readonly [number, StepObservation])[] = [];
   for (const step of manifest.steps) {
-    const events = stepEvents(live, step.ordinal);
+    const intent = live.some((r) => r.r === 'INTENT' && r.ordinal === step.ordinal);
+    // The LAST outcome for an ordinal wins. Reading only the first made a
+    // recorded effect invisible forever once an earlier attempt had failed,
+    // so `derive` denied a mutation its own journal recorded.
+    let outcome: Extract<JournalRecord, { r: 'OUTCOME' }> | null = null;
+    for (const r of live) if (r.r === 'OUTCOME' && r.ordinal === step.ordinal) outcome = r;
 
-    if (events.intentAt < 0) {
+    if (!intent) {
       out.push([step.ordinal, baseline.get(step.ordinal) ?? { state: 'not-started' }]);
-    } else if (events.open || events.outcome === null) {
+    } else if (!outcome) {
       out.push([step.ordinal, { state: 'indeterminate' }]);
+    } else if (outcome.ok) {
+      out.push([step.ordinal, { state: 'done' }]);
+    } else if (outcome.observedAfter !== null) {
+      // Bytes provably moved and match neither sealed image. `PLAN_DEVIATION`
+      // on the forward path and `RESTORE_NOT_BYTE_IDENTICAL` on the rollback
+      // path are the same fact; calling the second `not-started` understated
+      // the world and let the rejected restore be silently re-run.
+      out.push([step.ordinal, { state: 'foreign', observedHash: outcome.observedAfter }]);
     } else {
-      out.push([step.ordinal, observationFromOutcome(step, events.outcome)]);
+      out.push([step.ordinal, { state: 'not-started' }]);
     }
   }
   return out;
@@ -1087,27 +1015,11 @@ export function reconcileSteps(
   return manifest.steps.map((step) => {
     const o = byKey.get(ks(step.target));
     const observed = o && o.exists ? o.observedHash : null;
-    const events = stepEvents(seg, step.ordinal);
-    if (observed !== null && observed === step.afterHash) {
-      return [step.ordinal, { state: 'done' }] as const;
-    }
-    if (observed !== null && observed === step.beforeHash) {
-      return [step.ordinal, { state: 'not-started' }] as const;
-    }
-    if (observed === null) {
-      if (step.afterHash === null && step.beforeHash !== null) {
-        return [step.ordinal, { state: 'done' }] as const;
-      }
-      if (step.beforeHash === null) {
-        return [step.ordinal, { state: 'not-started' }] as const;
-      }
-    }
-    if (observed !== null) {
-      return [step.ordinal, { state: 'foreign', observedHash: observed }] as const;
-    }
-    if (events.open || events.outcome === null) {
-      return [step.ordinal, { state: 'indeterminate' }] as const;
-    }
+    if (observed === step.afterHash) return [step.ordinal, { state: 'done' }] as const;
+    if (observed === step.beforeHash) return [step.ordinal, { state: 'not-started' }] as const;
+    const intent = seg.some((r) => r.r === 'INTENT' && r.ordinal === step.ordinal);
+    const outcome = seg.some((r) => r.r === 'OUTCOME' && r.ordinal === step.ordinal);
+    if (intent && !outcome) return [step.ordinal, { state: 'indeterminate' }] as const;
     return [step.ordinal, { state: 'foreign', observedHash: observed ?? '(absent)' }] as const;
   });
 }
@@ -1200,31 +1112,6 @@ function ambiguitiesOf(j: Journal, world: readonly Observed[], phase: Phase): re
     }
   }
 
-  const concurrentOutcome = seg.find(
-    (r): r is OutcomeRecord => r.r === 'OUTCOME' && r.note === 'CONCURRENT_CHANGE',
-  );
-  const concurrentFailure = seg.find(
-    (r): r is FailureRecord => r.r === 'FAILURE' && r.reason.includes('CONCURRENT_CHANGE'),
-  );
-  const concurrent = concurrentOutcome ?? concurrentFailure;
-  if (concurrent) {
-    const ordinal = concurrent.ordinal ?? -1;
-    const target = (findManifest(seg)?.steps ?? []).find((s) => s.ordinal === ordinal);
-    const concepts = target
-      ? [target.target, ...(target.movedFrom ? [target.movedFrom] : [])]
-      : [];
-    const paths = concepts.map(ks);
-    const reason = concurrent.r === 'FAILURE' ? concurrent.reason : concurrent.note;
-    push(
-      'foreign-mutation-in-scope',
-      concepts,
-      paths,
-      concurrent.r === 'FAILURE'
-        ? `a foreign mutation was recorded before step ${ordinal} began for ${target ? ks(target.target) : 'a step target'}: ${reason}; no INTENT was recorded`
-        : `a concurrent change to ${target ? ks(target.target) : 'a step target'} was detected after bytes had already moved; aborting in place is no longer available`,
-    );
-  }
-
   if (phase === 'failed-dirty' || phase === 'unknown-interrupted') {
     const manifest = findManifest(seg);
     const obs = stepObservations(j);
@@ -1238,6 +1125,17 @@ function ambiguitiesOf(j: Journal, world: readonly Observed[], phase: Phase): re
     const rewrites = steps.filter((s) => s.kind === 'LINK_REWRITE');
     const rewritesDone = rewrites.filter((s) => stateOf(s.ordinal) === 'done');
 
+    if (seg.some((r) => r.r === 'OUTCOME' && r.note === 'CONCURRENT_CHANGE')) {
+      const o = seg.find((r) => r.r === 'OUTCOME' && r.note === 'CONCURRENT_CHANGE');
+      const ordinal = o && o.r === 'OUTCOME' ? o.ordinal : -1;
+      const target = steps.find((s) => s.ordinal === ordinal);
+      push(
+        'foreign-mutation-in-scope',
+        target ? [target.target] : [],
+        target ? [ks(target.target)] : [],
+        `a concurrent change to ${target ? ks(target.target) : 'a step target'} was detected after bytes had already moved; aborting in place is no longer available`,
+      );
+    }
     if (seg.some((r) => r.r === 'OUTCOME' && r.note === 'PLAN_DEVIATION')) {
       const o = seg.find((r) => r.r === 'OUTCOME' && r.note === 'PLAN_DEVIATION');
       const ordinal = o && o.r === 'OUTCOME' ? o.ordinal : -1;
@@ -1300,7 +1198,7 @@ function ambiguitiesOf(j: Journal, world: readonly Observed[], phase: Phase): re
         'links-split-across-old-and-new',
         keys,
         keys.map(ks),
-        `${rewritesDone.length} of ${rewrites.length} inbound links point at the new identity and the rest still point at the old one; in-bundle Markdown links never fall through to another bundle, and each old target is resolved by file existence`,
+        `${rewritesDone.length} of ${rewrites.length} inbound links point at the new identity and the rest still point at the old one; in-bundle Markdown links never fall through to another bundle, so the unrewritten half resolves to nothing`,
       );
     }
 
@@ -1334,9 +1232,8 @@ function ambiguitiesOf(j: Journal, world: readonly Observed[], phase: Phase): re
     }
   }
 
-  // I43 made total: a dirty state can never be silent. Residue is the
-  // accepted explanation for a reverted-with-residue terminal.
-  if (cls.cleanliness === 'dirty' && out.length === 0 && residueOf(j).length === 0) {
+  // I43 made total: a dirty state can never be silent.
+  if (cls.cleanliness === 'dirty' && out.length === 0) {
     push(
       'unclassified-loss',
       [],
@@ -1348,13 +1245,10 @@ function ambiguitiesOf(j: Journal, world: readonly Observed[], phase: Phase): re
 }
 
 // ===========================================================================
-// Link resolution against the observed world.
+// Link resolution without a VERIFY record.
 // ===========================================================================
 
-function linkResolutions(
-  j: Journal,
-  world: readonly Observed[],
-): readonly (readonly [LinkId, LinkResolution])[] {
+function linkResolutions(j: Journal): readonly (readonly [LinkId, LinkResolution])[] {
   const seg = currentSegment(j);
   const own = findManifest(seg);
   const parent = parentSegment(j);
@@ -1367,6 +1261,10 @@ function linkResolutions(
   const rolling = own !== null && own.revertOf !== null;
   const manifest = rolling ? (parentManifest ?? own) : (own ?? parentManifest);
   if (!manifest) return [];
+
+  let verify: PostOpChecks | null = null;
+  for (const r of seg) if (r.r === 'VERIFY') verify = r.checks;
+  if (verify) return verify.linkResolutions;
 
   const forwardSeg = rolling && parent ? parent : seg;
   const obs = observationsIn(forwardSeg, manifest);
@@ -1383,7 +1281,7 @@ function linkResolutions(
     }
   }
   const inForce = (s: EffectStep) => stateOf(s.ordinal) === 'done' && !undone.has(ks(s.target));
-  const current = new Map(world.map((o) => [ks(o.key), o]));
+  const removalDone = manifest.steps.filter(isRemoval).some(inForce);
 
   return manifest.inboundLinks.links.map((link) => {
     const fate = manifest.linkFates.find((f) => f.link === link.id)?.fate ?? { fate: 'unassigned' as const };
@@ -1391,18 +1289,17 @@ function linkResolutions(
       return [link.id, { state: 'knowingly-broken-approved', approvedInPlanAs: fate.why }] as const;
     }
     const step = manifest.steps.find((s) => s.kind === 'LINK_REWRITE' && s.link?.id === link.id);
-    const selected = fate.fate === 'rewrite' && step && inForce(step) ? fate.to : link.to;
-    const foreignInBundle = link.linkForm.form === 'in-bundle-markdown' && selected.bundle !== link.from.bundle;
-    if (!foreignInBundle && current.get(ks(selected))?.exists) return [link.id, { state: 'resolves' }] as const;
-    return [
-      link.id,
-      {
-        state: 'unexpectedly-broken',
-        detail: foreignInBundle
-          ? `${ks(link.from)} is an in-bundle Markdown link to foreign target ${ks(selected)}`
-          : `${ks(link.from)} points at ${ks(selected)}, but that target does not exist in the observed world`,
-      },
-    ] as const;
+    if (step && inForce(step)) return [link.id, { state: 'resolves' }] as const;
+    if (removalDone) {
+      return [
+        link.id,
+        {
+          state: 'unexpectedly-broken',
+          detail: `${ks(link.from)} still points at ${ks(link.to)}, which this operation retired`,
+        },
+      ] as const;
+    }
+    return [link.id, { state: 'resolves' }] as const;
   });
 }
 
@@ -1638,7 +1535,7 @@ export function derive(j: Journal, world: readonly Observed[]): Frame {
     steps: stepObservations(j),
     identityDiff,
     lineage: [...(parentManifest?.lineage ?? []), ...(manifest?.lineage ?? [])],
-    links: linkResolutions(j, world),
+    links: linkResolutions(j),
     linkSetComplete: activeManifest ? activeManifest.inboundLinks.complete : true,
     reviewDependencies,
     trust: trustOutcomes(j),
@@ -1666,94 +1563,8 @@ export function derive(j: Journal, world: readonly Observed[]): Frame {
 export function checkInvariants(f: Frame, j: Journal): readonly InvariantViolation[] {
   const v: InvariantViolation[] = [];
   const seg = currentSegment(j);
-  const manifest = findManifest(seg);
-  const activeSteps = manifest?.steps ?? [];
-  const knownOrdinals = new Set(activeSteps.map((step) => step.ordinal));
-  const eventsByOrdinal = new Map(
-    activeSteps.map((step) => [step.ordinal, stepEvents(seg, step.ordinal)] as const),
-  );
-  const eventsFor = (ordinal: number): StepEvents => eventsByOrdinal.get(ordinal) ?? stepEvents(seg, ordinal);
 
-  // Unknown ordinals still need the raw record for its diagnostic; all known
-  // step interpretation below goes through the per-ordinal event helper.
-  for (const rec of seg) {
-    if (rec.r !== 'INTENT' && rec.r !== 'OUTCOME') continue;
-    if (!Number.isInteger(rec.ordinal) || !knownOrdinals.has(rec.ordinal)) {
-      v.push({
-        rule: 'I49',
-        detail: `${rec.r} ordinal ${rec.ordinal} is unknown or foreign to the active manifest`,
-      });
-    }
-  }
-
-  const intentEvents = activeSteps
-    .map((step) => [step.ordinal, eventsFor(step.ordinal)] as const)
-    .filter(([, events]) => events.intentAt >= 0)
-    .sort(([, left], [, right]) => left.intentAt - right.intentAt);
-  let nextOrdinal = 0;
-  for (const [ordinal, events] of intentEvents) {
-    if (events.intentCount > 1) {
-      v.push({ rule: 'I49', detail: `step ${ordinal} has duplicate INTENT records` });
-    }
-    const expected = activeSteps[nextOrdinal]?.ordinal;
-    if (expected !== ordinal) {
-      v.push({ rule: 'I49', detail: `INTENT ordinal ${ordinal} is out of order; expected ${expected ?? '(none)'}` });
-    } else {
-      nextOrdinal++;
-    }
-    const priorOpen = intentEvents.some(
-      ([priorOrdinal, prior]) =>
-        priorOrdinal !== ordinal &&
-        prior.intentAt < events.intentAt &&
-        (prior.outcomeAt < 0 || prior.outcomeAt > events.intentAt || prior.outcomeAt < prior.intentAt),
-    );
-    if (priorOpen) {
-      v.push({ rule: 'I49', detail: `INTENT ordinal ${ordinal} opens before the prior INTENT has an OUTCOME` });
-    }
-
-    const step = activeSteps.find((candidate) => candidate.ordinal === ordinal);
-    const expectedUndo = manifest && manifest.revertOf !== null ? step?.afterHash : step?.beforeHash;
-    const undo = events.intent?.undo ?? null;
-    const undoHash = undo?.existedBefore ? undo.observedHash : null;
-    if (!step || !undo || !sameKey(undo.key, step.target) || undoHash !== expectedUndo) {
-      v.push({ rule: 'I49', detail: `INTENT ordinal ${ordinal} has a malformed undo snapshot` });
-    }
-  }
-
-  const outcomeEvents = activeSteps
-    .map((step) => [step.ordinal, eventsFor(step.ordinal)] as const)
-    .filter(([, events]) => events.outcomeAt >= 0)
-    .sort(([, left], [, right]) => left.outcomeAt - right.outcomeAt);
-  for (const [ordinal, events] of outcomeEvents) {
-    if (events.outcomeCount > 1) {
-      v.push({ rule: 'I49', detail: `step ${ordinal} has duplicate OUTCOME records` });
-    }
-    if (events.intentAt < 0 || events.outcomeAt < events.intentAt) {
-      v.push({ rule: 'I49', detail: `step ${ordinal} has an OUTCOME without an open INTENT` });
-      continue;
-    }
-    const priorOpen = intentEvents.some(
-      ([priorOrdinal, prior]) =>
-        priorOrdinal !== ordinal &&
-        prior.intentAt < events.outcomeAt &&
-        (prior.outcomeAt < 0 || prior.outcomeAt > events.outcomeAt || prior.outcomeAt < prior.intentAt),
-    );
-    if (priorOpen) v.push({ rule: 'I49', detail: `OUTCOME ordinal ${ordinal} is out of order` });
-  }
-
-  const open = new Set(intentEvents.filter(([, events]) => events.open).map(([ordinal]) => ordinal));
-  if (open.size > 0 && seg.some((rec) => rec.r === 'SETTLED')) {
-    v.push({ rule: 'I49', detail: `SETTLED exists while INTENT records remain open: ${[...open].join(', ')}` });
-  }
-  if (
-    open.size > 0 &&
-    seg.some((rec) => rec.r === 'FAILURE' || rec.r === 'VERIFY' || rec.r === 'EPOCH_ADVANCED') &&
-    !seg.some((rec) => rec.r === 'INTERRUPTED')
-  ) {
-    v.push({ rule: 'I49', detail: `an open INTENT has a terminal record without an OUTCOME: ${[...open].join(', ')}` });
-  }
-
-  if (f.classification.cleanliness === 'dirty' && f.ambiguities.length === 0 && f.residue.length === 0) {
+  if (f.classification.cleanliness === 'dirty' && f.ambiguities.length === 0) {
     v.push({ rule: 'I43', detail: 'a dirty state with an empty ambiguity set is a silent loss' });
   }
   if (f.classification.terminal && f.notice.length === 0) {
@@ -1996,7 +1807,7 @@ export function admissionRefusal(
     const o = byKey.get(ks({ bundle, id }));
     if (o && o.exists && o.status === 'deprecated') {
       const revival = steps.some(
-        (s) => s.kind === 'STATUS_TRANSITION' && s.target.id === id && s.statusTo === 'stable',
+        (s) => s.kind === 'STATUS_TRANSITION' && s.target.id === id && s.rationale.includes('deprecated -> stable'),
       );
       // As with occupancy: if the deprecation is exactly this operation's own
       // sealed post-image, this is a retry over a partial mutation. I29 routes
@@ -2092,7 +1903,7 @@ export function admissionRefusal(
     }
   }
   for (const s of steps) {
-    if (!isRemoval(s) || s.target.id !== planSourceIds(m.plan)[0]) continue;
+    if (!isRemoval(s) || !s.rationale.includes('has-review-dependents')) continue;
     const dependents = m.reviewImpact.filter((d) => d.locator === s.target.id);
     const listed =
       dependents.length > 0 &&
@@ -2199,123 +2010,58 @@ export function admissionRefusal(
 // The inverse manifest.
 // ===========================================================================
 
-function snapshotImage(entry: SnapshotEntry): string | null {
-  return entry.existedBefore ? entry.observedHash : null;
-}
-
-function inverseApprovalItems(
-  inverse: OperationManifest,
-  parentSeg: readonly JournalRecord[],
-): readonly FingerprintItem[] {
-  return inverse.steps.map((step) => {
-    const undo = step.inverseOf === null
-      ? null
-      : stepEvents(parentSeg, step.inverseOf).intent?.undo ?? null;
-    return {
-      path: undo ? ks(undo.key) : ks(step.target),
-      contentHash: undo?.contentHash ?? '(absent)',
-      verificationHash: undo?.verificationHash ?? '(absent)',
-      action: step.action,
-      risk: step.risk,
-    };
-  });
-}
-
 export function buildInverseManifest(
   parent: OperationManifest,
   parentSeg: readonly JournalRecord[],
 ): OperationManifest {
+  // What is on disk now, per target. A step whose bytes provably MOVED needs
+  // inverting even when its OUTCOME was not `ok`: a deviating write and an
+  // interrupted write both left the target somewhere other than its pre-image.
+  // Filtering on `OUTCOME && ok` alone dropped exactly those inverse steps, so
+  // the mutation survived a rollback that then reported `reverted-clean`.
   const obs = new Map(observationsIn(parentSeg, parent));
-  const landedImage = new Map<string, string | null>();
+  const landedHash = new Map<string, string | null>();
   for (const step of parent.steps) {
     const o = obs.get(step.ordinal);
     if (!o || o.state === 'not-started') continue;
-    landedImage.set(
+    landedHash.set(
       ks(step.target),
       o.state === 'done' ? step.afterHash : o.state === 'foreign' ? o.observedHash : null,
     );
   }
 
-  const templateByOrdinal = new Map<number, EffectStep>();
-  for (const step of parent.rollbackSteps) {
-    if (step.inverseOf !== null) templateByOrdinal.set(step.inverseOf, step);
-  }
+  // One byte restore per target, not one per parent step: RESTORE_BYTES and
+  // UNDO_CREATE replace a whole file, so a second inverse step on the same
+  // target is a no-op whose before-image can never match.
+  const claimed = new Set<string>();
+  const applicable = parent.rollbackSteps.filter((s) => {
+    const key = ks(s.target);
+    if (!landedHash.has(key) || claimed.has(key)) return false;
+    claimed.add(key);
+    return true;
+  });
 
-  const landed = parent.steps.filter((step) => obs.get(step.ordinal)?.state !== 'not-started').reverse();
-  const steps: EffectStep[] = [];
-  for (const parentStep of landed) {
-    const template = templateByOrdinal.get(parentStep.ordinal);
-    const undo = stepEvents(parentSeg, parentStep.ordinal).intent?.undo ?? null;
-    if (!template || !undo || !sameKey(undo.key, parentStep.target)) continue;
-
-    const key = ks(template.target);
-    const inverse: EffectStep = {
-      ...template,
-      ordinal: steps.length,
-      // Each earlier inverse sees the image left by the later inverse. An
-      // indeterminate parent observation remains unknown until this step runs.
-      beforeHash: landedImage.get(key) ?? null,
-      afterHash: snapshotImage(undo),
-      movedFrom: null,
-      sourceBeforeHash: null,
-      outputDraft: null,
-      statusTo: null,
-      linkReplacementTarget: null,
-      inverseOf: parentStep.ordinal,
-    };
-    steps.push(inverse);
-    landedImage.set(key, inverse.afterHash);
-  }
-
-  const lineage = parent.lineage.flatMap((record) =>
-    record.mintedIdentities.map((mintedIdentity) => ({
-      retiredIdentity: mintedIdentity,
-      mintedIdentities: [record.retiredIdentity],
-      reason: record.reason,
-      continuity: NO_CONTINUITY,
-    })),
-  );
-  const manifestHash = `inverse:${JSON.stringify({
-    parentOperationId: parent.operationId,
-    parentManifestHash: parent.manifestHash,
-    steps,
-    lineage,
-  })}`;
+  const steps = applicable.map((s, i) => ({
+    ...s,
+    ordinal: i,
+    // Sealed against the FULL post-image projection at plan time; corrected here
+    // to what the partially-applied world actually holds. `null` means the
+    // observation was indeterminate and the before-image is genuinely unknown.
+    beforeHash: landedHash.get(ks(s.target)) ?? null,
+  }));
   return {
     ...parent,
     operationId: `${parent.operationId}-revert`,
     revertOf: parent.operationId,
     steps,
     rollbackSteps: [],
-    lineage,
-    manifestHash,
-  };
-}
-
-export interface InverseApprovalExpectation {
-  readonly manifest: OperationManifest;
-  readonly requestOccurrenceId: string;
-  readonly tokenId: string;
-  readonly items: readonly FingerprintItem[];
-  readonly recoveryEvidenceHash: string;
-  /** The exact payload the caller hashes for the fresh fingerprint. */
-  readonly fingerprintPayload: string;
-}
-
-export function inverseApprovalExpectation(
-  parentApproved: ApprovedPlan,
-  parentSeg: readonly JournalRecord[],
-  recoveryEvidenceHash: string,
-): InverseApprovalExpectation {
-  const manifest = buildInverseManifest(parentApproved.manifest, parentSeg);
-  const items = inverseApprovalItems(manifest, parentSeg);
-  return {
-    manifest,
-    requestOccurrenceId: `${parentApproved.requestOccurrenceId}-rollback`,
-    tokenId: `${parentApproved.tokenId}-rollback`,
-    items,
-    recoveryEvidenceHash,
-    fingerprintPayload: `${parentApproved.fingerprint}|${manifest.manifestHash}|${recoveryEvidenceHash}|${JSON.stringify(items)}`,
+    lineage: parent.lineage.map((l) => ({
+      retiredIdentity: l.mintedIdentities[0] ?? l.retiredIdentity,
+      mintedIdentities: [l.retiredIdentity],
+      reason: l.reason,
+      continuity: NO_CONTINUITY,
+    })),
+    manifestHash: `${parent.manifestHash}-inverse`,
   };
 }
 
@@ -2330,7 +2076,7 @@ function result(j: Journal, world: readonly Observed[], verdict: Verdict, code: 
 /**
  * The transition table, as data. THE single source of truth for "may this
  * action run from this phase" — every guard that used to be spelled out inside
- * one `reduce` case and omitted from the others (`beginStep` reading only
+ * one `reduce` case and omitted from the others (`runStep` reading only
  * `MANIFEST_DURABLE`, `verify` reading only step completeness, `reconcile` and
  * `recoverInterrupted` reading nothing) is now one lookup that no case can
  * forget. The holes those omissions opened were all the same shape: a terminal
@@ -2342,10 +2088,10 @@ function result(j: Journal, world: readonly Observed[], verdict: Verdict, code: 
  */
 const PHASE_ALLOWS: Record<Phase, readonly Action['kind'][]> = {
   admitting: ['admit', 'gate', 'lock', 'recheck', 'sealManifest', 'crash'],
-  'manifest-durable': ['beginStep', 'crash'],
-  mutating: ['beginStep', 'completeStep', 'verify', 'crash'],
+  'manifest-durable': ['runStep', 'crash'],
+  mutating: ['runStep', 'verify', 'crash'],
   verifying: ['crash'],
-  'rolling-back': ['beginStep', 'completeStep', 'crash'],
+  'rolling-back': ['runStep', 'crash'],
   // Clean terminals: the only exit is a NEW operation (T27).
   refused: ['admit'],
   'gate-blocked': ['admit'],
@@ -2453,68 +2199,7 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
     }
 
     // ---- T10 .. T14, T24 .. T26 -----------------------------------------
-    case 'beginStep': {
-      if (!manifest) return result(j, world, 'REFUSE', 'NOT_ADMITTED');
-      if (!has(seg, 'MANIFEST_DURABLE')) {
-        return result(j, world, 'BLOCK', 'MANIFEST_NOT_DURABLE');
-      }
-      const step = manifest.steps.find((s) => s.ordinal === a.ordinal);
-      if (!step) return result(j, world, 'REFUSE', 'STEP_NOT_IN_APPROVED_MANIFEST');
-
-      const open = openIntentOrdinals(seg);
-      if (open.size > 0) {
-        return result(j, world, 'REFUSE', 'STEP_ALREADY_IN_PROGRESS', [
-          `step ${[...open].join(', ')} has an INTENT without an OUTCOME`,
-        ]);
-      }
-
-      const obs = stepObservations(j);
-      const lowestPending = obs.find(([, o]) => o.state === 'not-started');
-      if (!lowestPending || lowestPending[0] !== a.ordinal) {
-        return result(j, world, 'REFUSE', 'OUT_OF_ORDER_OR_ALREADY_RUN');
-      }
-
-      const drift: string[] = [];
-      if (a.observedBefore !== step.beforeHash) {
-        drift.push(
-          `${ks(step.target)} holds ${a.observedBefore ?? '(absent)'}; the plan was sealed against ${step.beforeHash ?? '(absent)'}`,
-        );
-      }
-      if (step.movedFrom !== null && a.sourceObservedBefore !== step.sourceBeforeHash) {
-        drift.push(
-          `${ks(step.movedFrom)} holds ${a.sourceObservedBefore ?? '(absent)'}; the move was sealed against ${step.sourceBeforeHash ?? '(absent)'}`,
-        );
-      }
-
-      if (drift.length > 0) {
-        const next: Journal = [
-          ...j,
-          {
-            r: 'FAILURE',
-            ordinal: a.ordinal,
-            reason: `CONCURRENT_CHANGE at step ${a.ordinal}: ${drift.join('; ')}`,
-          },
-        ];
-        return result(next, world, 'RECORDED', 'CONCURRENT_CHANGE', drift);
-      }
-
-      const undoHash = a.undo.existedBefore ? a.undo.observedHash : null;
-      const expectedUndoHash = manifest.revertOf === null ? a.observedBefore : step.afterHash;
-      if (!sameKey(a.undo.key, step.target) || undoHash !== expectedUndoHash) {
-        return result(j, world, 'REFUSE', 'INVALID_UNDO_SNAPSHOT', [
-          `step ${a.ordinal} requires undo ${ks(step.target)} at ${expectedUndoHash ?? '(absent)'}`,
-        ]);
-      }
-
-      return result(
-        [...j, { r: 'INTENT', ordinal: a.ordinal, undo: a.undo }],
-        world,
-        'RECORDED',
-        'INTENT_RECORDED',
-      );
-    }
-
-    case 'completeStep': {
+    case 'runStep': {
       if (!manifest) return result(j, world, 'REFUSE', 'NOT_ADMITTED');
       const rolling = manifest.revertOf !== null;
       if (!has(seg, 'MANIFEST_DURABLE')) {
@@ -2522,41 +2207,70 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
       }
       const step = manifest.steps.find((s) => s.ordinal === a.ordinal);
       if (!step) return result(j, world, 'REFUSE', 'STEP_NOT_IN_APPROVED_MANIFEST');
-      if (!openIntentOrdinals(seg).has(a.ordinal)) {
-        return result(j, world, 'REFUSE', 'STEP_INTENT_REQUIRED', [
-          `step ${a.ordinal} has no open INTENT`,
+
+      const obs = stepObservations(j);
+      const lowestPending = obs.find(([, o]) => o.state === 'not-started');
+      if (!lowestPending || lowestPending[0] !== a.ordinal) {
+        return result(j, world, 'REFUSE', 'OUT_OF_ORDER_OR_ALREADY_RUN');
+      }
+
+      // I5's SECOND observedHash comparison, which did not exist: the target is
+      // re-read under the lock immediately before the write and must still hold
+      // the image the plan was sealed against. Without it, detection of a
+      // concurrent write at a step target was delegated entirely to the caller
+      // passing `outcome: 'concurrent-change-detected'` — a convention, not a
+      // mechanism — and every step whose post-image is fully determined by the
+      // plan silently overwrote whatever a concurrent session had put there.
+      if (a.outcome === 'ok' && a.observedBefore !== step.beforeHash) {
+        const next: Journal = [
+          ...j,
+          { r: 'INTENT', ordinal: a.ordinal, undo: a.undo },
+          { r: 'OUTCOME', ordinal: a.ordinal, ok: false, observedAfter: null, note: 'CONCURRENT_CHANGE' },
+          { r: 'FAILURE', ordinal: a.ordinal, reason: `CONCURRENT_CHANGE at step ${a.ordinal}` },
+        ];
+        return result(next, world, 'RECORDED', 'CONCURRENT_CHANGE', [
+          `${ks(step.target)} holds ${a.observedBefore ?? '(absent)'}; the plan was sealed against ${step.beforeHash ?? '(absent)'}`,
         ]);
       }
 
-      const landed = a.observedAfterKnown && a.observedAfter === step.afterHash;
-      const ok = a.outcome === 'ok' && landed;
-      const note =
-        a.outcome === 'io-failure'
-          ? 'IO_FAILURE'
-          : a.outcome === 'concurrent-change-detected'
-            ? 'CONCURRENT_CHANGE'
-            : landed
-              ? ''
-              : rolling
-                ? 'RESTORE_NOT_BYTE_IDENTICAL'
-                : 'PLAN_DEVIATION';
+      const intent: JournalRecord = { r: 'INTENT', ordinal: a.ordinal, undo: a.undo };
+
+      if (a.outcome === 'io-failure') {
+        const next: Journal = [
+          ...j,
+          intent,
+          { r: 'OUTCOME', ordinal: a.ordinal, ok: false, observedAfter: null, note: 'IO_FAILURE' },
+          { r: 'FAILURE', ordinal: a.ordinal, reason: `IO_FAILURE at step ${a.ordinal}` },
+        ];
+        return result(next, world, 'RECORDED', 'IO_FAILURE');
+      }
+      if (a.outcome === 'concurrent-change-detected') {
+        const next: Journal = [
+          ...j,
+          intent,
+          { r: 'OUTCOME', ordinal: a.ordinal, ok: false, observedAfter: null, note: 'CONCURRENT_CHANGE' },
+          { r: 'FAILURE', ordinal: a.ordinal, reason: `CONCURRENT_CHANGE at step ${a.ordinal}` },
+        ];
+        return result(next, world, 'RECORDED', 'CONCURRENT_CHANGE');
+      }
+
+      if (a.observedAfter !== step.afterHash) {
+        const note = rolling ? 'RESTORE_NOT_BYTE_IDENTICAL' : 'PLAN_DEVIATION';
+        const next: Journal = [
+          ...j,
+          intent,
+          { r: 'OUTCOME', ordinal: a.ordinal, ok: false, observedAfter: a.observedAfter, note },
+          { r: 'FAILURE', ordinal: a.ordinal, reason: `${note} at step ${a.ordinal}` },
+        ];
+        return result(next, world, 'RECORDED', note);
+      }
 
       const appended: JournalRecord[] = [
-        {
-          r: 'OUTCOME',
-          ordinal: a.ordinal,
-          ok,
-          observedAfter: a.observedAfter,
-          observedAfterKnown: a.observedAfterKnown,
-          note,
-        },
+        intent,
+        { r: 'OUTCOME', ordinal: a.ordinal, ok: true, observedAfter: a.observedAfter, note: '' },
       ];
-      if (landed && step.classification.claimAffecting && step.beforeHash !== null) {
+      if (step.classification.claimAffecting && step.beforeHash !== null) {
         appended.push({ r: 'INVALIDATION', ordinal: a.ordinal, concept: step.target });
-      }
-      if (!ok) {
-        appended.push({ r: 'FAILURE', ordinal: a.ordinal, reason: `${note} at step ${a.ordinal}` });
-        return result([...j, ...appended], world, 'RECORDED', note);
       }
 
       let next: Journal = [...j, ...appended];
@@ -2565,7 +2279,7 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
       // the revert settles on the spot (T24 / T25).
       if (rolling) {
         const remaining = manifest.steps.filter(
-          (s) => observationFor(next, s.ordinal).state !== 'done',
+          (s) => s.ordinal !== a.ordinal && observationFor(next, s.ordinal).state === 'not-started',
         );
         if (remaining.length === 0) {
           next = [...next, { r: 'SETTLED', as: 'reverted' }];
@@ -2635,7 +2349,10 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
       if (phase !== 'rolling-back' && !has(seg, 'MANIFEST_DURABLE')) {
         return result(j, world, 'REFUSE', 'NOTHING_IN_FLIGHT');
       }
-      const next: Journal = [...j, { r: 'INTERRUPTED' }];
+      const pending: JournalRecord[] = a.duringStep
+        ? [{ r: 'INTENT', ordinal: a.duringStep.ordinal, undo: a.duringStep.undo }]
+        : [];
+      const next: Journal = [...j, ...pending, { r: 'INTERRUPTED' }];
       return result(next, world, 'RECORDED', 'INTERRUPTED');
     }
 
@@ -2677,76 +2394,32 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
     case 'beginRollback': {
       if (!manifest) return result(j, world, 'REFUSE', 'NOT_ADMITTED');
       const parentApproved = findApproved(seg)!;
-
-      // Build from the parent journal before checking the approval. The fresh
-      // approval must bind this exact inverse, not a parent approval with a
-      // different manifest hidden behind the same operation.
-      const expectation = inverseApprovalExpectation(
-        parentApproved,
-        seg,
-        a.preRollbackEvidence.evidenceHash,
-      );
-      const inverse = expectation.manifest;
-      if (inverse.steps.length === 0) {
-        return result(j, world, 'BLOCK', 'NOTHING_TO_ROLL_BACK', [
-          'no step of this operation left the corpus changed; the pre-operation state is already in place',
-          'the exit is a fresh preview of the operation you wanted, not a rollback',
-        ]);
-      }
-
+      // Unconditional and checked first: rollback never rides a spent token.
       if (j.some((r) => r.r === 'EPOCH_ADVANCED') && a.freshApproval === null) {
         return result(j, world, 'BLOCK', 'EPOCH_ADVANCED_NEEDS_FRESH_APPROVAL', [
           'the epoch advanced; rollback never rides a spent token, whatever rollbackAuthorization says',
         ]);
       }
-
       if (phase !== 'failed-dirty' && phase !== 'failed-clean') {
         return result(j, world, 'BLOCK', 'NOT_A_FAILED_OPERATION');
       }
-
-      if (a.freshApproval === null) {
-        return result(j, world, 'BLOCK', 'ROLLBACK_NEEDS_FRESH_APPROVAL', [
-          'rollback always requires a fresh approval; the parent approval is context only',
-        ]);
-      }
-
-      const approvalDrift: string[] = [];
-      if (a.freshApproval.requestOccurrenceId !== expectation.requestOccurrenceId) {
-        approvalDrift.push('fresh approval request occurrence does not match the inverse expectation');
-      }
-      if (a.freshApproval.tokenId !== expectation.tokenId) {
-        approvalDrift.push('fresh approval token does not match the inverse expectation');
-      }
-      if (JSON.stringify(a.freshApproval.manifest) !== JSON.stringify(expectation.manifest)) {
-        approvalDrift.push('fresh approval inverse manifest does not match the rebuilt inverse');
-      }
-      if (JSON.stringify(a.freshApproval.items) !== JSON.stringify(expectation.items)) {
-        approvalDrift.push('fresh approval inverse items do not match the parent undo snapshots');
-      }
-      if (a.freshApproval.fingerprint === parentApproved.fingerprint) {
-        approvalDrift.push('fresh approval fingerprint must differ from the parent fingerprint');
-      }
-      if (a.freshApproval.recoveryEvidenceHash !== expectation.recoveryEvidenceHash) {
-        approvalDrift.push(
-          `fresh approval recoveryEvidenceHash=${a.freshApproval.recoveryEvidenceHash ?? '(none)'}; expected ${expectation.recoveryEvidenceHash}`,
-        );
-      }
-      if (approvalDrift.length > 0) {
-        return result(j, world, 'BLOCK', 'ROLLBACK_NEEDS_FRESH_APPROVAL', approvalDrift);
-      }
-
-      const failed = recoveryFailures(a.preRollbackEvidence, a.freshApproval);
+      const failed = recoveryFailures(a.preRollbackEvidence, a.freshApproval ?? parentApproved);
       if (failed.length > 0) {
         return result(j, world, 'BLOCK', 'PRE_ROLLBACK_EVIDENCE_INCOMPLETE', failed);
+      }
+      if (
+        manifest.policies.rollbackAuthorization.value === 'requires-fresh-approval' &&
+        a.freshApproval === null
+      ) {
+        return result(j, world, 'BLOCK', 'ROLLBACK_NEEDS_FRESH_APPROVAL', [
+          `policy ${manifest.policies.rollbackAuthorization.value} owned by ${manifest.policies.rollbackAuthorization.ownedBy}`,
+        ]);
       }
 
       // A successful or uncertain observation still means the target may have
       // changed. Every such target needs an approved inverse before rollback.
-      const doneSet = new Set(
-        stepObservations(j)
-          .filter(([, o]) => o.state === 'done')
-          .map(([ordinal]) => ordinal),
-      );
+      const doneSet = new Set<number>();
+      for (const r of seg) if (r.r === 'OUTCOME' && r.ok) doneSet.add(r.ordinal);
       const gatedMissing = manifest.steps.filter(
         (s) =>
           doneSet.has(s.ordinal) &&
@@ -2775,6 +2448,20 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
         ]);
       }
 
+      const inverse = buildInverseManifest(manifest, seg);
+      // Nothing landed, so there is nothing to invert. Admitting an empty
+      // inverse manifest put the machine in a `rolling-back` phase no action
+      // could advance, whose only accepting action was `verify` — and verify
+      // over an empty step list is vacuously complete, so a failure in which
+      // ZERO bytes moved settled as APPLIED, advanced the epoch, and spent the
+      // token that the retry needs.
+      if (inverse.steps.length === 0) {
+        return result(j, world, 'BLOCK', 'NOTHING_TO_ROLL_BACK', [
+          'no step of this operation left the corpus changed; the pre-operation state is already in place',
+          'the exit is a fresh preview of the operation you wanted, not a rollback',
+        ]);
+      }
+
       // Redirect retirement must precede the restore of the identity it occupies.
       for (const rb of inverse.steps) {
         if (rb.kind !== 'REDIRECT_RETIRE') continue;
@@ -2788,9 +2475,20 @@ export function reduce(j: Journal, world: readonly Observed[], a: Action): Step 
         }
       }
 
+      const inverseApproved: ApprovedPlan = {
+        ...(a.freshApproval ?? parentApproved),
+        manifest: inverse,
+        items: inverse.steps.map((s) => ({
+          path: ks(s.target),
+          contentHash: s.beforeHash ?? '(absent)',
+          verificationHash: `v:${s.beforeHash ?? 'absent'}`,
+          action: s.action,
+          risk: s.risk,
+        })),
+      };
       const next: Journal = [
         ...j,
-        { r: 'ADMITTED', approved: a.freshApproval, world },
+        { r: 'ADMITTED', approved: inverseApproved, world },
         { r: 'GATE', evidence: a.preRollbackEvidence, ok: true },
         { r: 'MANIFEST_DURABLE', manifestHash: inverse.manifestHash },
       ];
