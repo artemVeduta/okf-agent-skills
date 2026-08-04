@@ -1,11 +1,12 @@
 # Prototype — concept restructuring and rollback
 
-**Throwaway.** Lives on `prototype/concept-restructuring`, never on `main`. It exists to make one
+**Throwaway.** This checkout lives in `prototypes/concept-restructuring`; it is never a production
+implementation and never belongs on `main`. It exists to make one
 candidate model drivable for wayfinder ticket
 [Prototype concept restructuring and rollback behavior](https://github.com/artemVeduta/okf-agent-skills/issues/30);
-the validated decision is what graduates, not this code. The adopted model is `DESIGN.md` in this
-directory — read that first; this README only records how the code realises it and where it
-deliberately does not.
+the validated decision is what graduates, not this code. The adopted model is
+`prototypes/concept-restructuring/DESIGN.md` — read that first; this README only records how the
+code realises it and where it deliberately does not.
 
 ## The question
 
@@ -28,7 +29,7 @@ owning ticket and its open question, and is rendered verbatim at every use site.
 | --- | --- |
 | What a redirect *is* and whether it is followable; which split output inherits which inbound link; how `sources[]` unions and partitions; whether sources are deprecated or deleted; the inbound-link discovery contract | [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24) |
 | Archive representation, archive metadata, retention, whether deprecated concepts are hidden from retrieval | [Design archive lifecycle and discoverability](https://github.com/artemVeduta/okf-agent-skills/issues/14) |
-| Manifest serialization and storage, the validation check set, every numeric threshold, the snapshot mechanism, whether a documented rollback needs a fresh approval | [Define validation, growth, compaction, and approval contracts](https://github.com/artemVeduta/okf-agent-skills/issues/7) |
+| Manifest serialization and storage, the validation check set, every numeric threshold, the snapshot mechanism, the rollback-authorization policy value | [Define validation, growth, compaction, and approval contracts](https://github.com/artemVeduta/okf-agent-skills/issues/7) |
 | Everything before apply: request matching, preview completeness, confirmation binding | [Prototype the portable manual-operation guard state machine](https://github.com/artemVeduta/okf-agent-skills/issues/29) |
 
 Binding inputs it consumes without re-litigating: the authorization matrix, approval fingerprint,
@@ -45,16 +46,37 @@ ledger, locking and epoch from
 
 ```bash
 node prototypes/concept-restructuring/tui.ts          # drive it by hand
-node prototypes/concept-restructuring/walkthrough.ts  # replay all 146 rows
+node prototypes/concept-restructuring/walkthrough.ts  # replay the computed hard-case catalogue
 ```
 
-Node 22.6+ (type stripping); no dependencies, no package manager, no build step, no test framework,
-nothing written to disk.
+Node 22.6+ is required for Node's built-in TypeScript type stripping; there are no dependencies, no
+package manager, no build step, no test framework, and nothing is written to disk.
 
-In the TUI, `[` and `]` cycle 15 fixtures; the whole frame — concept occupancy, the operation
-manifest with per-step observation, the inbound-link graph with redirects, trust, recovery evidence,
-ambiguity, residue, and the notice — is re-rendered after every keystroke. Every state row is
-rendered; only an individual long line can be truncated to terminal width.
+In the TUI, `[` and `]` cycle 15 fixtures. Every frame collection is rendered after every keystroke,
+not only its count: concept occupancy, the operation manifest and per-step observations, the
+inbound-link graph with redirects, trust, review dependencies, recovery evidence, ambiguities,
+residue, human action, open questions, epoch advances, and the notice. Every state row is rendered;
+only an individual long line can be truncated to the visible width, which has a minimum of 80 columns.
+
+The driver uses a begin/completion pair for each effect. The begin action records `INTENT` with its
+undo snapshot before mutating; the completion action records `OUTCOME` with the observed post-image
+after mutating. `completeStep` carries both `observedAfter` and `observedAfterKnown`, so an unknown
+post-image is not treated as an absent file. A mid-effect crash has no action payload and leaves the
+effect unresolved. Recovery is human-directed: `reconcile` records read-only evidence by comparing
+the observed world with the sealed images and does not repair the corpus automatically.
+
+Move source and destination pre-images are checked immediately before their respective writes under
+the lock. Partial I/O is classified from observed bytes against the sealed before- and after-images,
+not assumed to be clean. In the fake corpus, `bytesRef` encodes `key`, `status`, `statusExplicit`,
+`body`, `verification`, and `sources`; it does not model unknown real-file syntax. Rollback restores
+from the matching `SnapshotEntry`, not from the parsed `pre` corpus or a parsed view, and does not
+reserialize content. `rollbackAuthorization` remains an injected, open policy value owned by issue
+#7 and is rendered, but this branch always requires fresh approval bound to the exact inverse
+manifest. Manifest storage and serialization remain open under issue #7.
+
+Cross-bundle in-bundle Markdown links are not rewritten to foreign targets. They remain local to their
+bundle and do not silently fall through to another bundle. Admission requires approved breakage or
+refuses the plan, and link resolution uses observed target file existence, not concept status.
 
 ## Files
 
@@ -83,14 +105,14 @@ admitting → refused | gate-blocked | expired          (clean, nothing moved)
                                                     → applied-with-known-breakage
                                         ↘ failed-clean   (handled, zero bytes moved)
                                         ↘ failed-dirty   (ambiguity set REQUIRED non-empty)
-                                        ↘ unknown-interrupted (failed; human-only)
-failed-* → rolling-back → reverted-clean | reverted-with-residue | rollback-failed
+                                         ↘ unknown-interrupted (failed; human-only)
+failed-* → rolling-back → reverted-clean | reverted-with-residue (dirty) | rollback-failed
 ```
 
-**Silence is a reducer-invariant violation, not a policy.** `checkInvariants` rejects any frame whose
-`classification.cleanliness === 'dirty'` and whose `ambiguities` is empty; `unclassified-loss` exists
-so an unanticipated loss becomes a loud, named finding rather than a clean report. Every one of the
-146 walkthrough rows additionally asserts `checkInvariants` is silent.
+**Silence is a reducer-invariant violation, not a policy.** A dirty terminal must carry an ambiguity
+or residue notice; `unclassified-loss` exists so an unanticipated loss becomes a loud, named finding
+rather than a clean report. The walkthrough computes its catalogue size and asserts
+`checkInvariants` is silent for every row.
 
 **The phase table is the guard.** `PHASE_ALLOWS` (DESIGN.md §3.0) is the transition table's `From`
 column as data, consulted before any `reduce` case runs. Three adversarial passes found six holes
@@ -110,8 +132,8 @@ of the bytes it moved, never a continuity rule.
 
 **Illegal operations are unconstructible where the type system can carry it.** `MergePlan` and
 `SplitPlan` hold one `BundleId`; there is no bundle-root plan variant; `ScheduledRepair` is not an
-`EffectStep`, so no `runStep` ordinal can execute a dependency repair; `restoreFrom` accepts only a
-`SnapshotEntry` of bytes, so nothing can reconstruct a file from a parsed view. Where the type system
+`EffectStep`, so no `beginStep`/`completeStep` pair can execute a dependency repair; `restoreFrom`
+accepts only a `SnapshotEntry` of bytes, so nothing can restore from the parsed `pre` corpus. Where the type system
 cannot, admission refuses by name from a closed 29-member `RefusalCode` enum.
 
 ## Divergences from `DESIGN.md`
@@ -119,11 +141,11 @@ cannot, admission refuses by name from a closed 29-member `RefusalCode` enum.
 Everything below was implemented differently because the design was underspecified or wrong there.
 Nothing else differs.
 
-1. **`crash` appends an `INTERRUPTED` record** (T19 says it appends nothing). Liveness — "the lock
-   holder is gone" — is not a journal fact, but I44 requires the phase to be derivable from the
-   journal alone. `INTERRUPTED` stands for the *next* process's observation that the journal is
-   in-flight, has no `SETTLED`, and has no live holder. `crash` also takes an optional `duringStep`
-   so death between a write landing and its journal append (a dangling `INTENT`) is reachable.
+1. **`crash` appends an `INTERRUPTED` record but carries no payload.** T19 records no `OUTCOME`.
+   Liveness — "the lock holder is gone" — is not a journal fact, but I44 requires the phase to be
+   derivable from the journal alone. `INTERRUPTED` stands for the *next* process's observation that
+   the journal is in-flight, has no `SETTLED`, and has no live holder. Mid-effect recovery remains
+   human-directed: `reconcile` records evidence and does not repair automatically.
 2. **`acknowledge` appends an `ACKNOWLEDGED` record.** The design gave it an action but no record;
    an acknowledgement that is not durable is not an acknowledgement.
 3. **`ADMITTED` carries the whole `ApprovedPlan`, not just its manifest, plus a snapshot of the
@@ -141,9 +163,8 @@ Nothing else differs.
    that honestly covered either.
 7. **`OperationManifest` gained `supersedeChain`.** P-P-04 requires a cycle refusal and a rendered
    chain depth; neither is derivable from the fields the design listed.
-8. **`reverted-with-residue` classifies as `clean`, not `dirty`.** Its bytes *are* restored. Its
-   loudness comes from a mandatory non-empty `residue` list enforced by `checkInvariants`, rather
-   than from stretching the ambiguity taxonomy over a case it has no member for.
+8. **The parent specification classifies `reverted-with-residue` as dirty.** Its bytes are restored,
+    but an irreversible external effect remains.
 9. **A retry over this operation's own partial write reaches the recheck instead of being refused.**
    An occupant whose bytes are exactly a step's sealed post-image (for a step that expected absence),
    and a source whose deprecation is exactly this operation's own sealed post-image, are not
@@ -180,6 +201,5 @@ to open tickets rather than to this prototype:
 
 Driving the code also surfaced one more worth putting in
 front of [Design concept merge, split, redirect, and inbound-link semantics](https://github.com/artemVeduta/okf-agent-skills/issues/24):
-**this model treats a deprecation as a retirement for link-resolution purposes**, so an unrewritten
-inbound link to a deprecated concept renders `unexpectedly-broken`. Whether a deprecated concept
-still satisfies an inbound link is that ticket's call, and the frame is where the consequence shows.
+**link resolution uses target-file existence**, so an unrewritten inbound link to a deprecated concept
+still resolves while the old file exists. Status is not used as a link-resolution input.

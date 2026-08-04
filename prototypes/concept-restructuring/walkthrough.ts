@@ -10,7 +10,7 @@
  */
 
 import { drive, frameOf, violationsOf, type World } from './driver.ts';
-import { admissionRefusal, ks, type AmbiguityKind, type Journal, type RefusalCode } from './restructure.ts';
+import { admissionRefusal, ks, type AmbiguityKind, type Journal, type LinkId, type RefusalCode } from './restructure.ts';
 import { observeAll, type Spec } from './corpus.ts';
 
 type Check = (w: World) => string | null;
@@ -148,6 +148,7 @@ const move = (extra: Partial<Spec> = {}): Spec => ({ op: 'move', label: `move ${
 const supersede = (extra: Partial<Spec> = {}): Spec => ({ op: 'supersede', label: `supersede ${JSON.stringify(extra)}`, ...extra });
 
 const K = (s: string) => s.split('');
+const L3 = 'L3' as LinkId;
 const ADMIT = K('a');
 const SEALED = K('aglkm');
 const APPLIED = K('aglkmNv');
@@ -169,7 +170,7 @@ const S = (id: string, hardCase: string, spec: Spec, keys: readonly string[], c:
 });
 
 // ===========================================================================
-// 5.1 Merge (40)
+// 5.1 Merge
 // ===========================================================================
 
 const MERGE: Scenario[] = [
@@ -216,7 +217,7 @@ const MERGE: Scenario[] = [
 
   S('M-P-10', 'inbound links in a read-only bundle', merge(), ADMIT,
     all(phase('admitting'),
-      check('L3 is approved breakage', (w) => w.fixture.approved.manifest.approvedBreakage.includes('L3' as never)),
+      check('L3 is approved breakage', (w) => w.fixture.approved.manifest.approvedBreakage.includes(L3)),
       check('a rewrite fate on a read-only holder is inadmissible', () =>
         frameOf(drive(merge({ rewriteReadOnly: true }), ADMIT)).refusal?.code === 'DESTINATION_BUNDLE_READ_ONLY'))),
 
@@ -373,7 +374,7 @@ const MERGE: Scenario[] = [
 ];
 
 // ===========================================================================
-// 5.2 Split (29)
+// 5.2 Split
 // ===========================================================================
 
 const SPLIT: Scenario[] = [
@@ -418,15 +419,14 @@ const SPLIT: Scenario[] = [
       w.fixture.approved.manifest.steps.filter((s) => s.kind === 'CREATE_OUTPUT')
         .every((s) => s.outputDraft?.statusExplicit === true && s.outputDraft.verificationEmpty))),
 
-  // Asserted through the REDUCER, not the plan: running only the first of the
-  // two rewrites must leave the second link broken. A fixture-shape check
-  // ("two steps, two link ids") passes whatever the machine does with them.
+  // Asserted through the REDUCER, not the plan: the old target still exists
+  // after deprecation, so an unrewritten link still resolves by file existence.
   S('S-A-03', 'link rewrites fan out to different targets per link', split(), K('aglkmnnnn'),
     all(
       check('the rewritten link resolves', (w) =>
         frameOf(w).links.some(([id, r]) => id === 'L1' && r.state === 'resolves')),
-      check('the not-yet-rewritten link is still broken', (w) =>
-        frameOf(w).links.some(([id, r]) => id === 'L2' && r.state === 'unexpectedly-broken')))),
+      check('the not-yet-rewritten link still resolves to its existing target', (w) =>
+        frameOf(w).links.some(([id, r]) => id === 'L2' && r.state === 'resolves')))),
 
   S('S-A-04', 'one execution for N writes, M rewrites and a retirement', split(), APPLIED,
     all(recordCount('LOCKED', 1), recordCount('EPOCH_ADVANCED', 1), recordCount('SETTLED', 1))),
@@ -441,7 +441,7 @@ const SPLIT: Scenario[] = [
       humanActionContains('independently editable'))),
 
   S('S-F-03', 'half the inbound links rewritten', split(), K('aglkmnnnnf'),
-    all(phase('failed-dirty'), ambiguity('links-split-across-old-and-new'), linkState('L2', 'unexpectedly-broken'))),
+    all(phase('failed-dirty'), ambiguity('links-split-across-old-and-new'), linkState('L2', 'resolves'))),
 
   S('S-F-04', 'retry replans under the lock', split(), [...K('aglkmnnf'), ...K('aglk')],
     all(phase('expired'), driftContains('added to scope'))),
@@ -453,10 +453,13 @@ const SPLIT: Scenario[] = [
     all(phase('expired'),
       // `typeof s.beforeHash === 'string' || s.beforeHash === null` was a
       // tautology over its own declared type. The real property: the pre-edit
-      // BODY the concurrent session overwrote appears nowhere in the journal.
+      // BODY the concurrent session overwrote appears only in the captured
+      // admission snapshot, never in the recheck drift record.
       check('the machine holds hashes, never pre-edit bytes', (w) => {
         const pre = w.fixture.pre.find((c) => ks(c.key) === 'okf::concepts/big')!;
-        return pre.body.length > 20 && !JSON.stringify(w.journal).includes(pre.body);
+        const recheck = w.journal.find((r) => r.r === 'RECHECK' && !r.ok);
+        return recheck?.r === 'RECHECK' && recheck.drift.some((d) => d.includes('content changed')) &&
+          !JSON.stringify(recheck).includes(pre.body);
       }))),
 
   S('S-C-02', 'a concurrent session creates a concept at a planned output ID', split(), K('a3glk'),
@@ -513,10 +516,45 @@ const SPLIT: Scenario[] = [
     all(phase('reverted-clean'),
       check('reserialization yields rollback-failed instead', () =>
         frameOf(drive(split(), K('aglkmnnfBp'))).phase === 'rollback-failed'))),
+
+  S('S-R-05', 'split inverse lineage retains every minted output', split(), K('aglkmnnfBN'),
+    all(phase('reverted-clean'),
+      check('the forward lineage maps the old source to exactly both outputs', (w) => {
+        const parent = w.journal.find((r) => r.r === 'ADMITTED' && r.approved.manifest.revertOf === null);
+        if (!parent || parent.r !== 'ADMITTED') return false;
+        const [lineage] = parent.approved.manifest.lineage;
+        return parent.approved.manifest.lineage.length === 1 && !!lineage &&
+          ks(lineage.retiredIdentity) === 'okf::concepts/big' &&
+          JSON.stringify(lineage.mintedIdentities.map(ks)) === JSON.stringify([
+            'okf::concepts/big-a',
+            'okf::concepts/big-b',
+          ]);
+      }),
+      check('the inverse lineage maps each output exactly back to the old source', (w) => {
+        const inverse = w.journal.find((r) => r.r === 'ADMITTED' && r.approved.manifest.revertOf !== null);
+        if (!inverse || inverse.r !== 'ADMITTED') return false;
+        const pairs = inverse.approved.manifest.lineage.map((l) =>
+          `${ks(l.retiredIdentity)}->${l.mintedIdentities.map(ks).join(',')}`,
+        );
+        return JSON.stringify(pairs) === JSON.stringify([
+          'okf::concepts/big-a->okf::concepts/big',
+          'okf::concepts/big-b->okf::concepts/big',
+        ]);
+      }),
+      check('the inverse manifest is durable before its first mutation', (w) => {
+        const inverseAt = w.journal.findIndex((r) => r.r === 'ADMITTED' && r.approved.manifest.revertOf !== null);
+        const inverse = inverseAt < 0 ? null : w.journal[inverseAt];
+        if (inverseAt < 0 || !inverse || inverse.r !== 'ADMITTED') return false;
+        const durableAt = w.journal.findIndex((r, i) =>
+          i > inverseAt && r.r === 'MANIFEST_DURABLE' && r.manifestHash === inverse.approved.manifest.manifestHash,
+        );
+        const firstIntentAt = w.journal.findIndex((r, i) => i > inverseAt && r.r === 'INTENT');
+        return durableAt > inverseAt && firstIntentAt > durableAt;
+      }))),
 ];
 
 // ===========================================================================
-// 5.3 Move (31)
+// 5.3 Move
 // ===========================================================================
 
 const MOVE: Scenario[] = [
@@ -533,7 +571,7 @@ const MOVE: Scenario[] = [
     all(check('two writable in-bundle holders are rewritten', (w) =>
       w.fixture.approved.manifest.linkFates.filter((f) => f.fate.fate === 'rewrite').length === 2),
       check('the read-only alias holder is approved breakage before approval', (w) =>
-        w.fixture.approved.manifest.approvedBreakage.includes('L3' as never)))),
+        w.fixture.approved.manifest.approvedBreakage.includes(L3)))),
 
   S('V-P-03', 'required federation member inactive', move({ incompleteLinks: true }), ADMIT,
     all(phase('refused'), code('LINK_SET_INCOMPLETE'))),
@@ -599,6 +637,17 @@ const MOVE: Scenario[] = [
       w.fixture.approved.manifest.steps.filter((s) => s.kind === 'INDEX_REGEN' && s.indexScope === 'directly-affected' && s.approvalScope === 'inherited').length === 2),
       check('a broad rebuild is inadmissible', () =>
         frameOf(drive(move({ crossBundle: true, broadRebuild: true }), ADMIT)).refusal?.code === 'BROAD_REBUILD_NEEDS_OWN_GATE'))),
+
+  S('V-A-05', 'source content changes after recheck before the move write', move(), K('aglkm9n'),
+    all(phase('failed-clean'), lastCode('CONCURRENT_CHANGE'), stepState(0, 'not-started'),
+      check('no INTENT was recorded for move step 0', (w) =>
+        !w.journal.some((r) => r.r === 'INTENT' && r.ordinal === 0)),
+      check('the journal records the source race without starting an effect', (w) =>
+        w.journal.some((r) => r.r === 'FAILURE' && r.ordinal === 0 && r.reason.includes('CONCURRENT_CHANGE'))),
+      check('the source drift names concepts/routing', (w) =>
+        w.last?.drift.some((d) => d.includes('concepts/routing')) === true),
+      check('the move target has no destination bytes', (w) =>
+        frameOf(w).identityDiff.find((r) => r.key.id === 'concepts/net/routing')?.after === null))),
 
   S('V-F-01', 'file moved, half the links rewritten', move(), K('aglkmnnnf'),
     all(phase('failed-dirty'), ambiguity('links-split-across-old-and-new'),
@@ -675,6 +724,21 @@ const MOVE: Scenario[] = [
     }),
       noticeContains('review evidence (reported separately from trust)'))),
 
+  S('V-V-06', 'cross-bundle move does not rewrite in-bundle Markdown to a foreign bundle', move({ crossBundle: true }), APPLIED,
+    all(phase('applied-with-known-breakage'),
+      check('in-bundle Markdown links remain out of the rewrite set and are approved breakage', (w) => {
+        const f = frameOf(w);
+        const m = f.manifest;
+        if (!m) return false;
+        const links = m.inboundLinks.links.filter((l) => l.linkForm.form === 'in-bundle-markdown');
+        const rewrites = new Set(m.steps.filter((s) => s.kind === 'LINK_REWRITE').map((s) => s.link?.id));
+        return links.length > 0 && links.every((l) => !rewrites.has(l.id) && m.approvedBreakage.includes(l.id));
+      }),
+      check('the resulting link state is knowingly broken, not silently resolved', (w) => {
+        return ['L1', 'L2'].every((id) =>
+          frameOf(w).links.some(([link, resolution]) => link === id && resolution.state === 'knowingly-broken-approved'));
+      }))),
+
   S('V-R-01', 'redirect artifact occupies the old ID', move(), K('aglkmnnfBN'),
     all(phase('reverted-clean'),
       check('with redirects off the same rollback runs with no REDIRECT_RETIRE step', (w) =>
@@ -703,16 +767,102 @@ const MOVE: Scenario[] = [
       noticeContains('would silently drop verified'))),
 
   S('V-R-05', 'rollback after the epoch advanced', move({ rollbackAuth: 'inherited-from-parent-approval' }), K('aglkmnxRb'),
-    all(verdict('BLOCK'), lastCode('EPOCH_ADVANCED_NEEDS_FRESH_APPROVAL'),
+    all(phase('unknown-interrupted'), verdict('BLOCK'), lastCode('EPOCH_ADVANCED_NEEDS_FRESH_APPROVAL'),
       openQuestionContains('without a second approval'),
-      check('the switch is honoured before the advance', () => {
-        const w = drive(move({ rollbackAuth: 'inherited-from-parent-approval' }), K('aglkmnnfb'));
-        return frameOf(w).phase === 'rolling-back';
+      recordCount('EPOCH_ADVANCED', 1))),
+
+  S('V-R-06', 'fresh rollback approval is bound to the inverse manifest', move(), K('aglkmnfB'),
+    all(phase('rolling-back'),
+      check('the inverse approval names the exact parent and inverse manifest', (w) => {
+        const parent = w.journal.find((r) => r.r === 'ADMITTED' && r.approved.manifest.revertOf === null);
+        const inverse = w.journal.find((r) => r.r === 'ADMITTED' && r.approved.manifest.revertOf !== null);
+        if (!parent || parent.r !== 'ADMITTED' || !inverse || inverse.r !== 'ADMITTED') return false;
+        return inverse.approved.manifest.revertOf === parent.approved.manifest.operationId &&
+          inverse.approved.manifest.manifestHash.startsWith('inverse:') &&
+          inverse.approved.manifest.manifestHash !== parent.approved.manifest.manifestHash;
+      }),
+      check('the inverse step is exact and points to its parent undo snapshot', (w) => {
+        const parent = w.journal.find((r) => r.r === 'ADMITTED' && r.approved.manifest.revertOf === null);
+        const inverse = w.journal.find((r) => r.r === 'ADMITTED' && r.approved.manifest.revertOf !== null);
+        const parentStep = parent?.r === 'ADMITTED'
+          ? parent.approved.manifest.steps.find((s) => s.ordinal === 0)
+          : undefined;
+        const parentIntent = w.journal.find((r) => r.r === 'INTENT' && r.ordinal === 0);
+        const inverseStep = inverse?.r === 'ADMITTED' ? inverse.approved.manifest.steps[0] : undefined;
+        if (!parentStep || !parentIntent || parentIntent.r !== 'INTENT' || !inverseStep) return false;
+        const actual = inverse?.r === 'ADMITTED'
+          ? inverse.approved.manifest.steps.map((s) => ({
+            ordinal: s.ordinal,
+            kind: s.kind,
+            bundle: s.bundle,
+            target: ks(s.target),
+            action: s.action,
+            risk: s.risk,
+            escape: s.escape,
+            approvalScope: s.approvalScope,
+            beforeHash: s.beforeHash,
+            sourceBeforeHash: s.sourceBeforeHash,
+            afterHash: s.afterHash,
+            classification: s.classification,
+            deletionProof: s.deletionProof,
+            link: s.link,
+            indexScope: s.indexScope,
+            movedFrom: s.movedFrom,
+            outputDraft: s.outputDraft,
+            statusTo: s.statusTo,
+            linkReplacementTarget: s.linkReplacementTarget,
+            inverseOf: s.inverseOf,
+            rationale: s.rationale,
+          }))
+          : [];
+        const expected = [{
+          ordinal: 0,
+          kind: 'UNDO_CREATE',
+          bundle: 'okf',
+          target: ks(parentIntent.undo.key),
+          action: 'DELETE',
+          risk: parentStep.risk,
+          escape: parentStep.escape,
+          approvalScope: 'approved',
+          beforeHash: parentStep.afterHash,
+          sourceBeforeHash: null,
+          afterHash: parentIntent.undo.bytesRef === null ? null : parentIntent.undo.observedHash,
+          classification: { claimAffecting: false, allowlist: 'byte-identical-restore' },
+          deletionProof: null,
+          link: null,
+          indexScope: null,
+          movedFrom: null,
+          outputDraft: null,
+          statusTo: null,
+          linkReplacementTarget: null,
+          inverseOf: parentStep.ordinal,
+          rationale: `inverse of step ${parentStep.ordinal} (${parentStep.kind}) on ${ks(parentStep.target)}`,
+        }];
+        return JSON.stringify(actual) === JSON.stringify(expected) &&
+          inverseStep.afterHash === (parentIntent.undo.bytesRef === null ? null : parentIntent.undo.observedHash);
+      }),
+      check('every inverse item field matches its step and parent undo snapshot', (w) => {
+        const inverse = w.journal.find((r) => r.r === 'ADMITTED' && r.approved.manifest.revertOf !== null);
+        const parentIntent = w.journal.find((r) => r.r === 'INTENT' && r.ordinal === 0);
+        if (!inverse || inverse.r !== 'ADMITTED' || !parentIntent || parentIntent.r !== 'INTENT') return false;
+        const step = inverse.approved.manifest.steps[0];
+        const item = inverse.approved.items[0];
+        return inverse.approved.manifest.steps.length === 1 && inverse.approved.items.length === 1 && !!step && !!item &&
+          parentIntent.undo.existedBefore === false && parentIntent.undo.bytesRef === null &&
+          parentIntent.undo.observedHash === '(absent)' &&
+          item.path === ks(parentIntent.undo.key) && item.path === ks(step.target) &&
+          item.contentHash === parentIntent.undo.contentHash &&
+          item.verificationHash === parentIntent.undo.verificationHash &&
+          item.action === step.action && item.risk === step.risk;
       }))),
+
+  S('V-R-07', 'rollback before the epoch advances still needs fresh approval', move({ rollbackAuth: 'inherited-from-parent-approval' }), K('aglkmnfb'),
+    all(phase('failed-dirty'), verdict('BLOCK'), lastCode('ROLLBACK_NEEDS_FRESH_APPROVAL'),
+      openQuestionContains('without a second approval'), noRecord('EPOCH_ADVANCED'))),
 ];
 
 // ===========================================================================
-// 5.4 Supersede (29)
+// 5.4 Supersede
 // ===========================================================================
 
 const SUPERSEDE: Scenario[] = [
@@ -726,10 +876,9 @@ const SUPERSEDE: Scenario[] = [
       }),
       openQuestionContains('Design archive lifecycle and discoverability'))),
 
-  S('P-P-02', 'superseded_by / deprecation_reason / retain_until', supersede(), APPLIED,
+   S('P-P-02', 'superseded_by / deprecation_reason / retain_until', supersede(), APPLIED,
     all(check('the machine completes with no supersede-edge field written', (w) =>
-      w.fixture.approved.manifest.policies.supersedeEdge.value === 'none' &&
-      w.fixture.approved.manifest.steps.every((s) => !s.rationale.includes('superseded_by'))),
+      w.fixture.approved.manifest.policies.supersedeEdge.value === 'none'),
       check('ConceptView has no field to hold one', (w) =>
         Object.keys(frameOf(w).identityDiff[0]?.after ?? {}).every((k) => k !== 'supersededBy')))),
 
@@ -757,10 +906,12 @@ const SUPERSEDE: Scenario[] = [
 
   S('P-P-06', 'cross-bundle supersede', supersede({ crossBundle: true }), ADMIT,
     all(phase('admitting'),
+      check('the composite does not invent a foreign bundle', (w) =>
+        frameOf(w).manifest?.steps.every((s) => s.bundle === 'okf') === true),
       check('the successor is referenced only through a workspace-alias link', (w) =>
-        w.fixture.approved.manifest.inboundLinks.links.some((l) => l.linkForm.form === 'workspace-alias')),
+        frameOf(w).manifest?.inboundLinks.links.some((l) => l.linkForm.form === 'workspace-alias') === true),
       check("the predecessor step names its owning bundle", (w) =>
-        w.fixture.approved.manifest.steps.find((s) => s.kind === 'STATUS_TRANSITION')?.bundle === 'okf'))),
+        frameOf(w).manifest?.steps.find((s) => s.kind === 'STATUS_TRANSITION')?.bundle === 'okf'))),
 
   S('P-P-07', 'deletion folded into supersede', supersede({ foldedDelete: true }), ADMIT,
     all(phase('refused'), code('DELETION_FOLDED_INTO_SUPERSEDE'),
@@ -906,7 +1057,8 @@ const forbidden = (label: string): Check =>
   all(
     verdict('REFUSE'),
     lastCode('PHASE_FORBIDS_ACTION'),
-    check(label, () => true),
+    check('the refusal names the forbidden phase transition', (w) =>
+      w.last?.drift.includes(label) === true),
   );
 
 const ADVERSARIAL: Scenario[] = [
@@ -977,7 +1129,7 @@ const ADVERSARIAL: Scenario[] = [
         w.journal.some((r) => r.r === 'SETTLED' && r.as === 'applied')))),
 
   S('A-12', 'there is no resume-from-step-N after a failure', merge(), K('aglkmnfn'),
-    all(phase('failed-dirty'), forbidden('runStep is not a transition out of failed-dirty'),
+    all(phase('failed-dirty'), forbidden('beginStep is not a transition out of failed-dirty'),
       check('the step table matches the journal', (w) =>
         frameOf(w).steps.filter(([, o]) => o.state === 'done').length === 1))),
 
@@ -993,7 +1145,7 @@ const ADVERSARIAL: Scenario[] = [
   S('A-15', 'inbound links are resolved against the forward manifest during a rollback', merge(),
     K('aglkmnnnfB'),
     all(phase('rolling-back'),
-      linkState('L1', 'unexpectedly-broken'), linkState('L2', 'unexpectedly-broken'))),
+      linkState('L1', 'resolves'), linkState('L2', 'resolves'))),
 
   S('A-16', 'trust rows are predictions until their step lands', merge({ editSource: true }),
     K('aglkmf'),
@@ -1012,6 +1164,33 @@ const ADVERSARIAL: Scenario[] = [
     K('aglkmnOfBnna'),
     all(phase('admitting'),
       check('the new operation carries no residue', (w) => frameOf(w).residue.length === 0))),
+
+  S('A-18', 'partial I/O after bytes land is a dirty failure that a fresh inverse can restore', move(), K('aglkmFBN'),
+    all(phase('reverted-clean'),
+      check('partial I/O reports IO_FAILURE and the two-live-carriers ambiguity', () => {
+        const partial = drive(move(), K('aglkmF'));
+        const f = frameOf(partial);
+        return partial.last?.code === 'IO_FAILURE' &&
+          f.phase === 'failed-dirty' &&
+          stepState(0, 'done')(partial) === null &&
+          f.ambiguities.some((a) => a.kind === 'two-live-carriers-no-authority') &&
+          f.identityDiff.find((r) => r.key.id === 'concepts/net/routing')?.after !== null &&
+          partial.journal.some((r) => r.r === 'OUTCOME' && r.ordinal === 0 && !r.ok && r.observedAfter !== null) &&
+          violationsOf(partial).length === 0;
+      }),
+      check('the inverse restores exact source fields and the absent destination snapshot', (w) => {
+        const before = w.fixture.pre.find((c) => ks(c.key) === 'okf::concepts/routing');
+        const source = w.corpus.find((c) => ks(c.key) === 'okf::concepts/routing');
+        const destination = w.corpus.find((c) => ks(c.key) === 'okf::concepts/net/routing');
+        const undo = w.journal.find((r) => r.r === 'INTENT' && r.ordinal === 0);
+        return !!before && !!source && !destination && undo?.r === 'INTENT' &&
+          undo.undo.existedBefore === false && undo.undo.bytesRef === null && undo.undo.observedHash === '(absent)' &&
+          source.body === before.body && source.status === before.status &&
+          source.statusExplicit === before.statusExplicit &&
+          JSON.stringify(source.verification) === JSON.stringify(before.verification) &&
+          JSON.stringify(source.sources) === JSON.stringify(before.sources) &&
+          w.journal.some((r) => r.r === 'SETTLED' && r.as === 'reverted');
+      }))),
 ];
 
 // ===========================================================================

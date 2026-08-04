@@ -10,6 +10,7 @@ import {
   find,
   goodEvidence,
   badEvidence,
+  h,
   observe,
   observeAll,
   observedItems,
@@ -24,8 +25,11 @@ import {
 } from './corpus.ts';
 import {
   derive,
+  inverseApprovalExpectation,
   ks,
   reduce,
+  segments,
+  stepEvents,
   checkInvariants,
   type Action,
   type ApprovedPlan,
@@ -34,7 +38,9 @@ import {
   type EffectStep,
   type Frame,
   type Journal,
+  type RecoveryEvidence,
   type Step,
+  type SnapshotEntry,
 } from './restructure.ts';
 
 export interface World {
@@ -87,8 +93,70 @@ function liveSteps(world: World): readonly EffectStep[] {
 
 /** The target as it stands immediately before the write: I5's second reading. */
 function beforeImage(world: World, s: EffectStep): string | null {
-  const c = find(world.corpus, s.target);
+  return observedImage(world, s.target);
+}
+
+function observedImage(world: World, key: ConceptKey): string | null {
+  const c = find(world.corpus, key);
   return c ? observe(c).observedHash : null;
+}
+
+function parentIntentUndo(parentSegment: Journal, s: EffectStep): SnapshotEntry | null {
+  const ordinal = s.inverseOf;
+  if (ordinal === null) return null;
+  return stepEvents(parentSegment, ordinal).intent?.undo ?? null;
+}
+
+function undoFor(world: World, s: EffectStep): SnapshotEntry | null {
+  if (s.inverseOf === null) return snapshotEntry(world.corpus, s.target);
+  const allSegments = segments(world.journal);
+  const parent = allSegments.length >= 2 ? allSegments[allSegments.length - 2] : [];
+  return parentIntentUndo(parent, s);
+}
+
+interface BegunStep {
+  readonly world: World;
+  readonly undo: SnapshotEntry | null;
+  readonly intentRecorded: boolean;
+}
+
+function beginEffect(world: World, label: string, s: EffectStep): BegunStep {
+  const undo = undoFor(world, s);
+  if (undo === null) return { world, undo, intentRecorded: false };
+  const begun = dispatch(world, label, {
+    kind: 'beginStep',
+    ordinal: s.ordinal,
+    observedBefore: beforeImage(world, s),
+    sourceObservedBefore: s.inverseOf === null && s.movedFrom ? observedImage(world, s.movedFrom) : null,
+    undo,
+  });
+  const appended = begun.journal.slice(world.journal.length);
+  const events = stepEvents(appended, s.ordinal);
+  const intentRecorded = events.intent !== null && events.outcome === null;
+  return { world: begun, undo, intentRecorded };
+}
+
+function afterImage(corpus: Corpus, s: EffectStep): string | null {
+  const c = find(corpus, s.target);
+  return c ? observe(c).observedHash : null;
+}
+
+function completeEffect(
+  world: World,
+  label: string,
+  s: EffectStep,
+  outcome: 'ok' | 'io-failure' | 'concurrent-change-detected',
+  observedAfter: string | null,
+  observedAfterKnown: boolean,
+  corpus: Corpus = world.corpus,
+): World {
+  return dispatch(world, label, {
+    kind: 'completeStep',
+    ordinal: s.ordinal,
+    outcome,
+    observedAfter,
+    observedAfterKnown,
+  }, corpus);
 }
 
 function nextPending(world: World): EffectStep | null {
@@ -111,12 +179,34 @@ function keysTouched(world: World): readonly ConceptKey[] {
   return out;
 }
 
-function rollbackApproval(approved: ApprovedPlan): ApprovedPlan {
+function rollbackEvidence(evidence: RecoveryEvidence): RecoveryEvidence {
+  const content = evidence.snapshot?.entries.map((entry) => [
+    ks(entry.key),
+    entry.contentHash,
+    entry.verificationHash,
+  ]) ?? [];
   return {
-    ...approved,
-    requestOccurrenceId: `${approved.requestOccurrenceId}-rollback`,
-    tokenId: `${approved.tokenId}-rollback`,
-    fingerprint: `${approved.fingerprint}-rollback`,
+    ...evidence,
+    evidenceHash: h(`rollback-evidence|${evidence.snapshot?.id ?? '(none)'}|${JSON.stringify(content)}`),
+  };
+}
+
+function rollbackApproval(world: World, evidence: RecoveryEvidence): ApprovedPlan | null {
+  const allSegments = segments(world.journal);
+  const parentSegment = allSegments[allSegments.length - 1] ?? [];
+  const admitted = [...parentSegment].reverse().find((record) => record.r === 'ADMITTED');
+  if (!admitted || admitted.r !== 'ADMITTED') return null;
+  const parentApproved = admitted.approved;
+  const expectation = inverseApprovalExpectation(parentApproved, parentSegment, evidence.evidenceHash);
+
+  return {
+    ...parentApproved,
+    manifest: expectation.manifest,
+    requestOccurrenceId: expectation.requestOccurrenceId,
+    tokenId: expectation.tokenId,
+    fingerprint: h(expectation.fingerprintPayload),
+    items: expectation.items,
+    recoveryEvidenceHash: expectation.recoveryEvidenceHash,
   };
 }
 
@@ -159,18 +249,15 @@ export function step(world: World, key: string): World {
     case 'n': {
       const s = nextPending(world);
       if (!s) return world;
-      const next = applyEffect(world.corpus, s, fixture.pre);
-      const after = find(next, s.target) ? observe(find(next, s.target)!).observedHash : null;
-      return dispatch(
-        world,
-        `run step ${s.ordinal} ${s.kind} ${ks(s.target)}`,
-        { kind: 'runStep', ordinal: s.ordinal, outcome: 'ok', observedBefore: beforeImage(world, s), observedAfter: after, undo: snapshotEntry(world.corpus, s.target) },
-        next,
-      );
+      const label = `run step ${s.ordinal} ${s.kind} ${ks(s.target)}`;
+      const begun = beginEffect(world, label, s);
+      if (!begun.intentRecorded) return begun.world;
+      const next = applyEffect(begun.world.corpus, s, begun.undo);
+      return completeEffect(begun.world, label, s, 'ok', afterImage(next, s), true, next);
     }
     case 'N': {
       let w = world;
-      for (let i = 0; i < 40; i++) {
+      for (;;) {
         const s = nextPending(w);
         if (!s) break;
         w = step(w, 'n');
@@ -180,58 +267,58 @@ export function step(world: World, key: string): World {
     case 'f': {
       const s = nextPending(world);
       if (!s) return world;
-      return dispatch(world, `run step ${s.ordinal} (write fails)`, {
-        kind: 'runStep',
-        ordinal: s.ordinal,
-        outcome: 'io-failure',
-        observedBefore: beforeImage(world, s),
-        observedAfter: null,
-        undo: snapshotEntry(world.corpus, s.target),
-      });
+      const label = `run step ${s.ordinal} (write fails before landing; post-image known)`;
+      const begun = beginEffect(world, label, s);
+      if (!begun.intentRecorded) return begun.world;
+      return completeEffect(begun.world, label, s, 'io-failure', beforeImage(world, s), true);
+    }
+    case 'F': {
+      const s = nextPending(world);
+      if (!s) return world;
+      const label = `run step ${s.ordinal} (partial write fails)`;
+      const begun = beginEffect(world, label, s);
+      if (!begun.intentRecorded) return begun.world;
+      const next = applyEffect(begun.world.corpus, s, begun.undo);
+      return completeEffect(begun.world, label, s, 'io-failure', afterImage(next, s), true, next);
     }
     case 'c': {
       const s = nextPending(world);
       if (!s) return world;
-      return dispatch(world, `run step ${s.ordinal} (concurrent change detected)`, {
-        kind: 'runStep',
-        ordinal: s.ordinal,
-        outcome: 'concurrent-change-detected',
-        observedBefore: beforeImage(world, s),
-        observedAfter: null,
-        undo: snapshotEntry(world.corpus, s.target),
-      });
+      const label = `run step ${s.ordinal} (concurrent change detected; post-image unknown)`;
+      const begun = beginEffect(world, label, s);
+      if (!begun.intentRecorded) return begun.world;
+      return completeEffect(begun.world, label, s, 'concurrent-change-detected', null, false);
     }
     case 'p': {
       // Produced bytes differ from the sealed post-image: a rewrite that also
       // reflowed, or a restore that reserialized frontmatter.
       const s = nextPending(world);
       if (!s) return world;
-      const applied = applyEffect(world.corpus, s, fixture.pre);
+      const label = `run step ${s.ordinal} (bytes deviate from the sealed post-image)`;
+      const begun = beginEffect(world, label, s);
+      if (!begun.intentRecorded) return begun.world;
+      const applied = applyEffect(begun.world.corpus, s, begun.undo);
       const gone = find(applied, s.target) === null;
       const deviated: Corpus = gone
         ? // The removal left a tombstone: absence was the sealed post-image.
           [...applied, { key: s.target, status: 'deprecated' as const, statusExplicit: true, body: 'residual artifact left by an incomplete removal', verification: [], sources: [] }]
         : applied.map((c) => (ks(c.key) === ks(s.target) ? { ...c, body: `${c.body}\r\n` } : c));
-      const after = find(deviated, s.target) ? observe(find(deviated, s.target)!).observedHash : null;
-      return dispatch(
-        world,
-        `run step ${s.ordinal} (bytes deviate from the sealed post-image)`,
-        { kind: 'runStep', ordinal: s.ordinal, outcome: 'ok', observedBefore: beforeImage(world, s), observedAfter: after, undo: snapshotEntry(world.corpus, s.target) },
-        deviated,
-      );
+      return completeEffect(begun.world, label, s, 'ok', afterImage(deviated, s), true, deviated);
     }
 
-    case 'Z':
+    case 'Z': {
       // A step that is not in the approved manifest: there is no channel that
       // could introduce one during `mutating`.
+      const target = manifest.steps[0];
+      if (!target) return world;
       return dispatch(world, 'run a step that is not in the approved manifest', {
-        kind: 'runStep',
+        kind: 'beginStep',
         ordinal: 999,
-        outcome: 'ok',
-        observedBefore: null,
-        observedAfter: null,
-        undo: snapshotEntry(world.corpus, manifest.steps[0].target),
+        observedBefore: beforeImage(world, target),
+        sourceObservedBefore: null,
+        undo: snapshotEntry(world.corpus, target.target),
       });
+    }
 
     case 'v':
       return dispatch(world, 'post-operation verification', {
@@ -271,18 +358,16 @@ export function step(world: World, key: string): World {
       });
 
     case 'x':
-      return dispatch(world, 'process dies (in-flight, no SETTLED)', { kind: 'crash', duringStep: null });
+      return dispatch(world, 'process dies (in-flight, no SETTLED)', { kind: 'crash' });
     case 'X': {
       // Death between the write landing and the journal append.
       const s = nextPending(world);
       if (!s) return world;
-      const next = applyEffect(world.corpus, s, fixture.pre);
-      return dispatch(
-        world,
-        `process dies after step ${s.ordinal} wrote, before the journal append`,
-        { kind: 'crash', duringStep: { ordinal: s.ordinal, undo: snapshotEntry(world.corpus, s.target) } },
-        next,
-      );
+      const label = `process dies after step ${s.ordinal} wrote, before the journal append`;
+      const begun = beginEffect(world, label, s);
+      if (!begun.intentRecorded) return begun.world;
+      const next = applyEffect(begun.world.corpus, s, begun.undo);
+      return dispatch(begun.world, label, { kind: 'crash' }, next);
     }
     case 'r':
       return dispatch(world, 'reconcile journal against the observed world', { kind: 'reconcile' });
@@ -296,17 +381,27 @@ export function step(world: World, key: string): World {
         freshApproval: null,
       });
     case 'B':
-      return dispatch(world, 'begin rollback (fresh approval)', {
-        kind: 'beginRollback',
-        preRollbackEvidence: goodEvidence(world.corpus, keysTouched(world)),
-        freshApproval: rollbackApproval(fixture.approved),
-      });
+      {
+        const evidence = rollbackEvidence(goodEvidence(world.corpus, keysTouched(world)));
+        const approval = rollbackApproval(world, evidence);
+        if (!approval) return world;
+        return dispatch(world, 'begin rollback (fresh approval)', {
+          kind: 'beginRollback',
+          preRollbackEvidence: evidence,
+          freshApproval: approval,
+        });
+      }
     case 'z':
-      return dispatch(world, 'begin rollback (pre-rollback snapshot unverified)', {
-        kind: 'beginRollback',
-        preRollbackEvidence: badEvidence(world.corpus, keysTouched(world)),
-        freshApproval: rollbackApproval(fixture.approved),
-      });
+      {
+        const evidence = rollbackEvidence(badEvidence(world.corpus, keysTouched(world)));
+        const approval = rollbackApproval(world, evidence);
+        if (!approval) return world;
+        return dispatch(world, 'begin rollback (pre-rollback snapshot unverified)', {
+          kind: 'beginRollback',
+          preRollbackEvidence: evidence,
+          freshApproval: approval,
+        });
+      }
 
     case 'o':
       return dispatch(world, 'observation: a published redirect was followed', {
@@ -398,6 +493,16 @@ export function step(world: World, key: string): World {
         (c) => ({ ...c, body: `${c.body} (edited by its own author)` }),
         'the successor is edited by the session that authored it',
       );
+    case '9': {
+      const source = manifest.steps.find((s) => s.movedFrom)?.movedFrom;
+      if (!source) return world;
+      return editConcept(
+        world,
+        source,
+        (c) => ({ ...c, body: `${c.body} (edited by another session before the move write)` }),
+        'another session edits the move source before its first write',
+      );
+    }
 
     default:
       return world;

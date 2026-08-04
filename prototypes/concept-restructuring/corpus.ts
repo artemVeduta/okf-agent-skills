@@ -79,9 +79,38 @@ export interface Concept {
 
 export type Corpus = readonly Concept[];
 
+function authoredRepresentation(c: Concept): string {
+  return JSON.stringify({
+    status: c.status,
+    statusExplicit: c.statusExplicit,
+    body: c.body,
+    sources: c.sources,
+  });
+}
+
+function rawRepresentation(c: Concept): string {
+  return JSON.stringify({
+    key: c.key,
+    status: c.status,
+    statusExplicit: c.statusExplicit,
+    body: c.body,
+    verification: c.verification,
+    sources: c.sources,
+  });
+}
+
+function encodeConcept(c: Concept): SnapshotEntry['bytesRef'] {
+  return `bytes:${rawRepresentation(c)}` as SnapshotEntry['bytesRef'];
+}
+
+function decodeConcept(bytesRef: Exclude<SnapshotEntry['bytesRef'], null>): Concept {
+  const encoded = bytesRef.startsWith('bytes:') ? bytesRef.slice('bytes:'.length) : bytesRef;
+  return JSON.parse(encoded) as Concept;
+}
+
 export function observe(c: Concept): Observed {
-  const contentHash = h(`${c.status ?? 'absent'}|${c.body}`);
-  const verificationHash = h(c.verification.map((e) => `${e.actor}@${e.at}`).join(','));
+  const contentHash = h(authoredRepresentation(c));
+  const verificationHash = h(JSON.stringify(c.verification));
   const view: ConceptView = {
     key: c.key,
     status: c.status,
@@ -432,18 +461,19 @@ function policies(spec: Spec, fates: readonly LinkFateEntry[], prov: readonly Pr
 // afterHash is a fact and the frame shows a genuine occupancy diff.
 // ---------------------------------------------------------------------------
 
-export function applyEffect(corpus: Corpus, step: EffectStep, pre: Corpus): Corpus {
+export function applyEffect(corpus: Corpus, step: EffectStep, snapshot: SnapshotEntry | null = null): Corpus {
   const target = step.target;
   const without = corpus.filter((c) => ks(c.key) !== ks(target));
   switch (step.kind) {
     case 'CREATE_OUTPUT': {
+      if (find(corpus, target)) return corpus;
       return [
         ...corpus,
         {
           key: target,
           status: step.outputDraft?.statusExplicit === false ? null : 'draft',
           statusExplicit: step.outputDraft?.statusExplicit !== false,
-          body: step.outputDraft?.empty ? '' : `authored by ${step.rationale}`,
+          body: step.outputDraft?.empty ? '' : `authored output for ${ks(target)}`,
           verification: [],
           sources: [],
         },
@@ -451,6 +481,7 @@ export function applyEffect(corpus: Corpus, step: EffectStep, pre: Corpus): Corp
     }
     case 'MOVE_PATH': {
       if (step.action === 'CREATE') {
+        if (find(corpus, target)) return corpus;
         const src = step.movedFrom ? find(corpus, step.movedFrom) : null;
         if (!src) return corpus;
         return [...corpus, { ...src, key: target }];
@@ -460,7 +491,8 @@ export function applyEffect(corpus: Corpus, step: EffectStep, pre: Corpus): Corp
     case 'STATUS_TRANSITION': {
       const c = find(corpus, target);
       if (!c) return corpus;
-      const to: ConceptStatus = step.rationale.includes('deprecated -> stable') ? 'stable' : 'deprecated';
+      const to = step.statusTo;
+      if (to === null) return corpus;
       return corpus.map((x) => (ks(x.key) === ks(target) ? { ...x, status: to, statusExplicit: true } : x));
     }
     case 'DELETE_CONCEPT':
@@ -471,10 +503,10 @@ export function applyEffect(corpus: Corpus, step: EffectStep, pre: Corpus): Corp
       return corpus.map((x) => (ks(x.key) === ks(target) ? { ...x, body: `${x.body} [edited]` } : x));
     case 'LINK_REWRITE': {
       const link = step.link;
-      if (!link) return corpus;
-      const to = step.rationale.split('->')[1]?.trim() ?? '';
+      const to = step.linkReplacementTarget;
+      if (!link || to === null) return corpus;
       return corpus.map((x) =>
-        ks(x.key) === ks(target) ? { ...x, body: x.body.replace(link.to.id, to) } : x,
+        ks(x.key) === ks(target) ? { ...x, body: x.body.replace(link.to.id, to.id) } : x,
       );
     }
     case 'INDEX_REGEN':
@@ -484,10 +516,15 @@ export function applyEffect(corpus: Corpus, step: EffectStep, pre: Corpus): Corp
           : x,
       );
     case 'RESTORE_BYTES': {
-      const original = find(pre, target);
-      return original ? [...without, original] : without;
+      if (!snapshot || ks(snapshot.key) !== ks(target)) return corpus;
+      if (!snapshot.existedBefore) return without;
+      if (snapshot.bytesRef === null) return corpus;
+      const original = decodeConcept(snapshot.bytesRef);
+      if (ks(original.key) !== ks(target)) return corpus;
+      return [...without, original];
     }
     case 'REDIRECT_PUBLISH':
+      if (find(corpus, target)) return corpus;
       return [
         ...corpus,
         { key: target, status: 'stable', statusExplicit: true, body: 'redirect artifact', verification: [], sources: [] },
@@ -513,6 +550,8 @@ interface Draft {
   readonly indexScope?: EffectStep['indexScope'];
   readonly deletionProof?: EffectStep['deletionProof'];
   readonly outputDraft?: EffectStep['outputDraft'];
+  readonly statusTo?: ConceptStatus;
+  readonly linkReplacementTarget?: ConceptKey;
   readonly claimAffectingOverride?: boolean;
 }
 
@@ -558,9 +597,18 @@ function buildLinks(spec: Spec): { set: InboundLinkSet; fates: LinkFateEntry[]; 
     },
   ];
 
+  const fateForSourceLink = (link: InboundLink): LinkFateEntry['fate'] =>
+    spec.op === 'move' &&
+    spec.crossBundle === true &&
+    link.linkForm.form === 'in-bundle-markdown' &&
+    link.from.bundle === src.bundle &&
+    dest.bundle !== link.from.bundle
+      ? { fate: 'knowingly-broken-approved', why: 'in-bundle Markdown cannot point at a foreign bundle key' }
+      : { fate: 'rewrite', to: dest };
+
   const fates: LinkFateEntry[] = [
-    { link: 'L1' as LinkId, fate: spec.unassignedFate ? { fate: 'unassigned' } : { fate: 'rewrite', to: dest } },
-    { link: 'L2' as LinkId, fate: { fate: 'rewrite', to: dest } },
+    { link: 'L1' as LinkId, fate: spec.unassignedFate ? { fate: 'unassigned' } : fateForSourceLink(links[0]) },
+    { link: 'L2' as LinkId, fate: fateForSourceLink(links[1]) },
     {
       link: 'L3' as LinkId,
       fate: spec.rewriteReadOnly
@@ -577,7 +625,9 @@ function buildLinks(spec: Spec): { set: InboundLinkSet; fates: LinkFateEntry[]; 
   return {
     set: { links, complete: !spec.incompleteLinks, incompleteness },
     fates,
-    breakage: spec.breakageUnlisted || spec.rewriteReadOnly || spec.aliasFanOut ? [] : (['L3'] as LinkId[]),
+    breakage: spec.breakageUnlisted
+      ? []
+      : fates.filter((f) => f.fate.fate === 'knowingly-broken-approved').map((f) => f.link),
   };
 }
 
@@ -623,7 +673,8 @@ function outputDependencies(spec: Spec): readonly ReviewDependency[] {
 function draftsFor(spec: Spec): Draft[] {
   const out: Draft[] = [];
   const bundle = OKF;
-  const links = buildLinks(spec).set.links;
+  const { set, fates } = buildLinks(spec);
+  const links = set.links;
   const dest =
     spec.op === 'move'
       ? K(spec.crossBundle ? PARTNER : OKF, moveTargetId())
@@ -664,6 +715,7 @@ function draftsFor(spec: Spec): Draft[] {
             risk: 'REVIEW',
             escape: 'contained',
             approvalScope: 'approved',
+            statusTo: 'stable',
             rationale: `explicit deprecated -> stable revival of ${id} before it is merged`,
           });
         }
@@ -696,6 +748,7 @@ function draftsFor(spec: Spec): Draft[] {
                 risk: 'CAUTION',
                 escape: 'contained',
                 approvalScope: 'approved',
+                statusTo: 'deprecated',
                 rationale: `source ${id} deprecated`,
               },
         );
@@ -794,6 +847,7 @@ function draftsFor(spec: Spec): Draft[] {
         risk: 'CAUTION',
         escape: 'contained',
         approvalScope: 'approved',
+        statusTo: 'deprecated',
         rationale: 'predecessor stable -> deprecated inside the approved composite',
       });
     }
@@ -832,7 +886,7 @@ function draftsFor(spec: Spec): Draft[] {
 
   // Link rewrites, one step per link — there is no bulk substitution kind.
   for (const link of links) {
-    const fate = buildLinks(spec).fates.find((f) => f.link === link.id)?.fate;
+    const fate = fates.find((f) => f.link === link.id)?.fate;
     if (!fate || fate.fate !== 'rewrite') continue;
     if (link.holderWritability !== 'writable' && !spec.rewriteReadOnly) continue;
     out.push({
@@ -844,6 +898,7 @@ function draftsFor(spec: Spec): Draft[] {
       escape: spec.escapedLink ? 'escaped' : 'contained',
       approvalScope: 'inherited',
       link,
+      linkReplacementTarget: fate.to,
       rationale: `manifest-bound substitution at byte ${link.occurrence}: ${link.to.id} -> ${fate.to.id}`,
     });
   }
@@ -925,14 +980,7 @@ function draftsFor(spec: Spec): Draft[] {
       out.unshift(removal);
     }
   }
-  // The primary source is a third party's review-dependency target; the marker
-  // is what admission reads when it demands the breakage be listed.
-  return out.map((d) =>
-    (d.kind === 'STATUS_TRANSITION' || d.kind === 'DELETE_CONCEPT' || (d.kind === 'MOVE_PATH' && d.action === 'MOVE')) &&
-    d.target.id === primarySourceId(spec)
-      ? { ...d, rationale: `${d.rationale} has-review-dependents` }
-      : d,
-  );
+  return out;
 }
 
 function planOf(spec: Spec): Plan {
@@ -1028,15 +1076,19 @@ export function plan(spec: Spec): Fixture {
       approvalScope: d.approvalScope,
       beforeHash,
       afterHash: null,
+      sourceBeforeHash: d.movedFrom ? hashOf(cur, d.movedFrom) : null,
+      inverseOf: null,
       classification,
       deletionProof: d.deletionProof ?? null,
       link: d.link ?? null,
       indexScope: d.indexScope ?? null,
       movedFrom: d.movedFrom ?? null,
       outputDraft: d.outputDraft ?? null,
+      statusTo: d.statusTo ?? null,
+      linkReplacementTarget: d.linkReplacementTarget ?? null,
       rationale: d.rationale,
     };
-    const next = applyEffect(cur, step, pre);
+    const next = applyEffect(cur, step);
     steps.push({ ...step, afterHash: hashOf(next, d.target) });
     cur = next;
   });
@@ -1062,6 +1114,12 @@ export function plan(spec: Spec): Fixture {
       classification: classifyEdit(kind, true, true),
       beforeHash: hashOf(finalProjection, s.target),
       afterHash: hashOf(pre, s.target),
+      movedFrom: null,
+      sourceBeforeHash: null,
+      outputDraft: null,
+      statusTo: null,
+      linkReplacementTarget: null,
+      inverseOf: s.ordinal,
       rationale: `inverse of step ${s.ordinal} (${s.kind}) on ${ks(s.target)}`,
     });
   });
@@ -1088,7 +1146,7 @@ export function plan(spec: Spec): Fixture {
       ]
     : [];
 
-  const manifest: OperationManifest = {
+  const manifestFields = {
     operationId: `op-${spec.op}-${h(spec.label)}`,
     plan: planOf(spec),
     revertOf: null,
@@ -1115,15 +1173,19 @@ export function plan(spec: Spec): Fixture {
         ? [K(OKF, 'concepts/session-v0')]
         : [],
     policies: policies(spec, fates, provenance),
-    manifestHash: h(`${spec.label}|${steps.length}`),
   };
+  const manifest: OperationManifest = {
+    ...manifestFields,
+     manifestHash: h(JSON.stringify(manifestFields)),
+  };
+  const items = fingerprintItems(pre, steps);
 
   const approved: ApprovedPlan = {
     manifest,
     requestOccurrenceId: 'req-1',
     tokenId: 'P-1',
-    fingerprint: h(`fp|${spec.label}`),
-    items: fingerprintItems(pre, steps),
+    fingerprint: h(JSON.stringify({ manifest: manifestFields, items })),
+    items,
     epochAtConfirm: Object.fromEntries(manifest.bundles.map((b) => [b.ledgerKey, b.epoch])),
     recoveryEvidenceHash: 'ev-1',
   };
@@ -1186,11 +1248,14 @@ export function observedItems(corpus: Corpus, steps: readonly EffectStep[]): rea
 
 export function snapshotEntry(corpus: Corpus, key: ConceptKey): SnapshotEntry {
   const c = find(corpus, key);
+  const observed = c ? observe(c) : null;
   return {
     key,
     existedBefore: c !== null,
-    bytesRef: c ? (`bytes:${h(c.body)}` as SnapshotEntry['bytesRef']) : null,
-    observedHash: c ? observe(c).observedHash : '(absent)',
+    bytesRef: c ? encodeConcept(c) : null,
+    contentHash: observed?.contentHash ?? '(absent)',
+    verificationHash: observed?.verificationHash ?? '(absent)',
+    observedHash: observed?.observedHash ?? '(absent)',
   };
 }
 
@@ -1235,21 +1300,28 @@ export function postOpChecks(
   const m = fixture.approved.manifest;
   const resolutions = m.inboundLinks.links.map((link) => {
     const fate = m.linkFates.find((f) => f.link === link.id)?.fate;
-    if (fate?.fate === 'knowingly-broken-approved') {
-      return [link.id, { state: 'knowingly-broken-approved' as const, approvedInPlanAs: fate.why }] as const;
-    }
     if (opts.danglingAlias && link.linkForm.form === 'workspace-alias') {
       return [
         link.id,
         { state: 'unexpectedly-broken' as const, detail: `okf-workspace://${link.linkForm.alias}/${link.to.id} resolves to nothing` },
       ] as const;
     }
+    if (fate?.fate === 'knowingly-broken-approved') {
+      return [link.id, { state: 'knowingly-broken-approved' as const, approvedInPlanAs: fate.why }] as const;
+    }
+    const target = fate?.fate === 'rewrite' ? fate.to : link.to;
+    if (!find(corpus, target)) {
+      return [
+        link.id,
+        { state: 'unexpectedly-broken' as const, detail: `${ks(link.from)} points at missing target ${ks(target)}` },
+      ] as const;
+    }
     return [link.id, { state: 'resolves' as const }] as const;
   });
-  void corpus;
+  const hasUnexpectedLink = resolutions.some(([, resolution]) => resolution.state === 'unexpectedly-broken');
   return {
     identityChecks: opts.identity ?? 'pass',
-    linkChecks: opts.danglingAlias ? 'fail' : (opts.link ?? 'pass'),
+    linkChecks: hasUnexpectedLink || opts.danglingAlias ? 'fail' : (opts.link ?? 'pass'),
     dependencyChecks: opts.structural ? 'fail' : (opts.dependency ?? 'pass'),
     linkResolutions: resolutions,
     findings: opts.crossBundleSameId
