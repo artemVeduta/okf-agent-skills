@@ -222,8 +222,10 @@ test('workspace root at filesystem root contains absolute candidates', () => {
   bundle(root);
   const result = runWrapper(request(root, [candidate(root)], path.parse(root).root));
   const item = onlyCandidate(result);
+  // Containment is what this fixture proves. The candidate is the current repository,
+  // so since #47 it clears TRUST and ACCESS too.
   assert.equal(item.failed_gate, null);
-  assert.equal(item.next_gate, 'TRUST');
+  assert.equal(item.state, 'active');
 });
 
 test('presence accepts a child bundle below the filesystem root candidate', () => {
@@ -235,8 +237,9 @@ test('presence accepts a child bundle below the filesystem root candidate', () =
     bundle: path.relative(root, child),
   })], path.parse(root).root));
   const item = onlyCandidate(result);
-  assert.equal(item.failed_gate, null);
-  assert.equal(item.next_gate, 'TRUST');
+  // The child bundle is present, so PRESENCE passes and TRUST is what stops it.
+  assert.equal(item.failed_gate, 'TRUST');
+  assert.ok(item.findings.some((finding) => finding.code === 'UNTRUSTED'));
 });
 
 test('presence distinguishes declared missing, repository missing, bundle missing, and undeclared absence', () => {
@@ -299,14 +302,18 @@ test('topology handles monorepo siblings, submodules, and declared deeper roots'
 
   const declared = runWrapper(request(parent, [candidate('submodule', { declared: true })], parent));
   const admitted = onlyCandidate(declared);
-  assert.equal(admitted.failed_gate, null);
-  assert.equal(admitted.findings.length, 1);
+  // Declaring the submodule clears REACH, which is what this fixture is about. A
+  // submodule is a separate repository instance, so since #47 it carries its own
+  // trust and the parent's does not reach it.
+  assert.equal(admitted.failed_gate, 'TRUST');
   assert.equal(admitted.findings[0].code, 'OVERLAPPING_CANONICAL_PATH');
   assert.equal(admitted.findings[0].origin, 'suite');
   assert.equal(admitted.findings[0].severity, 'warning');
   assert.equal(admitted.findings[0].blocks, false);
   assert.equal(admitted.findings[0].detail.gate, 'REACH');
-  assert.equal(declared.response.result, 'ok');
+  // The overlap anomaly itself never blocks, asserted above. Since #47 the separate
+  // TRUST gate does, because a submodule is its own repository instance.
+  assert.equal(declared.response.result, 'blocked');
   assert.equal(declared.stdout.includes(submodule), false);
 });
 
@@ -346,7 +353,9 @@ test('a declared candidate outside the git root is refused as outside the worksp
 
   // A declaration is explicit, so it walks sideways within a workspace root that holds it.
   const declared = runWrapper(request(root, [candidate(sibling, { declared: true })], path.dirname(root)));
-  assert.equal(onlyCandidate(declared).failed_gate, null);
+  // The declaration is what clears REACH here. The sibling is not the current
+  // repository, so since #47 it stops at TRUST rather than being admitted outright.
+  assert.equal(onlyCandidate(declared).failed_gate, 'TRUST');
 });
 
 test('reach recomputes realpath containment on every call within one process', () => {
@@ -406,18 +415,19 @@ test('an empty cwd or workspace root is invalid data, and a valid request ignore
   const payload = request(root, [candidate('.', { declared: true, requires_repository: true })], root);
   const fromRoot = runWrapper(payload, root);
   const fromElsewhere = runWrapper(payload, path.parse(root).root);
-  assert.equal(onlyCandidate(fromRoot).next_gate, 'TRUST');
+  // This candidate is the current repository, so since #47 it clears every gate.
+  assert.equal(onlyCandidate(fromRoot).state, 'active');
   assert.equal(fromRoot.stdout, fromElsewhere.stdout);
 });
 
-test('a candidate passing reach and presence waits at TRUST without blocking', () => {
+test('a candidate passing reach and presence is evaluated for trust and access', () => {
   const root = repository('okf-46-success-');
   bundle(root);
   const result = runWrapper(request(root, [candidate('.', { declared: true, requires_repository: true })], root));
   const item = onlyCandidate(result);
   assert.equal(result.response.result, 'ok');
   assert.equal(item.failed_gate, null);
-  assert.equal(item.next_gate, 'TRUST');
-  assert.equal(item.state, 'inactive');
+  assert.equal(item.next_gate, null);
+  assert.equal(item.state, 'active');
   assert.equal(item.findings.some((finding) => finding.blocks), false);
 });

@@ -29,6 +29,8 @@ function parseRequest(text, expectedSkill) {
   if (obj.operation === 'revise' && (!obj.payload.bundle || !obj.payload.concept)) {
     throw new Error('Missing payload.bundle or payload.concept');
   }
+  if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');
+  if (obj.operation === 'route' && typeof obj.payload.concept !== 'string') throw new Error('Missing payload.concept');
 
   return obj;
 }

@@ -2,15 +2,9 @@
 Wrapper that reads one JSON request from stdin and emits one JSON response on stdout.
 */
 
-const fs = require('fs');
 const protocol = require('./lib/protocol');
 const runtime = require('./lib/runtime');
-
-const services = {
-  readFile: (file) => fs.readFileSync(file, 'utf8'),
-  writeFile: (file, data) => fs.writeFileSync(file, data, 'utf8'),
-  exists: fs.existsSync,
-};
+const services = require('./lib/services');
 
 function emit(response) {
   process.stdout.write(protocol.serializeResponse(response) + '\n');
