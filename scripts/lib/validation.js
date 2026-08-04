@@ -645,17 +645,16 @@ function bodyLinkPath(resource) {
   return target === '' ? null : target;
 }
 
-function isKnownFile(root, knownFiles, target) {
-  const targetRelative = path.relative(root, target).split(path.sep).join('/');
-  return inside(target, root) && knownFiles.has(targetRelative);
+function linkVerdict(root, target, services) {
+  return inside(target, root) && services.exists(target) && services.isFile(target) ? 'resolves' : 'unexpectedly-broken';
 }
 
 function validateRead(bundleRoot, services, options = {}) {
   const root = services.realpath(path.resolve(bundleRoot));
   const entries = readEntries(root, services);
-  const knownFiles = new Set(entries.map((entry) => entry.path));
   const findings = [];
   const concepts = [];
+  const linkVerdicts = [];
   const today = typeof options.today === 'string' ? options.today : new Date().toISOString().slice(0, 10);
   let legacyFallback = false;
 
@@ -691,7 +690,9 @@ function validateRead(bundleRoot, services, options = {}) {
     for (const resource of sourceLinks(tree)) {
       const target = internalResourcePath(root, resource);
       if (!target) continue;
-      if (!isKnownFile(root, knownFiles, target)) {
+      const verdict = linkVerdict(root, target, services);
+      linkVerdicts.push({ path: entry.path, resource, verdict });
+      if (verdict === 'unexpectedly-broken') {
         conceptFindings.push(warn('UNRESOLVED_INTERNAL_LINK', 'okf', {
           path: entry.path,
           resource,
@@ -705,7 +706,9 @@ function validateRead(bundleRoot, services, options = {}) {
       const target = targetPath.startsWith('/')
         ? path.resolve(root, `.${targetPath}`)
         : path.resolve(path.dirname(entry.file), targetPath);
-      if (!isKnownFile(root, knownFiles, target)) {
+      const verdict = linkVerdict(root, target, services);
+      linkVerdicts.push({ path: entry.path, resource, verdict });
+      if (verdict === 'unexpectedly-broken') {
         conceptFindings.push(warn('UNRESOLVED_INTERNAL_LINK', 'okf', {
           path: entry.path,
           resource,
@@ -735,7 +738,7 @@ function validateRead(bundleRoot, services, options = {}) {
 
   return {
     result: 'ok',
-    data: { concepts, report },
+    data: { concepts, report, link_verdicts: linkVerdicts },
     findings: sortFindings(findings),
   };
 }

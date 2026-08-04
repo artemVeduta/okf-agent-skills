@@ -517,7 +517,12 @@ function search(data, payload, services, getActiveCandidates) {
       }
       const parsed = parseNavigationRecord(candidate, guard, observation, findings);
       if (!parsed.statusObserved) archiveUnevaluated = true;
-      if (parsed.status === 'deprecated') continue;
+      if (parsed.status === 'deprecated') {
+        if (payload.include_deprecated !== true) continue;
+        addFinding(findings, navigationFinding('unreadable', {
+          gate: 'navigation', path: guard.relative, reason: 'deprecated_concept',
+        }, 'warning', false));
+      }
       found.push(reference(candidate, guard.relative));
       readRecords.push(parsed.record);
     }
