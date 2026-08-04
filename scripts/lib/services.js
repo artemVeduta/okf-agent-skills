@@ -20,6 +20,27 @@ function gitRootOf(start) {
   }
 }
 
+function listFiles(root) {
+  const files = [];
+
+  function visit(directory) {
+    try {
+      if (fs.lstatSync(directory).isSymbolicLink()) return;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          visit(file);
+        } else if (entry.isFile()) {
+          files.push(file);
+        }
+      }
+    } catch {}
+  }
+
+  visit(path.resolve(root));
+  return files.sort();
+}
+
 // Access and link probes are fallible queries whose failure is a status, never a
 // thrown exception, because the admission gates report them as findings.
 module.exports = {
@@ -30,6 +51,7 @@ module.exports = {
   isFile: (file) => fs.statSync(file).isFile(),
   isLink: (file) => { try { return fs.lstatSync(file).isSymbolicLink(); } catch { return false; } },
   access: (file) => { try { fs.accessSync(file, fs.constants.R_OK); return true; } catch { return false; } },
+  listFiles,
   activationMarker: (root) => {
     try {
       const marker = fs.lstatSync(path.join(root, '.okf-active'));

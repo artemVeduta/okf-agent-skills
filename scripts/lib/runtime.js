@@ -63,6 +63,31 @@ function writeOperation(skill, request) {
     (skill === 'okf' && routerOwners.get(request.operation) === 'okf-write');
 }
 
+function validateRead(request, services) {
+  const payload = request.payload;
+  const hasBundle = typeof payload.bundle === 'string' && payload.bundle !== '';
+
+  const admittedRequest = hasBundle
+    ? {
+      ...request,
+      payload: {
+        ...payload,
+        candidates: [{ path: path.resolve(payload.cwd, payload.bundle), bundle: '.', declared: true, named_by_user: true }],
+      },
+    }
+    : request;
+  const admitted = admission.admitRead(admittedRequest, services);
+  const requestedRoot = hasBundle ? path.resolve(payload.cwd, payload.bundle) : null;
+  const candidate = admitted.data.candidates.find((item) => (
+    item.state === 'active' && (requestedRoot === null || item.bundle_root === requestedRoot)
+  ));
+  if (!candidate) {
+    return respond(request, hasBundle ? 'blocked' : admitted.result, admission.redact(admitted.data), admitted.findings);
+  }
+  const read = validation.validateRead(candidate.bundle_root, services, { today: request.payload.today });
+  return respond(request, 'ok', { ...admission.redact(admitted.data), ...read.data }, [...admitted.findings, ...read.findings]);
+}
+
 function resolvedPath(value, services) {
   const absolute = path.resolve(value);
   try {
@@ -111,6 +136,7 @@ function routerRun(request, services) {
 
 function runActive(skill, request, services) {
   if (skill === 'okf-read') {
+    if (request.operation === 'validate') return validateRead(request, services);
     if (request.operation === 'resolve') return admitAndRoute(request, services, routing.resolve);
     if (request.operation !== 'admit') return unknownOperation(request);
     const outcome = admission.admit(request, services);

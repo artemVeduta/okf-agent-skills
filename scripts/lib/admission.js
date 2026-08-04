@@ -53,7 +53,7 @@ function makeCandidate(entry, base) {
   };
 }
 
-function evaluate(entries, context, services) {
+function evaluate(entries, context, services, allowMissingIndex) {
   return entries.map((entry) => {
     const candidate = makeCandidate(entry, context.workspaceRoot || context.cwd);
     const reached = reach.evaluate(candidate, context, services);
@@ -79,7 +79,7 @@ function evaluate(entries, context, services) {
     // joint TRUST/ACCESS report the specification requires.
     const inspectable = accessible || !services.exists(candidate.bundle_root);
     if (inspectable) {
-      const present = presence.evaluate(candidate, services);
+      const present = presence.evaluate(candidate, services, allowMissingIndex ? { allowMissingIndex: true } : undefined);
       if (!present.passed) return record('PRESENCE', [present.finding, ...reached.anomalies]);
     }
     // PROVISIONAL (spec section 11 open item): the workspace-root trust sidecar is undecided, so the workspace-root bundle is reported untrusted rather than granted implicit trust.
@@ -107,7 +107,7 @@ function bundleEntries(workspace, root) {
   });
 }
 
-function admit(request, services) {
+function admitInternal(request, services, allowMissingIndex) {
   const payload = request.payload;
   if (!validPayload(payload)) return invalid();
   const cwd = path.resolve(payload.cwd);
@@ -116,7 +116,7 @@ function admit(request, services) {
   // A manifest root overrides an explicitly supplied workspace root.
   const context = { cwd, gitRoot, workspaceRoot: selected.root || (payload.workspace_root === undefined ? null : path.resolve(payload.workspace_root)) };
   const entries = selected.manifest ? bundleEntries(selected.manifest, selected.root) : (payload.candidates || []);
-  const candidates = evaluate(entries, context, services);
+  const candidates = evaluate(entries, context, services, allowMissingIndex);
   const findings = selected.finding ? [selected.finding] : [];
   const degraded = candidates.some((x) => x.required && x.state !== 'active');
   const federation = selected.finding ? 'rejected' : (selected.manifest ? 'accepted' : 'none');
@@ -126,6 +126,14 @@ function admit(request, services) {
   if (selected.finding) data.federation_finding = selected.finding;
   const blocked = [...findings, ...candidates.flatMap((x) => x.findings)].some((f) => f.blocks);
   return { result: blocked ? 'blocked' : 'ok', data, findings };
+}
+
+function admit(request, services) {
+  return admitInternal(request, services, false);
+}
+
+function admitRead(request, services) {
+  return admitInternal(request, services, true);
 }
 
 // Candidate records may hold a path the user never named. Only a named path is echoed
@@ -141,4 +149,4 @@ function redact(data) {
   };
 }
 
-module.exports = { admit, redact };
+module.exports = { admit, admitRead, redact };

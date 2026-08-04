@@ -33,6 +33,22 @@ function parseRequest(text, expectedSkill) {
   )) {
     throw new Error('Missing payload.bundle or payload.concept');
   }
+  if (obj.operation === 'validate') {
+    if (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '') {
+      throw new Error('Missing payload.cwd');
+    }
+    if (Object.hasOwn(obj.payload, 'bundle') && (
+      typeof obj.payload.bundle !== 'string' || obj.payload.bundle === ''
+    )) {
+      throw new Error('Invalid payload.bundle');
+    }
+    if (Object.hasOwn(obj.payload, 'candidates') && !Array.isArray(obj.payload.candidates)) {
+      throw new Error('Invalid payload.candidates');
+    }
+    if (typeof obj.payload.bundle !== 'string' && !Array.isArray(obj.payload.candidates)) {
+      throw new Error('Missing payload.bundle or payload.candidates');
+    }
+  }
   if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');
   if (obj.operation === 'route' && typeof obj.payload.concept !== 'string') throw new Error('Missing payload.concept');
 

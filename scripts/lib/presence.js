@@ -9,7 +9,7 @@ function finding(code, candidate) {
   return { code, origin: 'suite', severity: 'error', blocks: true, detail };
 }
 
-function evaluate(candidate, services) {
+function evaluate(candidate, services, options = {}) {
   if (candidate.declared === true && !services.exists(candidate.path)) {
     return { passed: false, finding: finding('DECLARED_MISSING', candidate) };
   }
@@ -46,7 +46,10 @@ function evaluate(candidate, services) {
   and the collision needs a specification decision.
   */
   const bundleIndex = path.join(bundlePath, 'index.md');
-  if (!services.exists(bundleIndex)) {
+  const bundleMissing = options.allowMissingIndex === true
+    ? typeof services.isFile === 'function' && services.isFile(bundlePath)
+    : !services.exists(bundleIndex);
+  if (bundleMissing) {
     return { passed: false, finding: finding('BUNDLE_MISSING', candidate) };
   }
 

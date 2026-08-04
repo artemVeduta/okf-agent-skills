@@ -22,7 +22,9 @@ const NON_HUMAN_ACTORS = ['agent:', 'tool:'];
 
 function extractFrontmatter(text) {
   const lines = text.split('\n');
-  if (lines[0].replace(/\r$/, '') !== '---') return { unterminated: false, frontmatter: '', body: text };
+  if (lines[0].replace(/\r$/, '') !== '---') {
+    return { unterminated: false, missing: true, frontmatter: '', body: text };
+  }
   for (let i = 1; i < lines.length; i++) {
     if (lines[i].replace(/\r$/, '') !== '---') continue;
     return {
@@ -260,6 +262,22 @@ function serializeFrontmatter(tree) {
   return `---\n${canonicalYAML(tree)}\n---\n`;
 }
 
+function parseFrontmatter(text) {
+  const extracted = extractFrontmatter(text);
+  const reason = extracted.missing
+    ? 'missing opening frontmatter delimiter'
+    : extracted.unterminated
+      ? 'unterminated frontmatter block'
+      : null;
+  if (reason !== null) {
+    const err = new Error(reason);
+    err.line = 0;
+    err.reason = reason;
+    throw err;
+  }
+  return extracted;
+}
+
 // ----------------------------------------------------------- tree comparison
 
 function parseTreeEqual(a, b, at = '') {
@@ -418,8 +436,8 @@ function sourceLinks(tree) {
 
 function checkLinks(tree, rel, bundleRoot, services, findings) {
   for (const resource of sourceLinks(tree)) {
-    const file = path.resolve(bundleRoot, resource);
-    if (!inside(file, bundleRoot) || !services.exists(file)) {
+    const file = sourceResourcePath(bundleRoot, resource);
+    if (!file || !inside(file, bundleRoot) || !services.exists(file)) {
       findings.push(warn('UNRESOLVED_INTERNAL_LINK', 'okf', { path: rel, resource }));
     }
   }
@@ -429,8 +447,8 @@ function checkLinks(tree, rel, bundleRoot, services, findings) {
 // that do not block are surfaced unchanged so a SHOULD violation stays visible.
 function checkUpstreams(tree, rel, bundleRoot, services, findings) {
   for (const resource of sourceLinks(tree)) {
-    const file = path.resolve(bundleRoot, resource);
-    if (!inside(file, bundleRoot) || !services.exists(file)) continue;
+    const file = sourceResourcePath(bundleRoot, resource);
+    if (!file || !inside(file, bundleRoot) || !services.exists(file)) continue;
     const upstream = readConcept(file, resource, services);
     const upstreamFindings = [];
     if (upstream.finding) {
@@ -507,4 +525,219 @@ function evaluate(request, services) {
   return done('ok', { written: true, path: rel });
 }
 
-module.exports = { evaluate, parseYAML, serializeFrontmatter };
+function parseReadText(text) {
+  const extracted = parseFrontmatter(text);
+  return { tree: parseYAML(extracted.frontmatter), body: extracted.body };
+}
+
+function parseReservedText(text) {
+  const extracted = extractFrontmatter(text);
+  if (extracted.missing) return;
+  if (extracted.unterminated) {
+    const err = new Error('unterminated frontmatter block');
+    err.line = 0;
+    err.reason = err.message;
+    throw err;
+  }
+  parseYAML(extracted.frontmatter);
+}
+
+function parseFinding(code, file, error) {
+  return blocker(code, 'okf', {
+    [code === 'BUNDLE_FILES_NONCONFORMING' ? 'file' : 'path']: file,
+    line: Number.isInteger(error.line) ? error.line + 1 : 1,
+    reason: error.reason || error.message || 'read failure',
+  });
+}
+
+function listedPath(bundleRoot, value) {
+  const file = typeof value === 'string' ? value : value && value.path;
+  if (typeof file !== 'string') return null;
+  const absolute = path.resolve(bundleRoot, file);
+  const relative = path.relative(bundleRoot, absolute);
+  if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) return null;
+  return {
+    file: absolute,
+    path: relative.split(path.sep).join('/'),
+  };
+}
+
+function readEntries(bundleRoot, services) {
+  return (services.listFiles(bundleRoot) || [])
+    .map((file) => listedPath(bundleRoot, file))
+    .filter(Boolean)
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+function readText(value) {
+  return Buffer.isBuffer(value) ? value.toString('utf8') : value;
+}
+
+function withoutFencedCode(body) {
+  let fence = null;
+  return body.split('\n').map((raw) => {
+    const line = raw.replace(/\r$/, '');
+    const match = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/);
+    if (match) {
+      if (!fence) {
+        fence = { marker: match[1][0], length: match[1].length };
+      } else if (
+        match[1][0] === fence.marker &&
+        match[1].length >= fence.length &&
+        match[2].trim() === ''
+      ) {
+        fence = null;
+      }
+      return '';
+    }
+    return fence ? '' : line;
+  }).join('\n');
+}
+
+function internalResourcePath(bundleRoot, resource) {
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(resource)) return null;
+  const target = resource.split(/[?#]/, 1)[0];
+  if (target === '') return null;
+  const relative = target.startsWith('/') ? `.${target}` : target;
+  return path.resolve(bundleRoot, relative);
+}
+
+function sourceResourcePath(bundleRoot, resource) {
+  const target = resource.split(/[?#]/, 1)[0];
+  return target === '' ? null : path.resolve(bundleRoot, target);
+}
+
+function citationsHeading(body) {
+  const lines = withoutFencedCode(body).split('\n');
+  const heading = lines.findIndex((line) => /^(?:[ \t]{0,3})# Citations[ \t]*$/.test(line));
+  if (heading < 0) return false;
+  for (let i = heading + 1; i < lines.length; i++) {
+    if (/^(?:[ \t]{0,3})#[ \t]+/.test(lines[i])) break;
+    if (/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+\S/.test(lines[i])) return true;
+  }
+  return false;
+}
+
+function markdownLinks(body) {
+  const visible = withoutFencedCode(body)
+    .split('\n')
+    .map((line) => line.replace(/`[^`\n]*`/g, ''))
+    .join('\n');
+  const links = [];
+  const pattern = /\[[^\]\n]*\]\(\s*(?:<([^>\n]*)>|([^\s)\n]+))/g;
+  for (const match of visible.matchAll(pattern)) {
+    const previous = visible[match.index - 1];
+    if (previous === '!' || previous === '\\') continue;
+    links.push(match[1] === undefined ? match[2] : match[1]);
+  }
+  return links;
+}
+
+function bodyLinkPath(resource) {
+  if (
+    resource === '' ||
+    resource.startsWith('#') ||
+    resource.startsWith('?') ||
+    resource.startsWith('//') ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(resource)
+  ) return null;
+  const target = resource.split(/[?#]/, 1)[0];
+  return target === '' ? null : target;
+}
+
+function isKnownFile(root, knownFiles, target) {
+  const targetRelative = path.relative(root, target).split(path.sep).join('/');
+  return inside(target, root) && knownFiles.has(targetRelative);
+}
+
+function validateRead(bundleRoot, services, options = {}) {
+  const root = services.realpath(path.resolve(bundleRoot));
+  const entries = readEntries(root, services);
+  const knownFiles = new Set(entries.map((entry) => entry.path));
+  const findings = [];
+  const concepts = [];
+  const today = typeof options.today === 'string' ? options.today : new Date().toISOString().slice(0, 10);
+  let legacyFallback = false;
+
+  for (const entry of entries) {
+    if (!entry.path.endsWith('.md')) continue;
+    const reserved = ['index.md', 'log.md'].includes(path.posix.basename(entry.path));
+
+    let bytes;
+    let parsed;
+    let readSucceeded = false;
+    try {
+      bytes = readText(services.readFile(entry.file));
+      readSucceeded = true;
+      parsed = reserved ? parseReservedText(bytes) : parseReadText(bytes);
+    } catch (error) {
+      const code = reserved ? 'BUNDLE_FILES_NONCONFORMING' : 'FRONTMATTER_UNPARSEABLE';
+      const finding = parseFinding(code, entry.path, error);
+      findings.push(finding);
+      if (code === 'FRONTMATTER_UNPARSEABLE') {
+        concepts.push({ path: entry.path, bytes: readSucceeded ? bytes : null, findings: [finding] });
+      }
+      continue;
+    }
+
+    if (reserved) continue;
+
+    const conceptFindings = [];
+    const tree = parsed.tree;
+    if (typeof tree.type !== 'string' || tree.type === '') {
+      conceptFindings.push(blocker('TYPE_MISSING', 'okf', { path: entry.path }));
+    }
+
+    for (const resource of sourceLinks(tree)) {
+      const target = internalResourcePath(root, resource);
+      if (!target) continue;
+      if (!isKnownFile(root, knownFiles, target)) {
+        conceptFindings.push(warn('UNRESOLVED_INTERNAL_LINK', 'okf', {
+          path: entry.path,
+          resource,
+        }));
+      }
+    }
+
+    for (const resource of markdownLinks(parsed.body)) {
+      const targetPath = bodyLinkPath(resource);
+      if (!targetPath) continue;
+      const target = targetPath.startsWith('/')
+        ? path.resolve(root, `.${targetPath}`)
+        : path.resolve(path.dirname(entry.file), targetPath);
+      if (!isKnownFile(root, knownFiles, target)) {
+        conceptFindings.push(warn('UNRESOLVED_INTERNAL_LINK', 'okf', {
+          path: entry.path,
+          resource,
+        }));
+      }
+    }
+
+    if (typeof tree.stale_after === 'string' && tree.stale_after <= today) {
+      conceptFindings.push(warn('STALE_AFTER_REACHED', 'okf', {
+        path: entry.path,
+        stale_after: tree.stale_after,
+        today,
+      }));
+    }
+
+    if (tree.generated === undefined && tree.timestamp !== undefined) legacyFallback = true;
+    if (tree.sources === undefined && citationsHeading(parsed.body)) legacyFallback = true;
+
+    const concept = { path: entry.path, bytes, findings: sortFindings(conceptFindings) };
+    if (Object.hasOwn(tree, 'status')) concept.status = tree.status;
+    concepts.push(concept);
+    findings.push(...conceptFindings);
+  }
+
+  const report = [`OKF v0.2 bundle-conformant: ${legacyFallback || findings.some((finding) => finding.blocks) ? 'no' : 'yes'}`];
+  if (legacyFallback) report.push('v0.1 consumed using v0.2 fallback');
+
+  return {
+    result: 'ok',
+    data: { concepts, report },
+    findings: sortFindings(findings),
+  };
+}
+
+module.exports = { evaluate, parseYAML, serializeFrontmatter, validateRead };
