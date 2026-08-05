@@ -1,10 +1,8 @@
 # Agent rules
 
 Read `docs/spec/okf-agent-skills-v0.1.0-completion.md` and
-`docs/spec/okf-agent-skills-v0.1.0.md` before making a behavioral change.
-These four rules apply on top of anything else read, and are restated
-identically in `CLAUDE.md` so either file is sufficient on its own for a
-harness that reads only one:
+`docs/spec/okf-agent-skills-v0.1.0.md` before a behavioral change. Four rules
+apply on top:
 
 - **Zero dependencies.** Nothing outside the Node.js standard library.
 - **One contract seam.** Only a skill's wrapper script, run as a process, is

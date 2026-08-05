@@ -5,9 +5,7 @@
     node --test "test/*.test.js"
 
 This is the command verified to discover every test file in this repository.
-`node --test test/` misses files and MUST NOT be used or documented instead.
-A correct run reports zero `fail`, zero `cancelled`, and a `pass` count equal
-to `tests` in the runner's own summary line.
+Do not use or document `node --test test/`; it misses files.
 
 ## What a good test is here
 
@@ -19,11 +17,5 @@ in `docs/spec/okf-agent-skills-v0.1.0-completion.md`.
 
 ## Rules that apply to every change
 
-- **One contract seam.** The only tested boundary is a skill's wrapper
-  script, driven as a process and asserted on its stdout. Same spec section
-  above states what unit tests under `scripts/lib/` may and may not carry.
-- **Zero dependencies.** Nothing outside the Node.js standard library, ever.
-  See "Repository setup" in the same document.
-- **Decision before behavior.** A decision closes an `Open` row of
-  `docs/spec/okf-agent-skills-v0.1.0.md`'s open-item table before the
-  behavior it blocks is implemented. Don't invent a value for an open row.
+See `AGENTS.md`: zero dependencies, one contract seam, no invented value for an
+open specification row, no new skill without a recorded decision.
