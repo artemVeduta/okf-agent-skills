@@ -3397,6 +3397,56 @@ The table uses `A` for allowed, `N` for notice, `P` for occurrence-bound preview
 | Repair a directly affected mechanical link | `okf-write` | Derived link maintenance after accepted mutation | Inherited from parent | Parent outcome | Parent outcome | Parent outcome | Parent outcome | Parent outcome | Parent outcome |
 | Standalone broad rebuild | `okf-lifecycle` | Broad-plan, preview, approval, recovery, and guarded execution checks | User-invoked | Broad modifier | Broad modifier | Broad modifier | Broad modifier | Broad modifier | Broad modifier |
 
+#### Atomic-effect ownership (D7)
+
+| Atomic effect | Owning skill | Runtime module | Invocation class |
+|---|---|---|---|
+| Read, validate, or read-only analysis | `okf-read` | `scripts/lib/runtime.js` | Not assigned |
+| Create a small evidence-backed concept | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
+| Small evidence-backed claim update | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
+| Small non-claim metadata or formatting update | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
+| Add qualifying machine verification | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
+| Add machine verification without complete qualifying evidence | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
+| Record exact human verification | `okf-review` | `scripts/lib/runtime.js` | User-invoked |
+| Infer or fabricate human verification | `okf-review` | `scripts/lib/runtime.js` | Not assigned |
+| Standalone removal of verification | `okf-review` | `scripts/lib/runtime.js` | User-invoked |
+| Derive or display current staleness | `okf-review` | `scripts/lib/runtime.js` | Not assigned |
+| Set `stale_after` from explicit evidence | `okf-review` | `scripts/lib/runtime.js` | Not assigned |
+| Choose or change `stale_after` by judgment | `okf-review` | `scripts/lib/runtime.js` | User-invoked |
+| `draft -> stable` | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
+| `stable -> deprecated` | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
+| `deprecated -> stable` | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
+| Write an unsupported status value | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
+| Add or remove one semantic relationship | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
+| Move or rename | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
+| Broad inbound-link or graph rewrite | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
+| Create merge or split outputs | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
+| Delete a demonstrably redundant concept | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
+| Purge unique durable knowledge | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
+| Introduce redirects or aliases before their semantics are defined | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
+| Edit a sanctioned Attested Computation | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
+| Regenerate a directly affected index | `okf-write` | `scripts/lib/runtime.js` | Inherited from parent |
+| Append a directly affected log entry | `okf-write` | `scripts/lib/runtime.js` | Inherited from parent |
+| Repair a directly affected mechanical link | `okf-write` | `scripts/lib/runtime.js` | Inherited from parent |
+| Standalone broad rebuild | `okf-lifecycle` | `scripts/lib/runtime.js` | User-invoked |
+
+#### Post-operation checks (D8)
+
+| Check | Pass observation | Fail observation |
+|---|---|---|
+| Exact root declaration | No `ROOT_DECLARATION_NOT_EXACT` finding; the bundle-root `index.md` parses with `okf_version: "0.2"`. | A `ROOT_DECLARATION_NOT_EXACT` finding. |
+| Project mode | No `PROJECT_MODE_INVALID` finding; the root declares `code-backed` or `knowledge-only`. | A `PROJECT_MODE_INVALID` finding. |
+| Saved concept read | The saved concept exists and its frontmatter parses. | A `FRONTMATTER_UNPARSEABLE` finding. |
+| Saved-tree comparison | When an expected tree is supplied, the saved tree is equal to it. | A `POST_WRITE_VALIDATION_FAILED` finding with `reason: "saved tree mismatch"`. |
+| Reserved bundle files | Present `index.md` and `log.md` files parse. | A `BUNDLE_FILES_NONCONFORMING` finding. |
+| Required concept type | The saved `type` is neither `undefined` nor `""`. | A `TYPE_MISSING` finding when `type` is `undefined` or `""`. |
+| Source resource | Each truthy object in a `sources` array has a `resource` other than `undefined`, `null`, or `""`; a non-array `sources` value is ignored. | A `SOURCE_RESOURCE_MISSING` finding when such an entry has a `resource` of `undefined`, `null`, or `""`. |
+| Generated-by value | Each truthy object in a `generated` array has a `by` value other than `undefined`, `null`, or `""`; a non-array `generated` value is ignored. | A `GENERATED_BY_MISSING` finding when such an entry has a `by` value of `undefined`, `null`, or `""`. |
+| Attested Computation runtime | When `type` is exactly `"Attested Computation"`, `runtime` is not `undefined`, `null`, or `""`. | A `RUNTIME_MISSING` finding when `type` is exactly `"Attested Computation"` and `runtime` is `undefined`, `null`, or `""`. |
+| Human actor prefix | Each non-empty string `author` or `confirmed` value, or array item, uses `human:` or a recognized non-human prefix; non-string values are ignored. | A `HUMAN_PREFIX_MISSING` finding for a non-empty string value without one of those prefixes. |
+| Source link | Each source resource resolves inside the bundle to an existing file. | An `UNRESOLVED_INTERNAL_LINK` warning; `valid` can remain `true`. |
+| Upstream source | No readable source resource has a blocking concept finding. | A `DEPENDS_ON_BLOCKED_CONCEPT` finding. |
+
 #### Composite operation placement
 
 - The `okf` router MUST dispatch each request to the owning skill in the table and MUST NOT implement a second authorization rule. (#5, #35)
@@ -3566,7 +3616,7 @@ Tickets inside one wave MAY run in parallel. (#41)
 | Recovery snapshot scope selector | Deferred (#43) | What a snapshot must contain before an operation may execute | #11 requires a snapshot of the affected bundles and "relevant untracked files" and #37 repeats it for both repositories; neither defines which untracked files are relevant | Define the rule that decides which untracked paths enter the snapshot |
 | Recovery snapshot content addressing and completeness proof | Deferred (#43) | The pass condition of recovery evidence; the claim that a snapshot covers its declared scope | #7 requires an independent content-addressed snapshot and matching restored bytes or hashes, but names no content-address algorithm and no record that proves the snapshot covers the declared scope | Name the content-address algorithm and the completeness record a snapshot carries |
 | Recovery snapshot discard timing | Deferred (#43) | Cleanup after a settled operation; whether a snapshot survives to a later repair | No ticket states when a snapshot may be discarded; #7 requires it for the recovery gate and #37 requires it for both repositories, and both stop there | State the event after which a snapshot may be discarded |
-| Enumerated post-operation checks and per-check pass criteria | Open | Every claim that an operation succeeded; the `ValidationVerdict` and `PostOpChecks` results | #7 names the check families — OKF conformance, suite checks, identity, link, provenance, trust, and post-operation validation bound to the approved plan — but enumerates no individual check and states no per-check pass condition; #30 carried these across as explicitly opaque | Enumerate each post-operation check and state its observable pass condition |
+| Enumerated post-operation checks and per-check pass criteria | Closed (D8) | Every claim that an operation succeeded; the `ValidationVerdict` and `PostOpChecks` results | #7 names the check families — OKF conformance, suite checks, identity, link, provenance, trust, and post-operation validation bound to the approved plan — but enumerates no individual check and states no per-check pass condition; #30 carried these across as explicitly opaque | **Adopted (D8):** the post-operation check table enumerates the checks in `scripts/lib/validation.js` and their observable pass and fail conditions. |
 | Crash-point reconciliation table | Deferred (#43) | Recovery from every interrupted operation | #30 supplies the record ordering (`INTENT{undo}` → mutate → `OUTCOME`, sealed manifest before the first mutation, spend and epoch advance between the last `OUTCOME` and `SETTLED`) and #31 supplies the ledger `in-flight`/`failed`/unknown outcomes, but no ticket maps every crash point to a next action; #7 classifies missing, torn, corrupt, truncated, and unknown-schema data as `indeterminate` without stating the reconciliation step | Publish one table mapping each crash point — including a missing manifest, a torn record, a dangling `INTENT`, a partial inverse, and ambiguous filesystem state — to its next action |
 | Result label for a reconciled identical-byte concurrent foreign write | Deferred (#43) | Whether an operation may settle clean after a foreign session produced identical bytes | #30 records that reconciliation cannot distinguish authorship and reads bytes equal to the expected hash as done, and lists this as an accepted cost rather than a reported outcome; #7 records foreign mutation only on observed drift; #37 defines `partially-applied` and `indeterminate` for other cross-repository outcomes | State whether this case settles `clean` or is recorded as an ambiguity that makes the terminal `dirty` |
 | New-bundle write-gate bootstrap exception | Open | `okf init`; migration into a repository with no bundle; adoption of a bundle root that does not yet exist | #21 gates mutation on a pre-existing bundle-root `index.md` whose parsed `okf_version` is exactly `"0.2"` and defines an adoption operation only for a bundle root that already exists; #19 creates new bundles through migration; #35 allows guarded initialization; none states the predicate under which the first write to a non-existent bundle root is permitted | State the exact condition under which creating a bundle root is permitted without a pre-existing `okf_version: "0.2"` declaration, and the atomicity requirement for that first write |
@@ -3581,7 +3631,7 @@ Tickets inside one wave MAY run in parallel. (#41)
 | Router dispatch protocol | Closed (#42) | Every routed operation; behavior on an unknown sub-command | #5 says the router `SKILL.md` dispatches to sub-skills; no ticket states the dispatch grammar, the argument shape, or the result when no sub-skill matches | **Adopted (#42):** the router selects an owner only from the fixed `operation` field against a sealed operation table, and returns the defined unknown-operation result when no entry matches. Per #43 and the #41 decision record, `guard.prepare`, `guard.confirm`, and `guard.execute` are not entries of the `v0.1.0` table. |
 | Shared module public interfaces | Closed (#42) | Every skill and adapter that calls admission, validation, lifecycle, or guard behavior | #5 makes the shared modules library-only pure functions and assigns them admission, validation, lifecycle, and guard behavior; #36 defines portable roles for enumerate, search, read, and scope enforcement but states that exact tool names are not shared policy; no ticket fixes a module boundary or a callable signature | **Adopted (#42):** `protocol.js`, `runtime.js`, `admission.js`, `validation.js`, `lifecycle.js`. Per #43 and the #41 decision record, `scripts/lib/guard.js` is **not** part of the `v0.1.0` module set. |
 | Adapter package location and per-adapter install command | Open | Installation and upgrade of the three native adapters | #5 fixes the base install command and says the three plugins are installed globally; #35 says three thin adapters are separately installable from the same tag; #4 records the base install syntax only; no ticket gives a per-adapter package location or command | State, for each of Claude Code, Codex, and OpenCode, where its adapter lives in the release and the command that installs it |
-| Complete atomic-effect ownership table | Open | Assigning every effect to a skill, a runtime module, and an invocation class | #11 enumerates the atomic effects and their authorization outcomes; #5 assigns broad operation groups to four skills; #38 assigns bounded writes to `okf-writer`; no ticket maps every atomic effect to an owning skill, runtime module, and invocation class | Publish one table with a row for every atomic effect in the authorization matrix and a column for owning skill, runtime module, and invocation class |
+| Complete atomic-effect ownership table | Closed (D7) | Assigning every effect to a skill, a runtime module, and an invocation class | #11 enumerates the atomic effects and their authorization outcomes; #5 assigns broad operation groups to four skills; #38 assigns bounded writes to `okf-writer`; no ticket maps every atomic effect to an owning skill, runtime module, and invocation class | **Adopted (D7):** the atomic-effect ownership table assigns each atomic effect one owning skill, runtime module, and invocation class. |
 | Owning skill for incremental synchronization | Closed (#42) | Where automatic narrow maintenance executes | #6 defines incremental synchronization as automatic narrow maintenance; #5 assigns `sync` to the manual-gated `okf-lifecycle` skill without separating the modes; no ticket names the skill or module that performs the incremental mode | **Adopted (#42):** `okf-lifecycle` with `scripts/lib/lifecycle.js` orchestrates incremental synchronization; every mutation goes through `okf-write`. |
 | Implementation sequence | Closed (#41) | The order in which the skills, shared runtime, guard state machine, and adapters reach completion | #1 records the sequence as not yet specified and assigns it to the specification and implementation tickets; no closed ticket supplies it | **Adopted (#41):** wave 1 — #45, #46, #48; wave 2 — #47, #49, #52; wave 3 — #50, #53; wave 4 — #51, #54, #60, #66; wave 5 — #55, #62, #64, #67, #68. Derived from the blocking graph; tickets inside a wave may run in parallel. |
 | Coexistence with the existing third-party OKF skill | Open | Release positioning and installation conflicts | #1 records that whether to replace, extend, or coexist with `fabricioctelles/okf-open-knowledge-format` is not yet specified; no closed ticket supplies it | Choose replace, extend, or coexist, or record an explicit deferral |
