@@ -116,10 +116,6 @@ function unsupportedPayload(payload, operation) {
   return false;
 }
 
-function writableTaskKind(request) {
-  return ['feature work', 'fix', 'research'].includes(request.task_kind);
-}
-
 function derivativeLine(effect, operation, concept) {
   return effect === 'index-maintenance'
     ? `- [${concept}](${concept})`
@@ -151,7 +147,7 @@ function executeBounded(request, services, operation, requireScope = false) {
     const finding = suiteFinding('UNSUPPORTED_INPUT', { gate: 'effects', operation });
     return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'UNSUPPORTED_INPUT');
   }
-  if (!writableTaskKind(request)) {
+  if (!lifecycle.isWritableTaskKind(request.task_kind)) {
     const finding = suiteFinding('TASK_KIND_NOT_WRITE_ELIGIBLE', {
       gate: 'task kind',
       task_kind: request.task_kind === undefined ? null : request.task_kind,
