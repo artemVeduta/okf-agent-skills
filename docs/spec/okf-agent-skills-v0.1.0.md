@@ -3644,7 +3644,7 @@ Tickets inside one wave MAY run in parallel. (#41)
 
 Authority and consent: `WRITE_AUTHORITY`, `WRITE_NOT_AUTHORIZED`, authority generation, grant generation, target-owner consent, target project-mode configuration, target native adapter, allowed effects, target collision, transformed output, bootstrap exception (#37, #21).
 
-Operation and approval: operation identity, operation class, atomic effect, invocation class, approval record, approval fingerprint, policy hash, required checks, manual-operation occurrence, bundle epoch, ledger generation, preview token, spent record, invocation attestation (#11, #29, #31, #37, #38).
+Operation and approval: operation identity, operation class, atomic effect, approval record, approval fingerprint, policy hash, required checks, manual-operation occurrence, bundle epoch, ledger generation, preview token, spent record, invocation attestation (#11, #29, #31, #37, #38).
 
 Durable state: operation store, schema version, retention window, snapshot handle, recovery window, validation verdict, post-operation checks, settlement, cleanliness, residue classification, bundle-move orphan state, canonical lock order (#7, #30, #37).
 

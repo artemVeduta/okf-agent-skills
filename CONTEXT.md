@@ -251,8 +251,10 @@ instance to perform a bounded operation against one exact foreign bundle. It
 is separate from reach, presence, trust, filesystem access, federation,
 `.okf-active`, project mode, approval, and the guard ledger. It is scoped to
 allowed effects, can be revoked by an authorized target owner, and never
-permits automatic mutation.
-_Avoid_: Trust grant, filesystem permission, workspace declaration, approval
+permits automatic mutation. The specification's target-owner consent is the
+same grant named for the act of issuing it, not a second concept.
+_Avoid_: Trust grant, filesystem permission, workspace declaration, approval,
+target-owner consent
 
 **Workspace manifest**:
 The user-authored `.okf-workspace.json` federation declaration whose containing
@@ -444,3 +446,358 @@ _Avoid_: Successful rollback, clean recovery
 A non-authoritative mapping suggested for a restructuring output. It requires
 explicit review before acceptance and never transfers a review baseline.
 _Avoid_: Automatic review inheritance, baseline transfer
+
+**WRITE_AUTHORITY**:
+The distinct bundle-admission gate a foreign write must pass after `REACH ->
+PRESENCE -> {TRUST, ACCESS}`, testing whether the target holds foreign-write
+authority for the exact source instance, target instance, target bundle, and
+effects. A refusal at this gate is reported as a write-authority finding,
+never as `INVALID` or `ACCESS_DENIED`.
+_Avoid_: Foreign-write authority, TRUST gate, ACCESS gate
+
+**WRITE_NOT_AUTHORIZED**:
+An example write-authority finding code for a refused `WRITE_AUTHORITY` gate.
+The specification gives it only as an example; the final finding-code
+vocabulary for a refused foreign write is an open item.
+_Avoid_: The settled write-authority finding code, `ACCESS_DENIED`, `INVALID`
+
+**Authority generation**:
+The generation counter that foreign-write authority carries at the target,
+incremented so a stale grant cannot be replayed after reissue or revocation.
+_Avoid_: Grant generation, bundle epoch, ledger generation
+
+**Grant generation**:
+The value of the authority generation that a cross-repository approval record
+captures at approval time, so a later change to the underlying foreign-write
+authority can be detected as drift.
+_Avoid_: Authority generation, ledger generation, policy hash
+
+**Target project-mode configuration**:
+The requirement that a cross-repository write read its project mode from the
+target repository's own configuration rather than from the source side. A
+missing or unknown target project mode blocks mutation.
+_Avoid_: Project mode, source-side configuration
+
+**Target native adapter**:
+The harness adapter installed in the target repository of a cross-repository
+operation. It MAY be absent; only the invoking source-side adapter and a
+compatible shared runtime must be present.
+_Avoid_: Harness adapter, invoking harness adapter
+
+**Allowed effects**:
+The explicit, closed set of effects that a delegation brief or a
+foreign-write authority grant authorizes for one operation. It never widens
+by itself and is stated alongside, and is distinct from, forbidden effects.
+_Avoid_: Tool allowlist, granted permission, effect-matrix outcome
+
+**Target collision**:
+The case in which a migration or cross-repository move names a destination
+path that an existing concept already occupies. It MUST block rather than
+trigger an implicit merge.
+_Avoid_: Merge conflict, overwrite
+
+**Transformed output**:
+Content produced by converting source material into OKF form for migration
+or a cross-repository move. It starts as `draft` and unverified, carries only
+the provenance its own body supports, and is written to a separate staging
+area before acceptance.
+_Avoid_: Migration residue, final concept content
+
+**Bootstrap exception**:
+The undefined condition, if any, under which the first write that creates a
+bundle root would be permitted without a pre-existing `okf_version: "0.2"`
+declaration. No such exception exists in `v0.1.0`; its exact condition and
+atomicity requirement are an open item.
+_Avoid_: Write gate, adoption operation
+
+**Operation identity**:
+The identifier that binds one operation's preview, approval, and execution
+together so a stale or replayed approval cannot attach to a different
+operation. A delegation receipt reports it alongside target identity.
+_Avoid_: Operation class, target identity, Concept ID
+
+**Operation class**:
+The category the runtime assigns to a command or delegated request — such as
+a bounded write versus a broad, destructive, or identity-changing operation —
+that determines its authorization requirements. A delegated writer MUST
+recheck it before execution and MUST NOT downgrade a broad effect to a
+bounded update.
+_Avoid_: Task kind, atomic effect, invocation class
+
+**Atomic effect**:
+The smallest unit a command or composite operation expands into before
+authorization is decided. The runtime looks up each atomic effect's outcome —
+`blocked`, `preview/approval`, `notice`, or `allowed` — in the operation
+matrix, and a composite operation receives the strictest outcome across its
+atomic effects.
+_Avoid_: Operation class, command, effect group
+
+**Approval record**:
+The per-repository record inside an approval that binds repository identity
+and revisions, resulting content identity, the operation hash and policy
+hash, the grant generation, the required checks, and recovery evidence. A
+cross-repository approval carries one approval record for each affected
+repository.
+_Avoid_: Approval fingerprint, operation manifest, approval
+
+**Approval fingerprint**:
+The value that seals an approval to the exact plan it covers — request,
+revisions, sealed manifest, policy, checks, and recovery evidence — so the
+sealed operation manifest stays immutable inside it. The exact hash encoding
+it takes from the operation manifest is an open item.
+_Avoid_: Approval record, confirmation fingerprint, operation hash
+
+**Policy hash**:
+The hash an approval record binds alongside the operation hash, capturing the
+policy state under which an operation was authorized so a later change to
+governing policy invalidates the approval.
+_Avoid_: Operation hash, approval fingerprint
+
+**Required checks**:
+The specific set of checks — such as approval and guard checks — that an
+approval record or delegation brief designates as necessary for its
+operation, so no unlisted check can be silently skipped. It is distinct from
+post-operation checks, which run after execution rather than gate it.
+_Avoid_: Post-operation checks, recovery evidence
+
+**Manual-operation occurrence**:
+One logical instance of a manual-operation request-preview-confirm-execute
+cycle, distinct from an orientation occurrence, a native harness event, and a
+prompt. Guard state binds a distinct occurrence-bound preview token to each
+such occurrence, so repeated matching requests receive distinct token IDs.
+_Avoid_: Orientation occurrence, native harness event, preview token
+
+**Bundle epoch**:
+A per-bundle counter that a completed guarded operation advances, obsoleting
+every outstanding sibling confirmation so a second armed session cannot
+execute against a changed bundle. Preview, approval, and execution stay bound
+to one bundle epoch alongside one operation identity and one guard
+generation.
+_Avoid_: Ledger generation, schema version, review baseline
+
+**Ledger generation**:
+The manual-operation guard ledger's own generation counter, initialized at
+random when ledger state is missing. Execution rejects a mismatched
+generation, catching staleness that a bundle-epoch check alone would miss.
+_Avoid_: Bundle epoch, authority generation, schema version
+
+**Preview token**:
+The single-use, occurrence-bound token issued for one manual-operation
+request, carrying its plan and attestation in the guard ledger. It authorizes
+at most one run and is spent atomically on successful execution.
+_Avoid_: Confirmation, approval record, spent record
+
+**Spent record**:
+The bounded record a guard ledger retains after a preview token is spent,
+containing the token occurrence ID, the fingerprint, and the execution epoch.
+The ledger keeps only the record from the immediately preceding epoch and
+prunes older ones, rather than keeping a permanent fingerprint blacklist.
+_Avoid_: Preview token, permanent fingerprint blacklist
+
+**Invocation attestation**:
+The three-valued injected input — `explicit`, `model-initiated`, or
+`unknown` — recorded for every manual-operation confirmation, stating what is
+actually known about whether a human invoked or confirmed the operation. An
+`unknown` attestation proceeds but never claims explicit human action.
+_Avoid_: Invocation class, approval, human verification
+
+**Operation store**:
+The durable operation store that holds the sealed operation manifest and its
+observation journal outside every mutation target and outside every
+manual-operation guard ledger. It MUST outlive the process and machine that
+created it and MUST survive repository replacement; its exact filesystem
+location is an open item.
+_Avoid_: Operation manifest, manual-operation guard ledger, workspace
+manifest
+
+**Schema version**:
+The version field a durable record — the operation store or the
+manual-operation guard ledger — carries for its own on-disk format, so a
+reader can fail closed on an unsupported version. It is independent of the
+OKF specification version, the suite release version, and the `okf_version:
+"0.2"` bundle-root declaration; its exact value and accepted set are open
+items.
+_Avoid_: OKF specification version, suite release version, bundle
+conformance
+
+**Retention window**:
+How long a settled operation's manifest and journal remain in the operation
+store before removal. No ticket states a period or a pruning mechanism; it is
+an open item distinct from the guard ledger's spent-record retention rule.
+_Avoid_: Recovery window, spent record retention
+
+**Snapshot handle**:
+The reference by which a stored independent recovery snapshot is located and
+retrieved for a disposable restore. Its storage location and capture
+mechanism are open items; only the constraint that it must not reserialize
+content is settled.
+_Avoid_: Recovery evidence, operation manifest
+
+**Recovery window**:
+The span for which a captured recovery snapshot must remain available so an
+operation stays recoverable. The event that ends this span — when a snapshot
+may be discarded — is an open item.
+_Avoid_: Retention window, recovery evidence
+
+**Validation verdict**:
+The pass or fail outcome of one individual check run during lifecycle or
+post-operation validation. Post-operation checks and their per-check pass
+criteria are enumerated in `scripts/lib/validation.js`.
+_Avoid_: Lifecycle result, post-operation checks, orientation result
+
+**Post-operation checks**:
+The enumerated checks — OKF conformance, suite checks, identity, link,
+provenance, trust, and validation bound to the approved plan — that run
+after an operation to support a claim that it succeeded. They are
+enumerated, with their observable pass and fail conditions, in
+`scripts/lib/validation.js`.
+_Avoid_: Recovery evidence, validation verdict, required checks
+
+**Settlement**:
+One of the two independent axes of terminal classification, with the values
+`applied`, `reverted`, or `failed`. It is crossed with cleanliness to produce
+the full terminal result.
+_Avoid_: Cleanliness, lifecycle result
+
+**Cleanliness**:
+The other axis of terminal classification, with the values `clean` or
+`dirty`. A dirty terminal MUST carry an ambiguity or residue notice; rollback
+residue always forces a dirty or indeterminate result, never clean.
+_Avoid_: Settlement, rollback residue
+
+**Residue classification**:
+The taxonomy that names the kind of ambiguity or residue a dirty terminal
+carries, so that even a loss the taxonomy does not otherwise recognize is
+still classified — as `unclassified-loss` — rather than omitted.
+_Avoid_: Rollback residue, cleanliness
+
+**Bundle-move orphan state**:
+The undecided status of an in-flight operation whose target bundle identity
+changes because its bundle root moved mid-operation. Whether such an
+operation is reconciled, orphaned and blocked, or discarded is an open item;
+the case is declared open rather than resolved by guesswork.
+_Avoid_: Bundle identity, source disposition
+
+**Canonical lock order**:
+The deterministic order in which a cross-repository operation must acquire
+the guard-ledger lock for each affected bundle, so two repositories cannot
+deadlock or execute simultaneously. Its exact ordering algorithm and key are
+an open item.
+_Avoid_: Ledger concurrency, exclusive per-bundle lock
+
+**Skill binding**:
+The mapping from an invocation route to the skill it dispatches to. Every
+harness MUST expose the same skill bindings as part of semantic parity; a
+harness-native configuration scope, such as a Codex hook's trusted-project or
+plugin scope, MUST NOT itself be treated as a skill binding.
+_Avoid_: Reach clause, hook scope, router dispatch protocol
+
+**Tool allowlist**:
+The explicit, closed set of tools an agent definition declares itself
+permitted to use. It carries no raw file-write, Git-history, network, or
+nested-agent authority beyond what it names.
+_Avoid_: Allowed effects, agent definition
+
+**Native wrapper**:
+A thin, harness-specific surface through which an adapter MAY expose a
+shipped agent definition (`okf-reader`, `okf-writer`) for delegation. It is
+distinct from a skill wrapper script, the shared cross-harness process entry
+under `scripts/`.
+_Avoid_: Skill wrapper script, harness adapter
+
+**Router**:
+The `okf` router skill that dispatches each request to exactly one of the
+four owning sub-skills (`okf-read`, `okf-write`, `okf-lifecycle`,
+`okf-review`) using a sealed operation table, and owns the user-invoked
+confirmation sequence. It implements no second authorization rule of its own.
+_Avoid_: Harness adapter, skill wrapper script, guard skill
+
+**Session override**:
+The highest-precedence layer in the settings chain — `adapter defaults <
+user/global settings < project/worktree settings < current-session override`
+— that expires at session end.
+_Avoid_: Effective settings, local override, project mode
+
+**Effective settings**:
+The fully resolved settings value produced by applying the
+settings-precedence chain, including any session override. The main session
+resolves it and carries it into a delegation brief.
+_Avoid_: Session override, execution preference
+
+**Supported entry seam**:
+One of the specific, per-harness native hooks or events — such as Claude
+Code's and Codex's `SessionStart`, or OpenCode's
+`experimental.chat.system.transform` — that a harness adapter is permitted to
+treat as an automatic-orientation injection point. An adjacent seam that
+never re-emits, such as `PreCompact` or an ordinary prompt, is not a
+supported entry seam.
+_Avoid_: Orientation occurrence, adjacent seam, explicit entry path
+
+**Logical cause**:
+The categorized-reason component of an orientation occurrence key — alongside
+the harness, the repository instance, and the context ID — identifying why a
+session-entry event fired, for example startup, resume, clear, compact, or
+fork.
+_Avoid_: Native event ID, orientation occurrence, task kind
+
+**Native event ID**:
+The harness-native identifier of the specific triggering event, carried in
+the occurrence key when one exists. A later native event with a new native
+event ID MAY form a new occurrence and emit another orientation.
+_Avoid_: Logical cause, occurrence key, adapter generation
+
+**Adapter generation**:
+A counter the OpenCode adapter creates from a lifecycle signal
+(`session.created` or `session.compacted`) and that the next eligible system
+transform claims, coordinating at-most-once orientation delivery on a harness
+with no native session-start hook. A failed transform leaves that generation
+`degraded` without automatic retry.
+_Avoid_: Bundle epoch, ledger generation, native event ID
+
+**Concept ID**:
+The bundle-relative file path of a concept without its `.md` extension. A
+fully qualified concept key is bundle identity plus Concept ID; moving or
+renaming a concept changes its identity.
+_Avoid_: Concept identity, UUID, fully qualified concept key
+
+**Workspace link scheme (`okf-workspace://`)**:
+The `okf-workspace://<bundle-alias>/<concept-id>` URI form required for every
+authored cross-bundle link. The active workspace manifest is its only
+resolver, and one alias MUST NOT resolve to more than one target.
+_Avoid_: Workspace manifest, inbound link, federation
+
+**Result labels**:
+The fixed, closed set of navigation result values: `ok`, `degraded`,
+`not-configured`, `unavailable`. A navigation result MUST use only these
+labels.
+_Avoid_: Lifecycle result, orientation result, match labels
+
+**Match labels**:
+The fixed, closed set of navigation match values: `found` and `no match in
+searched scope`. A complete no-match claim is limited to its declared scope
+and search channel.
+_Avoid_: Result labels, finding labels, link resolution
+
+**Finding labels**:
+The fixed, closed set of navigation finding values: `missing`, `unreadable`,
+`unobservable`, `invalid`. `invalid` is reserved for a verified native-tool
+or safety-contract violation.
+_Avoid_: Result labels, parse finding, write-authority finding
+
+**Coverage labels**:
+The fixed navigation coverage vocabulary: complete for a named scope and
+channel, or `non-exhaustive`. Completeness is never claimed beyond the named
+scope and channel.
+_Avoid_: Support ceiling, match labels
+
+**Verified EOF**:
+The evidence a complete-concept claim requires: confirmation that a body was
+read to its actual end of file. Without it, the result MUST carry the
+`unobservable` finding and MUST be `degraded`; the observable criterion for
+verifying it with native tools is an open item.
+_Avoid_: Complete read, parse finding
+
+**Parse finding**:
+The finding returned when readable bytes carry malformed frontmatter. It
+blocks status inference and MUST NOT trigger repair during a read.
+_Avoid_: Finding labels, invalid finding, validation verdict
