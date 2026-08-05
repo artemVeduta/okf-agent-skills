@@ -8,7 +8,9 @@ const { snapshot } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const cliWrapper = path.join(repo, 'scripts', 'okf-adapter.js');
+const bridgeWrapper = path.join(repo, 'scripts', 'adapter-bridge.js');
 const readWrapper = path.join(repo, 'scripts', 'okf-read.js');
+const writeWrapper = path.join(repo, 'scripts', 'okf-write.js');
 const adapterHookWrapper = path.join(repo, 'scripts', 'adapter-hook.js');
 const adaptersDir = path.join(repo, 'adapters');
 const orientation = require('../scripts/lib/orientation');
@@ -53,6 +55,21 @@ function runHook(harness, manifestPath, stdin) {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
+function runBridge(harness, skill, stdin) {
+  const result = childProcess.spawnSync(process.execPath, [bridgeWrapper, harness, skill], {
+    input: typeof stdin === 'string' ? stdin : JSON.stringify(stdin), encoding: 'utf8',
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function writeRequest(root) {
+  return {
+    protocol: 'okf-wrapper/1', skill: 'okf-write', operation: 'revise', task_kind: 'fix',
+    scope: { concepts: ['note.md'] },
+    payload: { cwd: root, bundle: root, concept: 'note.md', set: { title: 'After' }, evidence: ['evidence.md'] },
+  };
+}
+
 test('each adapter manifest declares this suite version and its own installs', () => {
   for (const harness of ['claude-code', 'codex', 'opencode']) {
     const declared = manifest(harness);
@@ -63,6 +80,14 @@ test('each adapter manifest declares this suite version and its own installs', (
     for (const entry of declared.installs) {
       assert.equal(fs.existsSync(path.join(adaptersDir, harness, entry.source)), true, `${harness}:${entry.source}`);
     }
+  }
+});
+
+test('each adapter declares the shared wrapper bridge without a native tool mapping', () => {
+  for (const harness of ['claude-code', 'codex', 'opencode']) {
+    const declared = manifest(harness);
+    assert.deepEqual(declared.bridge, { script: 'scripts/adapter-bridge.js', skills: ['okf-read', 'okf-write'] }, harness);
+    assert.equal(Object.hasOwn(declared, 'native_tool_mapping'), false, harness);
   }
 });
 
@@ -122,7 +147,7 @@ test('OpenCode ships per-skill permission.skill: deny with required skill metada
   assert.equal(text.includes('disable-model-invocation'), false);
 });
 
-test('install writes only inside the given harness-local target directory, leaving the marker, workspace manifest, OKF content, and other adapters untouched', (t) => {
+test('install writes only inside each harness-local target directory, leaving the marker, workspace manifest, OKF content, and other adapters untouched', (t) => {
   const root = temporaryRoot(t);
   fs.mkdirSync(path.join(root, '.git'));
   fs.writeFileSync(path.join(root, '.okf-active'), '');
@@ -130,34 +155,100 @@ test('install writes only inside the given harness-local target directory, leavi
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
   fs.mkdirSync(path.join(root, '.other-adapter'));
   fs.writeFileSync(path.join(root, '.other-adapter', 'sentinel.txt'), 'untouched');
-  const targetDir = path.join(root, '.claude', 'plugins', 'okf-agent-skills');
-  const before = snapshot(root).filter(([name]) => !name.startsWith(path.join('.claude')));
+  for (const harness of ['claude-code', 'codex', 'opencode']) {
+    const targetDir = path.join(root, `.${harness}`);
+    const targetName = path.basename(targetDir);
+    const before = snapshot(root).filter(([name]) => !name.startsWith(targetName));
 
-  const installed = runCli(['install', 'claude-code', targetDir]);
-  assert.equal(installed.status, 0);
-  assert.equal(installed.stderr, '');
-  assert.equal(installed.response.ok, true);
-  assert.equal(fs.existsSync(path.join(targetDir, 'manifest.json')), true);
+    const installed = runCli(['install', harness, targetDir]);
+    assert.equal(installed.status, 0, harness);
+    assert.equal(installed.stderr, '', harness);
+    assert.equal(installed.response.ok, true, harness);
+    assert.equal(fs.existsSync(path.join(targetDir, 'manifest.json')), true, harness);
+    assert.deepEqual(snapshot(root).filter(([name]) => !name.startsWith(targetName)), before, harness);
 
-  const afterInstall = snapshot(root).filter(([name]) => !name.startsWith(path.join('.claude')));
-  assert.deepEqual(afterInstall, before);
+    const disabled = runCli(['disable', harness, targetDir]);
+    assert.equal(disabled.status, 0, harness);
+    assert.equal(disabled.response.ok, true, harness);
+    assert.equal(fs.existsSync(path.join(targetDir, '.okf-adapter-disabled')), true, harness);
+    assert.equal(fs.existsSync(path.join(targetDir, 'manifest.json')), true, harness);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(targetDir, '.okf-adapter.json'), 'utf8')).disabled, true, harness);
 
-  const disabled = runCli(['disable', 'claude-code', targetDir]);
-  assert.equal(disabled.status, 0);
-  assert.equal(disabled.response.ok, true);
-  assert.equal(fs.existsSync(path.join(targetDir, '.okf-adapter-disabled')), true);
-  assert.equal(fs.existsSync(path.join(targetDir, 'manifest.json')), true);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(targetDir, '.okf-adapter.json'), 'utf8')).disabled, true);
-
-  const uninstalled = runCli(['uninstall', 'claude-code', targetDir]);
-  assert.equal(uninstalled.status, 0);
-  assert.equal(uninstalled.response.ok, true);
-  assert.equal(fs.existsSync(path.join(targetDir, 'manifest.json')), false);
-  assert.equal(fs.existsSync(path.join(targetDir, '.okf-adapter.json')), false);
-  assert.equal(fs.existsSync(path.join(targetDir, '.okf-adapter-disabled')), false);
-
-  assert.deepEqual(snapshot(root).filter(([name]) => !name.startsWith(path.join('.claude'))), before);
+    const uninstalled = runCli(['uninstall', harness, targetDir]);
+    assert.equal(uninstalled.status, 0, harness);
+    assert.equal(uninstalled.response.ok, true, harness);
+    assert.equal(fs.existsSync(path.join(targetDir, 'manifest.json')), false, harness);
+    assert.equal(fs.existsSync(path.join(targetDir, '.okf-adapter.json')), false, harness);
+    assert.equal(fs.existsSync(path.join(targetDir, '.okf-adapter-disabled')), false, harness);
+    assert.deepEqual(snapshot(root).filter(([name]) => !name.startsWith(targetName)), before, harness);
+  }
   assert.equal(fs.readFileSync(path.join(root, '.other-adapter', 'sentinel.txt'), 'utf8'), 'untouched');
+});
+
+test('the bridge transports unchanged wrapper JSON through every adapter and uses the bounded writer', (t) => {
+  const root = orientedRepo(t);
+  fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
+  fs.writeFileSync(path.join(root, 'evidence.md'), 'observed\n');
+  const original = '---\ntype: Note\ntitle: Before\n---\n# Body\n';
+  const readRequest = { protocol: 'okf-wrapper/1', skill: 'okf-read', operation: 'admit', payload: { cwd: root, candidates: [] } };
+  const directRead = childProcess.spawnSync(process.execPath, [readWrapper], { input: JSON.stringify(readRequest), encoding: 'utf8' });
+  const directInvalidRead = childProcess.spawnSync(process.execPath, [readWrapper], { input: '{', encoding: 'utf8' });
+
+  fs.writeFileSync(path.join(root, 'note.md'), original);
+  const directWrite = childProcess.spawnSync(process.execPath, [writeWrapper], { input: JSON.stringify(writeRequest(root)), encoding: 'utf8' });
+
+  for (const harness of ['claude-code', 'codex', 'opencode']) {
+    const read = runBridge(harness, 'okf-read', JSON.stringify(readRequest));
+    assert.equal(read.status, 0, harness);
+    assert.equal(read.stderr, '', harness);
+    assert.equal(read.stdout, directRead.stdout, harness);
+
+    const invalidRead = runBridge(harness, 'okf-read', '{');
+    assert.equal(invalidRead.status, directInvalidRead.status, harness);
+    assert.equal(invalidRead.stdout, directInvalidRead.stdout, harness);
+    assert.equal(invalidRead.stderr, directInvalidRead.stderr, harness);
+
+    fs.writeFileSync(path.join(root, 'note.md'), original);
+    const write = runBridge(harness, 'okf-write', JSON.stringify(writeRequest(root)));
+    assert.equal(write.status, 0, harness);
+    assert.equal(write.stderr, '', harness);
+    assert.equal(write.stdout, directWrite.stdout, harness);
+    assert.equal(JSON.parse(write.stdout).result, 'applied', harness);
+    assert.match(fs.readFileSync(path.join(root, 'note.md'), 'utf8'), /title: After/, harness);
+  }
+});
+
+test('an unavailable orientation capability emits no clean orientation and cannot claim a successful write', async (t) => {
+  for (const harness of ['claude-code', 'codex', 'opencode']) {
+    const root = orientedRepo(t);
+    fs.writeFileSync(path.join(root, 'evidence.md'), 'observed\n');
+    fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Body\n');
+    const targetDir = path.join(root, 'adapter');
+    runCli(['install', harness, targetDir]);
+
+    if (harness === 'opencode') {
+      const plugin = require(path.join(targetDir, 'plugin.js'));
+      const hooks = await plugin({ directory: root });
+      const output = { system: [] };
+      await hooks['chat.system.transform']({}, output);
+      assert.deepEqual(output.system, [], harness);
+    } else {
+      const orientationResult = runHook(harness, path.join(targetDir, 'manifest.json'), { cwd: root, session_id: harness, source: 'startup' });
+      assert.equal(orientationResult.stdout, '', harness);
+      assert.match(orientationResult.stderr, /OKF orientation unavailable: root_index_unreadable/, harness);
+    }
+
+    const write = runBridge(harness, 'okf-write', writeRequest(root));
+    assert.equal(write.status, 0, harness);
+    assert.notEqual(JSON.parse(write.stdout).result, 'applied', harness);
+  }
+});
+
+test('the bridge owns no runtime, authority, retrieval, write, or manual-operation policy', () => {
+  const source = fs.readFileSync(bridgeWrapper, 'utf8');
+  assert.doesNotMatch(source, /lib\/runtime|runtime\.run|manual-operation|ledger|lock|approval|recovery|cross-repository/);
+  assert.match(source, /okf-read/);
+  assert.match(source, /okf-write/);
 });
 
 test('uninstall never deletes a receipt path that resolves outside the target directory', (t) => {

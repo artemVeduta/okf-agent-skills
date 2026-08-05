@@ -1,6 +1,7 @@
 {
   "harness": "opencode",
   "suite_version": "0.1.0",
+  "bridge": { "script": "scripts/adapter-bridge.js", "skills": ["okf-read", "okf-write"] },
   "seams": [
     { "native_event": "experimental.chat.system.transform", "role": "orientation", "logical_causes": ["system-transform"] },
     { "native_event": "session.created", "role": "lifecycle-only" },
