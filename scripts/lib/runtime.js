@@ -3,11 +3,13 @@ const validation = require('./validation');
 const admission = require('./admission');
 const routing = require('./routing');
 const lifecycle = require('./lifecycle');
+const orientation = require('./orientation');
 
 const skills = new Set(['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review']);
 const navigationResults = new Set(['ok', 'degraded', 'not-configured', 'unavailable']);
 const routerOwners = new Map([
   ['enumerate', 'okf-read'], ['search', 'okf-read'], ['read', 'okf-read'], ['validate', 'okf-read'],
+  ['orient', 'okf-read'],
   ['create', 'okf-write'], ['revise', 'okf-write'], ['format', 'okf-write'], ['machine-verify', 'okf-write'],
   ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
 ]);
@@ -249,12 +251,7 @@ function admitAndRoute(request, services, router) {
 function admitAndNavigate(request, services, router) {
   const admitted = admission.admitRead(request, services);
   const routed = router(admitted.data, request.payload, services);
-  const candidates = Array.isArray(admitted.data.candidates) ? admitted.data.candidates : [];
-  const active = candidates.filter((candidate) => candidate.state === 'active');
-  const partial = admitted.findings.length > 0 || admitted.data.coverage === 'non-exhaustive' || candidates.some((candidate) => (
-    (candidate.required === true && candidate.state !== 'active') ||
-    (candidate.state === 'active' && Array.isArray(candidate.findings) && candidate.findings.some((finding) => finding.blocks))
-  ));
+  const { active, partial } = admission.completeness(admitted);
   const findings = [...routed.findings];
   let data = routed.data;
   let result = navigationResults.has(routed.result) ? routed.result : 'unavailable';
@@ -360,6 +357,11 @@ function targetOutsideWorktreeBlocked(request) {
   }], 'WRITE_TARGET_OUTSIDE_WORKTREE', request.scope || null);
 }
 
+function orientRespond(request, services, marker) {
+  const outcome = orientation.orient(request, services, marker);
+  return outcome === null ? null : respond(request, outcome.result, outcome.data, outcome.findings, { next_action: outcome.next_action });
+}
+
 function activationState(request, services) {
   const cwd = request.payload && request.payload.cwd;
   if (typeof cwd !== 'string' || cwd === '') return 'invalid-input';
@@ -381,6 +383,7 @@ function routerRun(request, services) {
 
 function runActive(skill, request, services) {
   if (skill === 'okf-read') {
+    if (request.operation === 'orient') return orientRespond(request, services, 'valid');
     if (request.operation === 'validate') return validateRead(request, services);
     if (request.operation === 'enumerate') return enumerateRead(request, services);
     if (request.operation === 'resolve') return admitAndRoute(request, services, routing.resolve);
@@ -422,6 +425,7 @@ function run(skill, request, services) {
   const activation = activationState(request, services);
   if (activation === 'absent') {
     if (request.invocation === 'automatic') return null;
+    if (request.operation === 'orient') return orientRespond(request, services, 'absent');
     if (request.operation === 'read' || request.operation === 'search') {
       return respond(request, 'not-configured', routing.notConfiguredData(request.operation), []);
     }
@@ -429,6 +433,7 @@ function run(skill, request, services) {
   }
   if (activation === 'invalid-input') return runActive(skill, request, services);
   if (activation !== 'valid') {
+    if (request.operation === 'orient') return orientRespond(request, services, 'invalid');
     if (request.operation === 'read' || request.operation === 'search') {
       return respond(request, 'unavailable', routing.notConfiguredData(request.operation), [{
         code: 'unreadable',

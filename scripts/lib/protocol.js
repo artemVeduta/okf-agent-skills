@@ -80,6 +80,12 @@ function parseRequest(text, expectedSkill) {
     if (typeof obj.payload.query !== 'string' || obj.payload.query === '') throw new Error('Missing payload.query');
   }
   if (obj.operation === 'route' && typeof obj.payload.concept !== 'string') throw new Error('Missing payload.concept');
+  if (obj.operation === 'orient') {
+    if (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '') throw new Error('Missing payload.cwd');
+    if (typeof obj.payload.harness !== 'string' || obj.payload.harness === '') throw new Error('Missing payload.harness');
+    if (typeof obj.payload.context_id !== 'string' || obj.payload.context_id === '') throw new Error('Missing payload.context_id');
+    if (typeof obj.payload.logical_cause !== 'string' || obj.payload.logical_cause === '') throw new Error('Missing payload.logical_cause');
+  }
 
   return obj;
 }

@@ -136,6 +136,21 @@ function admitRead(request, services) {
   return admitInternal(request, services, true);
 }
 
+// Shared by orient and navigation: an empty active set means nothing to work
+// with; a required member missing, non-exhaustive coverage, or a blocking
+// finding on an active candidate makes the result partial even when
+// something did admit. Takes the admitted response itself, so every caller
+// stops repeating the same candidates-array guard.
+function completeness(admitted) {
+  const candidates = Array.isArray(admitted.data.candidates) ? admitted.data.candidates : [];
+  const active = candidates.filter((candidate) => candidate.state === 'active');
+  const partial = admitted.findings.length > 0 || admitted.data.coverage === 'non-exhaustive' || candidates.some((candidate) => (
+    (candidate.required === true && candidate.state !== 'active') ||
+    (candidate.state === 'active' && Array.isArray(candidate.findings) && candidate.findings.some((finding) => finding.blocks))
+  ));
+  return { active, partial };
+}
+
 // Candidate records may hold a path the user never named. Only a named path is echoed
 // back here. Routing results carry paths of admitted bundles only, which are authorized
 // by construction, so they need no redaction.
@@ -149,4 +164,4 @@ function redact(data) {
   };
 }
 
-module.exports = { admit, admitRead, redact };
+module.exports = { admit, admitRead, redact, completeness };

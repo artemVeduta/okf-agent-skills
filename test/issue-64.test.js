@@ -4,6 +4,7 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { snapshot } = require('../test-support/snapshot');
 
 const lifecycleWrapper = path.join(__dirname, '..', 'scripts', 'okf-lifecycle.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
@@ -18,20 +19,6 @@ function bundle(t) {
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   fs.writeFileSync(path.join(root, 'evidence.md'), 'observed evidence\n');
   return root;
-}
-
-function snapshot(root) {
-  const entries = [];
-  function visit(directory, relative = '') {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const name = path.join(relative, entry.name);
-      const file = path.join(directory, entry.name);
-      entries.push([name, entry.isDirectory() ? 'directory' : 'file', entry.isFile() ? fs.readFileSync(file, 'utf8') : '']);
-      if (entry.isDirectory()) visit(file, name);
-    }
-  }
-  visit(root);
-  return entries;
 }
 
 function changedPaths(before, after) {

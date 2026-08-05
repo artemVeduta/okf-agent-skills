@@ -84,6 +84,10 @@ module.exports = {
   isLink: (file) => { try { return fs.lstatSync(file).isSymbolicLink(); } catch { return false; } },
   access: (file) => { try { fs.accessSync(file, fs.constants.R_OK); return true; } catch { return false; } },
   listFiles,
+  mkdir: (dir) => fs.mkdirSync(dir, { recursive: true }),
+  remove: (file) => fs.rmSync(file, { force: true }),
+  readdir: (dir) => fs.readdirSync(dir),
+  removeEmptyDir: (dir) => { try { fs.rmdirSync(dir); return true; } catch { return false; } },
   activationMarker: (root) => {
     try {
       const marker = fs.lstatSync(path.join(root, '.okf-active'));

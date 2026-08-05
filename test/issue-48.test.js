@@ -145,7 +145,7 @@ test('ships exactly five process wrappers without skill or guard modules', () =>
   assert.deepEqual(topLevelWrappers, wrappers.slice().sort());
   for (const file of wrappers) assert.equal(fs.statSync(path.join(scripts, file)).isFile(), true, file);
   assert.deepEqual(fs.readdirSync(path.join(scripts, 'lib')).sort(), [
-    'admission.js', 'lifecycle.js', 'manifest.js', 'navigation.js', 'presence.js', 'protocol.js', 'reach.js', 'routing.js',
+    'adapters.js', 'admission.js', 'lifecycle.js', 'manifest.js', 'navigation.js', 'orientation.js', 'presence.js', 'protocol.js', 'reach.js', 'routing.js',
     'runtime.js', 'services.js', 'trust.js', 'validation.js',
   ]);
 });

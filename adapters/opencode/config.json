@@ -1,0 +1,11 @@
+{
+  "permission": {
+    "skill": {
+      "okf": "deny",
+      "okf-read": "deny",
+      "okf-write": "deny",
+      "okf-lifecycle": "deny",
+      "okf-review": "deny"
+    }
+  }
+}

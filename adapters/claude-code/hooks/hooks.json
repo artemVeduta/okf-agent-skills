@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          { "type": "command", "command": "node __OKF_SUITE_ROOT__/scripts/adapter-hook.js claude-code __OKF_TARGET_DIR__/manifest.json" }
+        ]
+      }
+    ]
+  }
+}
