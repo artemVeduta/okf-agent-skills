@@ -1,70 +1,46 @@
 /*
-Issue #78 — one wrapper-seam fixture per check the shipped post-write validation
-(`validation.postWrite`, called from `runtime.js` after every published concept
-write) actually performs, enumerated by reading `scripts/lib/validation.js`.
+Issue #78 — wrapper-seam fixtures for every check `validation.postWrite` runs
+after a published concept write. Each fixture builds a bundle under the OS temp
+dir and drives `scripts/okf-write.js` as a child process, asserting on the one
+JSON response line — the same seam `test/write-gate.test.js` uses.
 
-Every fixture builds its bundle under the OS temp dir and drives
-`scripts/okf-write.js` as a child process, asserting on the single JSON
-response line — the same seam `test/write-gate.test.js` uses. No fixture calls
-a private runtime function or injects a fake `services` object.
+Check                       Finding code                  Pass observable                                     Fail observable
+ 1 bundle-root declaration   ROOT_DECLARATION_NOT_EXACT    root `okf_version` is exactly the string "0.2"      `failed/incomplete`
+ 2 project mode              PROJECT_MODE_INVALID          root `project_mode` is a declared mode              `failed/incomplete`
+ 3 concept re-read           FRONTMATTER_UNPARSEABLE       written concept re-parses                           none (unreachable, 1)
+ 4 written-tree compare      POST_WRITE_VALIDATION_FAILED  re-read tree equals the expected tree               none (unreachable, 1)
+ 5 reserved bundle files     BUNDLE_FILES_NONCONFORMING    every reserved file parses                          `blocked` (2)
+ 6 concept type              TYPE_MISSING                  concept carries a non-empty `type`                  `blocked` (2)
+ 7 sources                   SOURCE_RESOURCE_MISSING       every source names a resource                       `blocked` (2)
+ 8 generated                 GENERATED_BY_MISSING          every generated entry names a `by`                  `blocked` (2)
+ 9 runtime                   RUNTIME_MISSING               `Attested Computation` carries a `runtime`          `blocked` (2)
+10 identity prefix           HUMAN_PREFIX_MISSING          `author` carries a human/agent/tool prefix          `blocked` (2)
+11 links                     UNRESOLVED_INTERNAL_LINK      every reference resolves                            `applied` with a warning (3)
+12 upstreams                 DEPENDS_ON_BLOCKED_CONCEPT    no source is a blocked concept                      `failed/incomplete`
+13 outer catch               POST_WRITE_VALIDATION_FAILED   the concept read raises nothing                     `failed/incomplete`
 
-Enumeration of the checks `postWrite()` performs, in source order, each with
-the code it emits and how this file demonstrates it:
+The pass column is covered by one shared conformant fixture rather than one
+fixture per check: that request drives every check's pass branch in a single
+`applied` response, so per-check pass fixtures would only duplicate it.
 
-  1. checkRoot            ROOT_DECLARATION_NOT_EXACT   dedicated fail fixture
-  2. projectMode           PROJECT_MODE_INVALID         dedicated fail fixture
-  3. readConcept            FRONTMATTER_UNPARSEABLE     pass only (see NOTE A)
-  4. expectedTree compare   POST_WRITE_VALIDATION_FAILED pass only (see NOTE A)
-  5. checkBundleFiles       BUNDLE_FILES_NONCONFORMING  fail fixture (see NOTE B)
-  6. checkConcept: type     TYPE_MISSING                fail fixture (see NOTE B)
-  7. checkConcept: sources  SOURCE_RESOURCE_MISSING     fail fixture (see NOTE B)
-  8. checkConcept: generated GENERATED_BY_MISSING       fail fixture (see NOTE B)
-  9. checkConcept: runtime  RUNTIME_MISSING              fail fixture (see NOTE B)
- 10. checkConcept: prefix   HUMAN_PREFIX_MISSING        fail fixture (see NOTE B)
- 11. checkLinks             UNRESOLVED_INTERNAL_LINK    fail fixture (see NOTE C)
- 12. checkUpstreams        DEPENDS_ON_BLOCKED_CONCEPT   dedicated fail fixture
- 13. catch-all              POST_WRITE_VALIDATION_FAILED dedicated fail fixture
-                            (unanticipated by D8 — see NOTE D)
+Three facts limit the fail column, and each is a property of the runtime, not
+of these fixtures:
 
-Every check's pass branch is exercised by the single "fully conformant"
-fixture below (it runs every one of the checks above and finds nothing).
+ 1. Checks 3 and 4 re-verify what the pre-write gate already proved with the
+    same parser over the same bytes (`roundTripMismatch`), so no wrapper-level
+    input reaches them failing. No fail fixture exists for them.
+ 2. Checks 5-10 also run in the pre-write gate, which returns `blocked` before
+    the write happens. `postWrite` is therefore never entered for those inputs,
+    and its copies of these checks are unreachable through the wrapper. The
+    shared fixture below asserts what does happen — the pre-write block, with
+    the check's own code and the concept untouched on disk.
+ 3. Check 11 reports a warning, not a blocker, so it cannot move the result off
+    `applied`.
 
-NOTE A: checks 3 and 4 re-verify exactly what `evaluate()`/`evaluateCreate()`
-already proved before ever calling `publishFile` — that the serialized tree
-round-trips through the same parser to an identical tree
-(`roundTripMismatch`, guarded pre-write). Given that guarantee, and that
-nothing else touches the just-written file inside one synchronous request,
-these two branches cannot be driven to fail through the wrapper without
-either calling a private function or racing the write with a second process —
-both forbidden by this ticket. Their pass branch is proven by every fixture
-below that reaches `applied`; no fail fixture is included for them, reported
-here rather than faked.
-
-NOTE B: checks 5-10 run identically inside `evaluate()`/`evaluateCreate()`
-before the write and again inside `postWrite()` after it, over the same tree
-(guaranteed identical by the same round-trip contract as NOTE A). Whenever
-one of these checks would fail, the pre-write copy always fires first and
-returns `blocked` before `publishFile` ever runs, so `postWrite()`'s copy
-never gets to be the one that reports the failure through the wrapper. The
-"shared checks" fixture below still proves each check fires with its own
-code, origin and an untouched concept on disk — the observable result is
-`blocked`, not `incomplete`, because of this unavoidable race, which is
-called out explicitly rather than asserting a result the runtime cannot
-produce.
-
-NOTE C: `checkLinks` is non-blocking (`warn`, not `blocker`). Its "fail" can
-therefore never flip the result away from `applied` — a non-blocking check
-cannot make a write "incomplete" by definition. The fixture below asserts the
-finding fires with its code, origin and the unresolved reference surviving
-on disk, while the result stays `applied`.
-
-NOTE D: `evaluateCreate()` (pre-write gate for `create`) never calls
-`checkLinks`/`checkUpstreams`, unlike `evaluate()` (pre-write gate for
-`revise`), which calls both. That asymmetry is what makes checks 11-13
-genuinely post-write-exclusive when driven through a `create` request: the
-directory-as-source fixture below is the only path in this file that reaches
-`postWrite()`'s outer `catch`, which D8 did not name as a check but which
-`postWrite()` demonstrably performs (recovering instead of crashing).
+Consequence: nine of the thirteen checks have no `failed/incomplete`
+observable, so this file covers their reachable observable instead. Whether
+that criterion is renegotiated or the duplicate pre-write copies of checks
+5-10 are removed is recorded on issue #78, not decided here.
 */
 
 const test = require('node:test');
@@ -102,14 +78,14 @@ function run(value) {
   const result = cp.spawnSync(process.execPath, [wrapper], {
     input: JSON.stringify(value), encoding: 'utf8',
   });
-  const response = JSON.parse(result.stdout);
   assert.equal(result.status, 0);
   assert.equal(result.stderr, '');
+  const response = JSON.parse(result.stdout);
   assert.equal(result.stdout, `${JSON.stringify(response)}\n`);
   return response;
 }
 
-test('post-write validation accepts a fully conformant new concept and reports every check clean', (t) => {
+test('a fully conformant new concept passes every post-write check', (t) => {
   const root = bundle(t);
   const response = run(request(root, {
     operation: 'create',
@@ -129,7 +105,7 @@ test('post-write validation accepts a fully conformant new concept and reports e
   assert.match(fs.readFileSync(path.join(root, 'child.md'), 'utf8'), /type: Attested Computation/);
 });
 
-test('post-write re-check catches a bundle root that only became non-conforming through its own write, leaving the write on disk', (t) => {
+test('a write that makes the bundle root non-conforming reports incomplete and stays on disk', (t) => {
   const root = bundle(t);
   const response = run(request(root, {
     concept: 'index.md',
@@ -143,7 +119,7 @@ test('post-write re-check catches a bundle root that only became non-conforming 
   assert.match(fs.readFileSync(path.join(root, 'index.md'), 'utf8'), /okf_version: "0.3"/);
 });
 
-test('post-write re-check catches a project mode that only became invalid through its own write, leaving the write on disk', (t) => {
+test('a write that makes the project mode invalid reports incomplete and stays on disk', (t) => {
   const root = bundle(t);
   const response = run(request(root, {
     concept: 'index.md',
@@ -157,7 +133,7 @@ test('post-write re-check catches a project mode that only became invalid throug
   assert.match(fs.readFileSync(path.join(root, 'index.md'), 'utf8'), /project_mode: both/);
 });
 
-test('post-write upstream re-check blocks a newly created concept whose source is invalid, though creation never checks upstreams itself', (t) => {
+test('a created concept whose source is blocked reports incomplete after the write', (t) => {
   const root = bundle(t);
   fs.writeFileSync(path.join(root, 'blocked.md'), '---\ntitle: No type here\n---\n# Blocked\n');
   const response = run(request(root, {
@@ -173,7 +149,7 @@ test('post-write upstream re-check blocks a newly created concept whose source i
   assert.match(fs.readFileSync(path.join(root, 'child.md'), 'utf8'), /type: Note/);
 });
 
-test('post-write link re-check flags an unresolved reference without blocking, since creation never checks links itself (non-blocking check, NOTE C)', (t) => {
+test('an unresolved reference is reported as a warning and the write stays applied', (t) => {
   const root = bundle(t);
   const response = run(request(root, {
     operation: 'create',
@@ -189,7 +165,7 @@ test('post-write link re-check flags an unresolved reference without blocking, s
   assert.match(fs.readFileSync(path.join(root, 'child.md'), 'utf8'), /resource: missing\.md/);
 });
 
-test('post-write validation recovers from an unexpected read error instead of crashing (unanticipated by D8, NOTE D)', (t) => {
+test('an unexpected read error is reported as incomplete instead of crashing', (t) => {
   const root = bundle(t);
   fs.mkdirSync(path.join(root, 'a-directory'));
   const response = run(request(root, {
@@ -206,25 +182,50 @@ test('post-write validation recovers from an unexpected read error instead of cr
   assert.match(fs.readFileSync(path.join(root, 'child.md'), 'utf8'), /type: Note/);
 });
 
-test('checks postWrite shares with the pre-write gate (NOTE B): each fires with its own code, but the pre-write copy always wins the race, so the wrapper reports blocked rather than incomplete', (t) => {
-  const cases = [
-    ['reserved bundle file fails to parse', 'BUNDLE_FILES_NONCONFORMING', 'okf', (root) => fs.writeFileSync(path.join(root, 'log.md'), '---\ntype: Log\n'), { title: 'After' }],
-    ['concept type blanked', 'TYPE_MISSING', 'okf', () => {}, { type: '' }],
-    ['source resource blanked', 'SOURCE_RESOURCE_MISSING', 'okf', () => {}, { sources: [{ resource: '' }] }],
-    ['generated-by blanked', 'GENERATED_BY_MISSING', 'okf', () => {}, { generated: [{ by: '' }] }],
-    ['attested computation runtime blanked', 'RUNTIME_MISSING', 'okf', () => {}, { type: 'Attested Computation', runtime: '' }],
-    ['author missing a human/agent/tool prefix', 'HUMAN_PREFIX_MISSING', 'okf', () => {}, { author: 'bob' }],
-  ];
-  for (const [label, code, origin, corrupt, set] of cases) {
-    const root = bundle(t);
-    fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Note\n');
-    corrupt(root);
-    const before = fs.readFileSync(path.join(root, 'note.md'), 'utf8');
-    const response = run(request(root, { set }));
-    const finding = response.findings.find((f) => f.code === code);
-    assert.equal(response.result, 'blocked', label);
-    assert.ok(finding, `${label}: expected ${code}`);
-    assert.equal(finding.origin, origin, label);
-    assert.equal(fs.readFileSync(path.join(root, 'note.md'), 'utf8'), before, label);
-  }
+// Each case below is blocked by the pre-write gate, which owns the same check.
+// The assertion is the gate's own finding code plus the concept untouched.
+function preWriteBlock(t, code, set) {
+  const root = bundle(t);
+  fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Note\n');
+  const before = fs.readFileSync(path.join(root, 'note.md'), 'utf8');
+  const response = run(request(root, { set }));
+  assert.equal(response.result, 'blocked');
+  const finding = response.findings.find((f) => f.code === code);
+  assert.ok(finding, `expected ${code}`);
+  assert.equal(finding.origin, 'okf');
+  assert.equal(fs.readFileSync(path.join(root, 'note.md'), 'utf8'), before);
+  return root;
+}
+
+test('a reserved bundle file that fails to parse is reported by the pre-write gate', (t) => {
+  const root = bundle(t);
+  fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Note\n');
+  fs.writeFileSync(path.join(root, 'log.md'), '---\ntype: Log\n');
+  const before = fs.readFileSync(path.join(root, 'note.md'), 'utf8');
+  const response = run(request(root));
+  assert.equal(response.result, 'blocked');
+  const finding = response.findings.find((f) => f.code === 'BUNDLE_FILES_NONCONFORMING');
+  assert.ok(finding, 'expected BUNDLE_FILES_NONCONFORMING');
+  assert.equal(finding.origin, 'okf');
+  assert.equal(fs.readFileSync(path.join(root, 'note.md'), 'utf8'), before);
+});
+
+test('a blanked concept type is reported by the pre-write gate', (t) => {
+  preWriteBlock(t, 'TYPE_MISSING', { type: '' });
+});
+
+test('a blanked source resource is reported by the pre-write gate', (t) => {
+  preWriteBlock(t, 'SOURCE_RESOURCE_MISSING', { sources: [{ resource: '' }] });
+});
+
+test('a blanked generated-by is reported by the pre-write gate', (t) => {
+  preWriteBlock(t, 'GENERATED_BY_MISSING', { generated: [{ by: '' }] });
+});
+
+test('a blanked attested-computation runtime is reported by the pre-write gate', (t) => {
+  preWriteBlock(t, 'RUNTIME_MISSING', { type: 'Attested Computation', runtime: '' });
+});
+
+test('an author without a human/agent/tool prefix is reported by the pre-write gate', (t) => {
+  preWriteBlock(t, 'HUMAN_PREFIX_MISSING', { author: 'bob' });
 });

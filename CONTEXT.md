@@ -480,7 +480,7 @@ _Avoid_: Project mode, source-side configuration
 
 **Target native adapter**:
 The harness adapter installed in the target repository of a cross-repository
-operation. It MAY be absent; only the invoking source-side adapter and a
+operation. It can be absent; only the invoking source-side adapter and a
 compatible shared runtime must be present.
 _Avoid_: Harness adapter, invoking harness adapter
 
@@ -492,8 +492,8 @@ _Avoid_: Tool allowlist, granted permission, effect-matrix outcome
 
 **Target collision**:
 The case in which a migration or cross-repository move names a destination
-path that an existing concept already occupies. It MUST block rather than
-trigger an implicit merge.
+path that an existing concept already occupies. It blocks rather than
+triggering an implicit merge.
 _Avoid_: Merge conflict, overwrite
 
 **Transformed output**:
@@ -519,9 +519,8 @@ _Avoid_: Operation class, target identity, Concept ID
 **Operation class**:
 The category the runtime assigns to a command or delegated request — such as
 a bounded write versus a broad, destructive, or identity-changing operation —
-that determines its authorization requirements. A delegated writer MUST
-recheck it before execution and MUST NOT downgrade a broad effect to a
-bounded update.
+that determines its authorization requirements. A delegated writer rechecks
+it before execution and never downgrades a broad effect to a bounded update.
 _Avoid_: Task kind, atomic effect, invocation class
 
 **Atomic effect**:
@@ -604,8 +603,8 @@ _Avoid_: Invocation class, approval, human verification
 **Operation store**:
 The durable operation store that holds the sealed operation manifest and its
 observation journal outside every mutation target and outside every
-manual-operation guard ledger. It MUST outlive the process and machine that
-created it and MUST survive repository replacement; its exact filesystem
+manual-operation guard ledger. It outlives the process and machine that
+created it and survives repository replacement; its exact filesystem
 location is an open item.
 _Avoid_: Operation manifest, manual-operation guard ledger, workspace
 manifest
@@ -641,16 +640,16 @@ _Avoid_: Retention window, recovery evidence
 
 **Validation verdict**:
 The pass or fail outcome of one individual check run during lifecycle or
-post-operation validation. Post-operation checks and their per-check pass
-criteria are enumerated in `scripts/lib/validation.js`.
+post-operation validation. Its exact schema is an open item; only the
+constraint that each check carries an observable pass or fail outcome is
+settled.
 _Avoid_: Lifecycle result, post-operation checks, orientation result
 
 **Post-operation checks**:
 The enumerated checks — OKF conformance, suite checks, identity, link,
 provenance, trust, and validation bound to the approved plan — that run
-after an operation to support a claim that it succeeded. They are
-enumerated, with their observable pass and fail conditions, in
-`scripts/lib/validation.js`.
+after an operation to support a claim that it succeeded. Each carries an
+observable pass and fail condition; their exact schema is an open item.
 _Avoid_: Recovery evidence, validation verdict, required checks
 
 **Settlement**:
@@ -661,7 +660,7 @@ _Avoid_: Cleanliness, lifecycle result
 
 **Cleanliness**:
 The other axis of terminal classification, with the values `clean` or
-`dirty`. A dirty terminal MUST carry an ambiguity or residue notice; rollback
+`dirty`. A dirty terminal carries an ambiguity or residue notice; rollback
 residue always forces a dirty or indeterminate result, never clean.
 _Avoid_: Settlement, rollback residue
 
@@ -687,9 +686,9 @@ _Avoid_: Ledger concurrency, exclusive per-bundle lock
 
 **Skill binding**:
 The mapping from an invocation route to the skill it dispatches to. Every
-harness MUST expose the same skill bindings as part of semantic parity; a
+harness exposes the same skill bindings as part of semantic parity; a
 harness-native configuration scope, such as a Codex hook's trusted-project or
-plugin scope, MUST NOT itself be treated as a skill binding.
+plugin scope, is not itself a skill binding.
 _Avoid_: Reach clause, hook scope, router dispatch protocol
 
 **Tool allowlist**:
@@ -699,7 +698,7 @@ nested-agent authority beyond what it names.
 _Avoid_: Allowed effects, agent definition
 
 **Native wrapper**:
-A thin, harness-specific surface through which an adapter MAY expose a
+A thin, harness-specific surface through which an adapter can expose a
 shipped agent definition (`okf-reader`, `okf-writer`) for delegation. It is
 distinct from a skill wrapper script, the shared cross-harness process entry
 under `scripts/`.
@@ -743,7 +742,7 @@ _Avoid_: Native event ID, orientation occurrence, task kind
 **Native event ID**:
 The harness-native identifier of the specific triggering event, carried in
 the occurrence key when one exists. A later native event with a new native
-event ID MAY form a new occurrence and emit another orientation.
+event ID can form a new occurrence and emit another orientation.
 _Avoid_: Logical cause, occurrence key, adapter generation
 
 **Adapter generation**:
@@ -763,13 +762,12 @@ _Avoid_: Concept identity, UUID, fully qualified concept key
 **Workspace link scheme (`okf-workspace://`)**:
 The `okf-workspace://<bundle-alias>/<concept-id>` URI form required for every
 authored cross-bundle link. The active workspace manifest is its only
-resolver, and one alias MUST NOT resolve to more than one target.
+resolver, and one alias never resolves to more than one target.
 _Avoid_: Workspace manifest, inbound link, federation
 
 **Result labels**:
 The fixed, closed set of navigation result values: `ok`, `degraded`,
-`not-configured`, `unavailable`. A navigation result MUST use only these
-labels.
+`not-configured`, `unavailable`. A navigation result uses only these labels.
 _Avoid_: Lifecycle result, orientation result, match labels
 
 **Match labels**:
@@ -792,12 +790,12 @@ _Avoid_: Support ceiling, match labels
 
 **Verified EOF**:
 The evidence a complete-concept claim requires: confirmation that a body was
-read to its actual end of file. Without it, the result MUST carry the
-`unobservable` finding and MUST be `degraded`; the observable criterion for
+read to its actual end of file. Without it, the result carries the
+`unobservable` finding and is `degraded`; the observable criterion for
 verifying it with native tools is an open item.
 _Avoid_: Complete read, parse finding
 
 **Parse finding**:
 The finding returned when readable bytes carry malformed frontmatter. It
-blocks status inference and MUST NOT trigger repair during a read.
+blocks status inference and never triggers repair during a read.
 _Avoid_: Finding labels, invalid finding, validation verdict
