@@ -11,8 +11,12 @@ The brief carries `role: "okf-writer"`, plus `task_kind`, `operation_class`, `cw
 `forbidden_effects`, no scope wider than the writer role — before it ever dispatches the
 equivalent `okf-write` request.
 
-It then returns one `okf-delegation/1` receipt: `status`, `requested_effects`, `actual_effects`,
-`evidence`, `validation`, `residue`, `disclosures`, `findings`, `next_action`.
+It then returns one `okf-delegation/1` receipt: `protocol`, `receipt`, `role`, `status`,
+`operation_identity`, `target`, `requested_effects`, `actual_effects`, `evidence`, `validation`,
+`residue`, `disclosures`, `findings`, `next_action`.
+
+`okf-delegate` accepts exactly two roles, `okf-reader` and `okf-writer`. A brief naming any other
+role is blocked on `field: "role"`, so no delegated lifecycle or review path exists in `v0.1.0`.
 
 Allowlisting `okf-write` directly skips that brief validation and hands back a raw wrapper
 response where a receipt was expected.
