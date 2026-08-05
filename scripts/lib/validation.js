@@ -851,25 +851,26 @@ function verificationTier(tree, rel, verifiers, findings) {
   const events = tree.verified === undefined ? [] : (Array.isArray(tree.verified) ? tree.verified : [tree.verified]);
   let machine = false;
   let human = false;
-  const unqualified = (index, reason) => findings.push(reviewFinding('UNQUALIFIED_VERIFICATION', false, { path: rel, index, reason }));
+  const unqualified = (index, reason, blocks = false) => findings.push(reviewFinding('UNQUALIFIED_VERIFICATION', blocks, { path: rel, index, reason }));
 
   events.forEach((event, index) => {
-    if (typeof event === 'string') return unqualified(index, 'legacy string event');
+    if (typeof event === 'string') return unqualified(index, 'legacy string event', event.startsWith('human:'));
     if (!event || typeof event !== 'object' || Array.isArray(event)) return unqualified(index, 'invalid event');
     if (event.kind === 'machine') {
       if (typeof event.by !== 'string' || event.by === '') return unqualified(index, 'missing machine by');
+      if (event.by.startsWith('human:')) return unqualified(index, 'human identity declared for machine verification', true);
       if (event.coverage !== 'complete-current-concept') return unqualified(index, 'incomplete machine coverage');
       machine = true;
       return;
     }
     if (event.kind === 'human') {
-      if (typeof event.verifier !== 'string' || event.verifier === '') return unqualified(index, 'missing human verifier');
-      if (event.coverage !== 'complete-current-concept') return unqualified(index, 'incomplete human coverage');
-      if (!verifiers.includes(event.verifier)) return unqualified(index, 'unapproved human verifier');
+      if (typeof event.verifier !== 'string' || event.verifier === '') return unqualified(index, 'missing human verifier', true);
+      if (event.coverage !== 'complete-current-concept') return unqualified(index, 'incomplete human coverage', true);
+      if (!verifiers.includes(event.verifier)) return unqualified(index, 'unapproved human verifier', true);
       human = true;
       return;
     }
-    unqualified(index, 'unknown verification kind');
+    unqualified(index, 'unknown verification kind', (typeof event.verifier === 'string' && event.verifier.startsWith('human:')) || (typeof event.by === 'string' && event.by.startsWith('human:')));
   });
 
   return human ? 'human-reviewed' : machine ? 'machine-confirmed' : 'unverified';
@@ -934,6 +935,9 @@ function evaluateReview(request, services) {
     ? { state: today >= tree.stale_after ? 'stale' : 'current', stale_after: tree.stale_after }
     : { state: 'not configured' };
   const reviewDependencies = configuredReview(bundleRoot, rel, services);
+  if (reviewDependencies.state === 'unobservable') {
+    findings.push(reviewFinding('REVIEW_DEPENDENCY_UNOBSERVABLE', false, { path: rel }));
+  }
   const data = {
     path: rel,
     trust_tier: verificationTier(tree, rel, reviewVerifiers(bundleRoot, services), findings),
