@@ -57,6 +57,8 @@ function listFiles(root) {
           visit(file);
         } else if (entry.isFile()) {
           files.push(file);
+        } else if (entry.isSymbolicLink()) {
+          complete = false;
         }
       }
     } catch {

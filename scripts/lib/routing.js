@@ -161,4 +161,8 @@ function search(data, payload, services) {
   return navigation.search(data, payload, services, activeCandidates);
 }
 
-module.exports = { resolve, routeWrite, read, search, notConfiguredData: navigation.notConfiguredData };
+function enumerate(data, payload, services) {
+  return navigation.enumerate(data, payload, services, activeCandidates);
+}
+
+module.exports = { resolve, routeWrite, read, search, enumerate, notConfiguredData: navigation.notConfiguredData };

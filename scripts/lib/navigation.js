@@ -543,4 +543,303 @@ function search(data, payload, services, getActiveCandidates) {
   };
 }
 
-module.exports = { read, search, notConfiguredData };
+function byteOffset(text, index) {
+  return Buffer.byteLength(text.slice(0, index), 'utf8');
+}
+
+function localReference(value) {
+  if (typeof value !== 'string' || value === '' || value.startsWith('#') || value.startsWith('?') ||
+    value.startsWith('//') || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) return null;
+  const target = value.split(/[?#]/, 1)[0];
+  if (target === '') return null;
+  return path.posix.normalize(target);
+}
+
+function workspaceReference(value) {
+  if (typeof value !== 'string' || !value.startsWith('okf-workspace://')) return null;
+  const match = value.match(/^okf-workspace:\/\/([^/?#]+)\/([^?#]+)(?:[?#].*)?$/);
+  if (!match || match[2].includes('..')) return null;
+  return { alias: match[1], concept: match[2] };
+}
+
+function scalar(value) {
+  try { return validation.parseYAML(`value: ${value}`).value; } catch { return null; }
+}
+
+function parsedFrontmatterLinks(frontmatter) {
+  const links = [];
+  const add = (carrier, value) => {
+    if (typeof value === 'string' && value !== '') links.push({ carrier, value });
+  };
+  add('frontmatter.resource', frontmatter.resource);
+  for (const source of Array.isArray(frontmatter.sources) ? frontmatter.sources : []) {
+    if (source && typeof source === 'object') add('frontmatter.sources[].resource', source.resource);
+  }
+  add('frontmatter.computation', frontmatter.computation);
+  if (frontmatter.executor && typeof frontmatter.executor === 'object') add('frontmatter.executor.resource', frontmatter.executor.resource);
+  if (frontmatter.attester && typeof frontmatter.attester === 'object') add('frontmatter.attester.resource', frontmatter.attester.resource);
+  return links;
+}
+
+function frontmatterLine(raw) {
+  const line = raw.replace(/[\r\n]+$/, '');
+  const match = line.match(/^( *)(-\s+)?(?:"(resource|computation)"|'(resource|computation)'|(resource|computation)):[ \t]*(.*)$/);
+  if (!match) return null;
+  const value = scalar(match[6]);
+  return {
+    indent: match[1].length,
+    sequence: match[2] !== undefined,
+    field: match[3] || match[4] || match[5],
+    value,
+    valueOffset: line.length - match[6].length,
+  };
+}
+
+function mappingLine(raw) {
+  const line = raw.replace(/[\r\n]+$/, '');
+  const match = line.match(/^( *)(-\s+)?(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^ :][^:]*):(?:[ \t]|$)/);
+  return match && { indent: match[1].length, sequence: match[2] !== undefined };
+}
+
+function sectionName(raw) {
+  const line = raw.replace(/[\r\n]+$/, '');
+  const match = line.match(/^(?:"(sources|executor|attester)"|'(sources|executor|attester)'|(sources|executor|attester)):[ \t]*(?:#.*)?$/);
+  return match && (match[1] || match[2] || match[3]);
+}
+
+function frontmatterLinks(text, bodyStart, add, incomplete) {
+  let extracted;
+  let parsed;
+  try {
+    extracted = validation.parseFrontmatter(text);
+    parsed = validation.parseYAML(extracted.frontmatter);
+  } catch {
+    incomplete('frontmatter_unparseable');
+    return;
+  }
+  const expected = parsedFrontmatterLinks(parsed);
+  const opening = text.indexOf('\n') + 1;
+  const frontmatter = text.slice(opening, bodyStart);
+  let section = null;
+  let mapIndent = null;
+  let sourcePropertyIndent = null;
+  let offset = opening;
+  for (const raw of frontmatter.split(/(?<=\n)/)) {
+    const line = raw.replace(/[\r\n]+$/, '');
+    const rootSection = sectionName(raw);
+    if (rootSection) {
+      section = rootSection;
+      mapIndent = null;
+      sourcePropertyIndent = null;
+    } else if (/^\S/.test(line)) {
+      section = null;
+    }
+    const item = frontmatterLine(raw);
+    const mapping = mappingLine(raw);
+    let carrier = null;
+    if (item) {
+      if (item.indent === 0) {
+        if (item.field === 'resource') carrier = 'frontmatter.resource';
+        if (item.field === 'computation') carrier = 'frontmatter.computation';
+      } else if (section === 'sources') {
+        if (item.sequence) {
+          sourcePropertyIndent = item.indent + 2;
+          if (item.field === 'resource') carrier = 'frontmatter.sources[].resource';
+        } else if (item.indent === sourcePropertyIndent && item.field === 'resource') {
+          carrier = 'frontmatter.sources[].resource';
+        }
+      } else if (section === 'executor' || section === 'attester') {
+        if (mapping && !mapping.sequence && mapIndent === null) mapIndent = mapping.indent;
+        if (!item.sequence && item.indent === mapIndent && item.field === 'resource') {
+          carrier = `frontmatter.${section}.resource`;
+        }
+      }
+    } else if (section === 'sources' && /^ *(?:-|#|$)/.test(line)) {
+      const indent = line.match(/^ */)[0].length;
+      if (line.trim().startsWith('-')) {
+        sourcePropertyIndent = indent + 2;
+      }
+    }
+    if (carrier && typeof item.value === 'string' && item.value !== '') {
+      const index = expected.findIndex((link) => link.carrier === carrier && link.value === item.value);
+      if (index >= 0) {
+        const link = expected.splice(index, 1)[0];
+        add(link.carrier, link.value, offset + item.valueOffset, 'bundle');
+      }
+    }
+    offset += raw.length;
+  }
+  if (expected.length) incomplete('frontmatter_location_unobservable');
+}
+
+function visibleMarkdown(text) {
+  let fence = null;
+  const visible = text.split(/(?<=\n)/).map((raw) => {
+    const line = raw.replace(/[\r\n]+$/, '');
+    const marker = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/);
+    if (marker) {
+      if (!fence) fence = { character: marker[1][0], length: marker[1].length };
+      else if (marker[1][0] === fence.character && marker[1].length >= fence.length && marker[2].trim() === '') fence = null;
+      return raw.replace(/[^\r\n]/g, ' ');
+    }
+    if (fence) return raw.replace(/[^\r\n]/g, ' ');
+    return raw;
+  }).join('');
+  const masked = visible.split('');
+  for (let start = 0; start < visible.length; start++) {
+    if (visible[start] !== '`') continue;
+    let length = 1;
+    while (visible[start + length] === '`') length++;
+    let end = start + length;
+    while (end < visible.length) {
+      if (visible[end] !== '`') {
+        end++;
+        continue;
+      }
+      let closingLength = 1;
+      while (visible[end + closingLength] === '`') closingLength++;
+      if (closingLength === length) {
+        for (let index = start; index < end + length; index++) {
+          if (masked[index] !== '\r' && masked[index] !== '\n') masked[index] = ' ';
+        }
+        start = end + length - 1;
+        break;
+      }
+      end += closingLength;
+    }
+    start += length - 1;
+  }
+  return masked.join('');
+}
+
+function inlineDestination(text, start) {
+  if (text[start] === '<') {
+    const end = text.indexOf('>', start + 1);
+    return end < 0 || text.slice(start, end).includes('\n') ? null : { value: text.slice(start + 1, end), start: start + 1 };
+  }
+  let depth = 0;
+  for (let index = start; index < text.length; index++) {
+    const character = text[index];
+    if (character === '\n' || /\s/.test(character)) return index === start ? null : { value: text.slice(start, index), start };
+    if (character === '\\' && index + 1 < text.length) {
+      index++;
+      continue;
+    }
+    if (character === '(') depth++;
+    if (character === ')') {
+      if (depth === 0) return { value: text.slice(start, index), start };
+      depth--;
+    }
+  }
+  return null;
+}
+
+function markdownLinks(text, start, add) {
+  const visible = visibleMarkdown(text);
+  for (const match of visible.matchAll(/\[[^\]\n]*\]\(\s*/g)) {
+    if (visible[match.index - 1] === '!' || visible[match.index - 1] === '\\') continue;
+    const destination = inlineDestination(visible, match.index + match[0].length);
+    if (destination) add('markdown.inline', destination.value, start + destination.start, 'relative');
+  }
+  for (const match of visible.matchAll(/^[ \t]{0,3}\[[^\]\n]+\]:\s*(?:<([^>\n]*)>|([^\s\n]+))/gm)) {
+    const value = match[1] === undefined ? match[2] : match[1];
+    const startInMatch = match[0].lastIndexOf(value);
+    if (startInMatch >= 0) add('markdown.reference-definition', value, start + match.index + startInMatch, 'relative');
+  }
+}
+
+function enumerate(data, payload, services, getActiveCandidates) {
+  const candidates = getActiveCandidates(data);
+  const findings = [];
+  const reasons = [];
+  const links = [];
+  let current;
+  const addReason = (reason) => { if (!reasons.includes(reason)) reasons.push(reason); };
+  const add = (carrier, value, offset, base) => {
+    const workspace = workspaceReference(value);
+    const reference = workspace ? `okf-workspace://${workspace.alias}/${workspace.concept}` : localReference(value);
+    if (!reference) return;
+    let target = null;
+    let targetRoot = current.root;
+    if (workspace) {
+      const candidate = candidates.find((item) => item.bundle_alias === workspace.alias);
+      if (!candidate) addFinding(findings, navigationFinding('diagnostic', {
+        gate: 'read routing', reason: 'workspace_alias_inactive_or_missing',
+      }));
+      const concept = workspace.concept.endsWith('.md') ? workspace.concept : `${workspace.concept}.md`;
+      target = candidate && path.resolve(candidate.bundle_root, concept);
+      targetRoot = candidate && candidate.bundle_root;
+    } else {
+      const root = current.root;
+      target = base === 'bundle'
+        ? path.resolve(root, reference.startsWith('/') ? `.${reference}` : reference)
+        : path.resolve(path.dirname(current.file), reference);
+    }
+    let resolves = false;
+    try { resolves = Boolean(target && targetRoot && contained(target, targetRoot) && safeExists(target, services) && services.isFile(target)); } catch {}
+    const verdict = resolves ? 'resolves' : 'unexpectedly-broken';
+    const record = {
+      carrier,
+      source: { bundle_alias: current.candidate.bundle_alias, path: current.path, byte_offset: byteOffset(current.text, offset) },
+      reference,
+      verdict,
+    };
+    links.push(record);
+    if (verdict === 'unexpectedly-broken') {
+      findings.push({
+        code: 'UNRESOLVED_INTERNAL_LINK', origin: 'okf', severity: 'warning', blocks: false,
+        detail: { path: current.path, resource: reference },
+      });
+    }
+  };
+  if (candidates.length === 0) addReason('no_admitted_bundle');
+  for (const candidate of candidates) {
+    const listing = listEntries(candidate, services, findings);
+    if (!listing) {
+      addReason('enumeration_unobservable');
+      continue;
+    }
+    if (listing.entries.complete === false) addReason('enumeration_incomplete');
+    for (const entry of listing.entries) {
+      const file = listedFile(listing.root, entry);
+      if (!file || !file.endsWith('.md')) continue;
+      const guard = guardPath(candidate, file, services, listing.root);
+      if (guard.state !== 'ok') {
+        addReason(guard.state === 'invalid' ? 'scope_invalid' : 'scope_unobservable');
+        continue;
+      }
+      if (guard.relative.split('/').includes('.git')) continue;
+      const observation = readObservation(file, services);
+      if (!observation.ok) {
+        addReason('carrier_unreadable');
+        continue;
+      }
+      if (!observation.complete) addReason('eof_unobservable');
+      current = { candidate, file, root: listing.root, path: guard.relative, text: observation.content };
+      let bodyStart = 0;
+      try {
+        const extracted = validation.parseFrontmatter(observation.content);
+        bodyStart = observation.content.length - extracted.body.length;
+        frontmatterLinks(observation.content, bodyStart, add, addReason);
+        markdownLinks(extracted.body, bodyStart, add);
+      } catch {
+        addReason('frontmatter_unparseable');
+        markdownLinks(observation.content, 0, add);
+      }
+    }
+  }
+  if (data.coverage === 'non-exhaustive') addReason('admission_incomplete');
+  const inboundLinks = { complete: reasons.length === 0, incomplete_reasons: reasons, links };
+  return {
+    result: inboundLinks.complete ? 'ok' : 'degraded',
+    data: {
+      scope: navigationScope(candidates, 'enumeration'),
+      coverage: inboundLinks.complete ? 'complete' : 'non-exhaustive',
+      inbound_links: inboundLinks,
+      archive_recommendations: [],
+    },
+    findings,
+  };
+}
+
+module.exports = { read, search, enumerate, notConfiguredData };

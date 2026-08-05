@@ -17,6 +17,7 @@ const primaryEffects = new Map([
   ['relationship', 'relationship'], ['machine-verify', 'machine-verify'],
 ]);
 const derivedEffects = new Set(['index-maintenance', 'log-append']);
+const forbiddenEffectKeys = ['deprecate', 'move', 'rename', 'rewrite'];
 const writeLimits = { writes: 'not serialized', crash_recovery: 'not provided' };
 
 function respond(request, result, data, findings, options = {}) {
@@ -103,7 +104,9 @@ function readEvidence(payload, bundleRoot, services) {
 function unsupportedPayload(payload, operation) {
   const set = payload.set;
   if (set !== undefined && (set === null || typeof set !== 'object' || Array.isArray(set))) return true;
-  if (['rename', 'delete', 'status', 'redirect', 'alias', 'purge'].some((key) => Object.hasOwn(payload, key))) return true;
+  if ([payload, set].some((value) => value && forbiddenEffectKeys.some((key) => Object.hasOwn(value, key)))) return true;
+  if ([payload, set].some((value) => value && (value.effects === 'link-rewrite' || Array.isArray(value.effects) && value.effects.includes('link-rewrite')))) return true;
+  if (['delete', 'status', 'redirect', 'alias', 'purge'].some((key) => Object.hasOwn(payload, key))) return true;
   if (set && (Object.hasOwn(set, 'status') || Object.hasOwn(set, 'stale_after'))) return true;
   if (set && Object.hasOwn(set, 'verified') && operation !== 'machine-verify') return true;
   if (operation === 'machine-verify' && set && Object.hasOwn(set, 'verified')) {
@@ -335,6 +338,21 @@ function validateRead(request, services) {
   return respond(request, 'ok', { ...admission.redact(admitted.data), ...read.data }, [...admitted.findings, ...read.findings]);
 }
 
+function enumerateRead(request, services) {
+  const payload = request.payload;
+  const hasBundle = typeof payload.bundle === 'string' && payload.bundle !== '';
+  const admittedRequest = hasBundle && payload.candidates === undefined
+    ? {
+      ...request,
+      payload: {
+        ...payload,
+        candidates: [{ path: path.resolve(payload.cwd, payload.bundle), bundle: '.', declared: true, named_by_user: true }],
+      },
+    }
+    : request;
+  return admitAndNavigate(admittedRequest, services, routing.enumerate);
+}
+
 function targetOutsideWorktreeBlocked(request) {
   const effect = primaryEffects.get(request.operation) || 'concept-revise';
   return writeResponse(request, 'blocked', 'blocked', effectRecords([effect], 'blocked'), [], 'not-run', [{
@@ -368,6 +386,7 @@ function routerRun(request, services) {
 function runActive(skill, request, services) {
   if (skill === 'okf-read') {
     if (request.operation === 'validate') return validateRead(request, services);
+    if (request.operation === 'enumerate') return enumerateRead(request, services);
     if (request.operation === 'resolve') return admitAndRoute(request, services, routing.resolve);
     if (request.operation === 'read') return admitAndNavigate(request, services, routing.read);
     if (request.operation === 'search') return admitAndNavigate(request, services, routing.search);
