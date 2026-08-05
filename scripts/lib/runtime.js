@@ -465,4 +465,4 @@ function run(skill, request, services) {
   return runActive(skill, request, services);
 }
 
-module.exports = { run, respond };
+module.exports = { run, respond, routerOwners, primaryEffects, derivedEffects };
