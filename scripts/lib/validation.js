@@ -360,6 +360,15 @@ function checkRoot(bundleRoot, services) {
   return tree.okf_version === '0.2' ? null : rootFinding(tree.okf_version);
 }
 
+function projectMode(bundleRoot, services) {
+  try {
+    const tree = readTree(path.join(bundleRoot, 'index.md'), services).tree;
+    return tree.project_mode === 'code-backed' || tree.project_mode === 'knowledge-only' ? tree.project_mode : null;
+  } catch {
+    return null;
+  }
+}
+
 // Step 2: the concept must resolve inside the bundle root.
 function inside(target, root) {
   return target === root || target.startsWith(root + path.sep);
@@ -533,10 +542,78 @@ function evaluate(request, services) {
   }
 
   const rendered = serialized + current.body;
-  if (rendered === current.text) return done('ok', { written: false, path: rel });
+  if (rendered === current.text) return done('ok', { written: false, path: rel, tree });
 
   svc.writeFile(conceptPath, rendered);
-  return done('ok', { written: true, path: rel });
+  return done('ok', { written: true, path: rel, tree });
+}
+
+function evaluateCreate(request, services) {
+  const svc = { serializeFrontmatter, ...services };
+  const bundleRoot = path.resolve(request.payload.bundle);
+  const rel = request.payload.concept;
+  const findings = [];
+  const done = (result, data) => ({ result, data, findings: sortFindings(findings) });
+  const root = checkRoot(bundleRoot, svc);
+  if (root) return done('blocked', (findings.push(root), { path: rel }));
+
+  const conceptPath = path.resolve(bundleRoot, rel);
+  if (!inside(conceptPath, bundleRoot) || conceptPath === bundleRoot) {
+    findings.push(blocker('CONCEPT_OUTSIDE_BUNDLE', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
+  if (svc.exists(conceptPath)) {
+    findings.push(blocker('CONCEPT_ALREADY_EXISTS', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
+
+  const tree = { ...(request.payload.set || {}), status: 'draft' };
+  if (Object.hasOwn(tree, 'trust_tier')) {
+    findings.push(blocker('WRITTEN_TRUST_TIER', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
+  checkBundleFiles(bundleRoot, svc, findings);
+  checkConcept(tree, rel, findings);
+  if (findings.some((finding) => finding.blocks)) return done('blocked', { path: rel });
+
+  const serialized = svc.serializeFrontmatter(tree);
+  const mismatch = roundTripMismatch(tree, serialized);
+  if (mismatch) {
+    findings.push(blocker('PARSE_TREE_MISMATCH', 'suite', { path: rel, ...mismatch }));
+    return done('blocked', { path: rel });
+  }
+  try {
+    svc.writeFile(conceptPath, serialized + (typeof request.payload.body === 'string' ? request.payload.body : ''));
+  } catch (error) {
+    findings.push(blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: rel, reason: error.message || 'write failed' }));
+    return done('failed/incomplete', { written: false, path: rel });
+  }
+  return done('ok', { written: true, path: rel, tree });
+}
+
+function postWrite(bundleRoot, rel, services, expectedTree) {
+  const findings = [];
+  const file = path.resolve(bundleRoot, rel);
+  try {
+    const root = checkRoot(bundleRoot, services);
+    if (root) findings.push(root);
+    if (!projectMode(bundleRoot, services)) {
+      findings.push(blocker('PROJECT_MODE_INVALID', 'suite', { gate: 'project mode' }));
+    }
+    const current = readConcept(file, rel, services);
+    if (current.finding) return { valid: false, findings: [current.finding] };
+    if (expectedTree !== undefined) {
+      const comparison = parseTreeEqual(expectedTree, current.tree);
+      if (!comparison.equal) findings.push(blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: rel, construct: comparison.path, reason: 'saved tree mismatch' }));
+    }
+    checkBundleFiles(bundleRoot, services, findings);
+    checkConcept(current.tree, rel, findings);
+    checkLinks(current.tree, rel, bundleRoot, services, findings);
+    checkUpstreams(current.tree, rel, bundleRoot, services, findings);
+    return { valid: !findings.some((finding) => finding.blocks), findings: sortFindings(findings) };
+  } catch (error) {
+    return { valid: false, findings: [blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: rel, reason: error.message || 'read failed' })] };
+  }
 }
 
 function parseReadText(text) {
@@ -872,4 +949,4 @@ function evaluateReview(request, services) {
   return { result, data, findings: sortFindings(findings) };
 }
 
-module.exports = { evaluate, evaluateReview, parseFrontmatter, parseYAML, serializeFrontmatter, validateRead };
+module.exports = { evaluate, evaluateCreate, evaluateReview, parseFrontmatter, parseYAML, serializeFrontmatter, postWrite, projectMode, validateRead };

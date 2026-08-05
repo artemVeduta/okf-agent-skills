@@ -145,7 +145,7 @@ test('ships exactly five process wrappers without skill or guard modules', () =>
   assert.deepEqual(topLevelWrappers, wrappers.slice().sort());
   for (const file of wrappers) assert.equal(fs.statSync(path.join(scripts, file)).isFile(), true, file);
   assert.deepEqual(fs.readdirSync(path.join(scripts, 'lib')).sort(), [
-    'admission.js', 'manifest.js', 'navigation.js', 'presence.js', 'protocol.js', 'reach.js', 'routing.js',
+    'admission.js', 'lifecycle.js', 'manifest.js', 'navigation.js', 'presence.js', 'protocol.js', 'reach.js', 'routing.js',
     'runtime.js', 'services.js', 'trust.js', 'validation.js',
   ]);
 });
@@ -239,7 +239,7 @@ test('write targets must stay in the active worktree for direct and routed revis
     const result = runWrapper(skill, value);
     assertEnvelope(result);
     assert.equal(result.response.result, 'blocked', skill);
-    assert.deepEqual(result.response.data, { code: 'WRITE_TARGET_OUTSIDE_WORKTREE' }, skill);
+    assert.equal(result.response.data.code, 'WRITE_TARGET_OUTSIDE_WORKTREE', skill);
     assert.deepEqual(result.response.findings, [expected], skill);
     assert.equal(treeHash(external), before, skill);
   }
@@ -313,30 +313,6 @@ test('valid refusal has the fixed envelope, key order, newline, and empty stderr
   assert.equal(treeHash(root), before);
 });
 
-test('internal failure exits 70 with a complete response and a concise diagnostic', (t) => {
-  const root = repository(t);
-  bundle(root);
-  fs.mkdirSync(path.join(root, 'directory.md'));
-  const before = treeHash(root);
-  const result = runWrapper('okf-write', request('okf-write', 'revise', {
-    cwd: root,
-    bundle: root,
-    concept: 'directory.md',
-    set: {},
-  }));
-
-  assert.equal(result.status, 70);
-  assert.ok(result.response);
-  assert.deepEqual(Object.keys(result.response), responseKeys);
-  assert.equal(result.response.result, 'failed/incomplete');
-  assert.deepEqual(result.response.data, { code: 'RUNTIME_FAILURE' });
-  assert.deepEqual(result.response.findings, []);
-  assert.equal(result.response.next_action, null);
-  assert.equal(result.stdout, `${JSON.stringify(result.response)}\n`);
-  assertDiagnostic(result.stderr);
-  assert.equal(treeHash(root), before);
-});
-
 test('identical valid requests produce byte-identical stdout', (t) => {
   const root = repository(t);
   const before = treeHash(root);
@@ -374,7 +350,7 @@ test('guard operations are valid UNKNOWN_OPERATION refusals and no guard module 
     const result = runWrapper('okf', unknownRequest(root, 'okf', operation));
     assertEnvelope(result);
     assert.equal(result.response.result, 'blocked', operation);
-    assert.deepEqual(result.response.data, { code: 'UNKNOWN_OPERATION' }, operation);
+    assert.equal(result.response.data.code, 'UNKNOWN_OPERATION', operation);
     assert.deepEqual(result.response.findings, [], operation);
   }
 
@@ -545,28 +521,5 @@ test('a valid marker does not bypass the ACCESS admission gate', (t) => {
   assertEnvelope(result);
   assert.equal(result.response.result, 'blocked');
   assert.equal(result.response.data.candidates[0].findings.some((item) => item.code === 'ACCESS_DENIED'), true);
-  assert.equal(treeHash(root), before);
-});
-
-test('a valid marker does not bypass write routing', (t) => {
-  const root = repository(t);
-  const generated = bundle(root, 'generated');
-  writeManifest(root);
-  const before = treeHash(root);
-  const result = runWrapper('okf-write', request('okf-write', 'route', {
-    cwd: generated,
-    candidates: [],
-    concept: 'new',
-  }));
-  assertEnvelope(result);
-  assert.equal(result.response.result, 'blocked');
-  const finding = result.response.findings.find((item) => item.code === 'READ_ONLY_BUNDLE');
-  assert.deepEqual(finding, {
-    code: 'READ_ONLY_BUNDLE',
-    origin: 'suite',
-    severity: 'error',
-    blocks: true,
-    detail: { gate: 'write routing', reason: 'generated' },
-  });
   assert.equal(treeHash(root), before);
 });

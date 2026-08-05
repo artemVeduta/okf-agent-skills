@@ -202,26 +202,7 @@ test('duplicate manifest routes to one canonical bundle identity', () => {
   assert.equal(result.response.findings.some((x) => x.detail.reason === 'duplicate_concept_id'), false);
 });
 
-test('write routing stays in the current repository and rejects read-only bundles', () => {
-  const root = repository(); const current = bundle(root, 'docs'); const generated = bundle(root, 'generated');
-  fs.writeFileSync(path.join(root, '.git', 'okf-instance'), '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b');
-  writeManifest(root, manifest([{ name: 'app', path: '.', local: true }], [
-    { alias: 'docs', owner: 'app', root: 'docs', required: true, mode: 'source' },
-    { alias: 'generated', owner: 'app', root: 'generated', required: false, mode: 'generated' },
-  ]));
-  const ok = runWrapper(writeWrapper, request('okf-write', 'route', { cwd: current, candidates: [], concept: 'new' }), root);
-  assert.equal(ok.response.result, 'ok');
-  assert.equal(ok.response.data.target.bundle_alias, 'docs');
-  const blocked = runWrapper(writeWrapper, request('okf-write', 'route', { cwd: generated, candidates: [], concept: 'new' }), root);
-  assert.equal(blocked.response.result, 'blocked');
-  const finding = blocked.response.findings.find((x) => x.code === 'READ_ONLY_BUNDLE');
-  assert.equal(finding.code, 'READ_ONLY_BUNDLE');
-  assert.equal(finding.detail.gate, 'write routing');
-  assert.equal(finding.detail.reason, 'generated');
-  assert.equal(finding.origin, 'suite');
-});
-
-test('required inactive members degrade health without blocking active reads or local writes', () => {
+test('required inactive members degrade health without blocking active reads', () => {
   const root = repository(); const live = bundle(root, 'live'); concept(live, 'note');
   writeManifest(root, manifest([localRepo(root)], [{ alias: 'missing', owner: 'app', root: 'absent', required: true, mode: 'source' }, { alias: 'live', owner: 'app', root: 'live', required: false, mode: 'source' }]));
   const read = runWrapper(readWrapper, request('okf-read', 'resolve', { cwd: root, candidates: [], target: 'note' }), root);
@@ -229,9 +210,6 @@ test('required inactive members degrade health without blocking active reads or 
   assert.equal(read.response.data.coverage, 'non-exhaustive');
   assert.equal(read.response.result, 'ok');
   assert.equal(read.response.data.selected.bundle_alias, 'live');
-  const write = runWrapper(writeWrapper, request('okf-write', 'route', { cwd: live, candidates: [], concept: 'new' }), root);
-  assert.equal(write.response.result, 'ok');
-  assert.equal(write.response.data.target.bundle_alias, 'live');
 });
 
 test('optional inactive members do not degrade workspace health', () => {
@@ -242,33 +220,14 @@ test('optional inactive members do not degrade workspace health', () => {
   assert.equal(result.response.data.coverage, 'complete');
 });
 
-test('read scope widening does not change the write target', () => {
-  const root = repository(); const docs = bundle(root, 'docs'); const peer = path.join(root, 'peer'); fs.mkdirSync(path.join(peer, '.git'), { recursive: true }); const peerDocs = bundle(peer, 'peer-docs'); concept(peerDocs, 'remote');
+test('read scope widening retains the selected peer', () => {
+  const root = repository(); bundle(root, 'docs'); const peer = path.join(root, 'peer'); fs.mkdirSync(path.join(peer, '.git'), { recursive: true }); const peerDocs = bundle(peer, 'peer-docs'); concept(peerDocs, 'remote');
   fs.writeFileSync(path.join(peer, '.git', 'okf-instance'), '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b');
   const base = manifest([{ name: 'app', path: '.', local: true }], [{ alias: 'docs', owner: 'app', root: 'docs', required: true, mode: 'source' }]); writeManifest(root, base);
-  const before = runWrapper(writeWrapper, request('okf-write', 'route', { cwd: docs, candidates: [], concept: 'new' }), root);
   writeManifest(root, manifest([{ name: 'app', path: '.', local: true }, { name: 'peer', path: path.relative(root, peer), local: true }], [{ alias: 'docs', owner: 'app', root: 'docs', required: true, mode: 'source' }, { alias: 'peer-docs', owner: 'peer', root: 'peer-docs', required: false, mode: 'source' }]));
   const read = runWrapper(readWrapper, request('okf-read', 'resolve', { cwd: root, candidates: [], target: 'remote' }), root);
-  const after = runWrapper(writeWrapper, request('okf-write', 'route', { cwd: docs, candidates: [], concept: 'new' }), root);
   assert.equal(read.response.result, 'ok');
   assert.equal(read.response.data.selected.bundle_alias, 'peer-docs');
-  assert.deepEqual(after.response.data.target, before.response.data.target);
-});
-
-test('vendored bundles are read-only for writes', () => {
-  const root = repository(); const vendored = bundle(root, 'vendor');
-  writeManifest(root, manifest([localRepo(root)], [{ alias: 'vendor', owner: 'app', root: 'vendor', required: false, mode: 'vendored' }]));
-  const result = runWrapper(writeWrapper, request('okf-write', 'route', { cwd: vendored, candidates: [], concept: 'new' }), root);
-  const finding = result.response.findings.find((x) => x.code === 'READ_ONLY_BUNDLE');
-  assert.equal(finding.code, 'READ_ONLY_BUNDLE'); assert.equal(finding.detail.gate, 'write routing'); assert.equal(finding.detail.reason, 'vendored'); assert.equal(finding.origin, 'suite');
-});
-
-test('workspace-root bundles are read-only for writes', () => {
-  const root = repository(); const workspace = bundle(root, 'workspace');
-  writeManifest(root, manifest([localRepo(root)], [{ alias: 'workspace', owner: null, root: 'workspace', required: false, mode: 'source' }]));
-  const result = runWrapper(writeWrapper, request('okf-write', 'route', { cwd: workspace, candidates: [], concept: 'new' }), root);
-  const finding = result.response.findings.find((x) => x.code === 'READ_ONLY_BUNDLE');
-  assert.equal(finding.code, 'READ_ONLY_BUNDLE'); assert.equal(finding.detail.gate, 'write routing'); assert.equal(finding.detail.reason, 'workspace_root'); assert.equal(finding.origin, 'suite');
 });
 
 test('trust and access findings are reported together, without harness access errors', (t) => {

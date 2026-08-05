@@ -30,10 +30,11 @@ function parseRequest(text, expectedSkill) {
   if (obj.invocation !== undefined && !['explicit', 'automatic'].includes(obj.invocation)) {
     throw new Error('Invalid invocation');
   }
-  if (obj.operation === 'revise' && (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '')) {
+  const boundedOperation = ['create', 'revise', 'format', 'relationship', 'machine-verify', 'sync'].includes(obj.operation);
+  if (boundedOperation && (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '')) {
     throw new Error('Missing payload.cwd');
   }
-  if (obj.operation === 'revise' && (
+  if (boundedOperation && (
     typeof obj.payload.bundle !== 'string' || obj.payload.bundle === '' ||
     typeof obj.payload.concept !== 'string' || obj.payload.concept === ''
   )) {

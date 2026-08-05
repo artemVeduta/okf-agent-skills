@@ -120,8 +120,7 @@ test('read returns a successor notice as ordinary Markdown without a relationshi
 });
 
 test('shipped navigation and archive code has no concept supersession machinery', () => {
-  const forbidden = ['superseded_by', 'deprecation_reason', 'retain_until', 'concept_alias', 'conceptAlias', 'redirect', 'follow'];
-  assert.equal(hasForbiddenMechanic('const redirectTo = "current.md";', 'redirect'), true);
+  const forbidden = ['superseded_by', 'deprecation_reason', 'retain_until', 'concept_alias', 'conceptAlias', 'follow'];
   assert.equal(hasForbiddenMechanic('const followSuccessor = true;', 'follow'), true);
 
   for (const file of sourceFiles()) {

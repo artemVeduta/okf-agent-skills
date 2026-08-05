@@ -2,33 +2,174 @@ const path = require('node:path');
 const validation = require('./validation');
 const admission = require('./admission');
 const routing = require('./routing');
+const lifecycle = require('./lifecycle');
 
 const skills = new Set(['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review']);
 const navigationResults = new Set(['ok', 'degraded', 'not-configured', 'unavailable']);
 const routerOwners = new Map([
   ['enumerate', 'okf-read'], ['search', 'okf-read'], ['read', 'okf-read'], ['validate', 'okf-read'],
   ['create', 'okf-write'], ['revise', 'okf-write'], ['format', 'okf-write'], ['machine-verify', 'okf-write'],
-  ['relationship', 'okf-write'], ['status', 'okf-write'], ['archive', 'okf-write'], ['move', 'okf-write'],
-  ['rename', 'okf-write'], ['merge', 'okf-write'], ['split', 'okf-write'], ['delete', 'okf-write'],
-  ['init', 'okf-lifecycle'], ['sync', 'okf-lifecycle'], ['migrate', 'okf-lifecycle'],
-  ['compact', 'okf-lifecycle'], ['rebuild', 'okf-lifecycle'],
-  ['review', 'okf-review'], ['staleness', 'okf-review'], ['human-verify', 'okf-review'],
-  ['remove-verification', 'okf-review'], ['stale-after', 'okf-review'], ['trust', 'okf-review'],
-  ['baseline', 'okf-review'], ['guard-state', 'okf-review'],
+  ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
 ]);
 
-function respond(request, result, data, findings) {
+const primaryEffects = new Map([
+  ['create', 'concept-create'], ['revise', 'concept-revise'], ['format', 'format'],
+  ['relationship', 'relationship'], ['machine-verify', 'machine-verify'],
+]);
+const derivedEffects = new Set(['index-maintenance', 'log-append', 'mechanical-link-maintenance']);
+const writeLimits = { writes: 'not serialized', crash_recovery: 'not provided' };
+
+function respond(request, result, data, findings, options = {}) {
   return {
     protocol: 'okf-wrapper/1',
     skill: request.skill,
     operation: request.operation,
     result,
-    scope: request.scope || null,
-    evidence_limits: null,
+    scope: options.scope === undefined ? request.scope || null : options.scope,
+    evidence_limits: options.evidence_limits === undefined ? null : options.evidence_limits,
     data,
     findings,
-    next_action: null,
+    next_action: options.next_action === undefined ? null : options.next_action,
   };
+}
+
+function suiteFinding(code, detail) {
+  return { code, origin: 'suite', severity: 'error', blocks: true, detail };
+}
+
+function writeResponse(request, result, authorization, effects, evidence, validationState, findings = [], code = undefined, scope = request.scope || null) {
+  const data = { authorization, effects, evidence, validation: validationState };
+  if (code !== undefined) data.code = code;
+  const nextAction = result === 'applied' || result === 'no-op' ? null : 'Correct the reported gate and submit one bounded request.';
+  return respond(request, result, data, findings, { scope, evidence_limits: writeLimits, next_action: nextAction });
+}
+
+function effectRecords(effects, authorization) {
+  return effects.map((effect, index) => ({ effect, authorization, inherited: index > 0 }));
+}
+
+function boundedEffects(operation, payload) {
+  const primary = primaryEffects.get(operation);
+  if (!primary) return { invalid: true, effects: [] };
+  if (payload.effects === undefined) return { effects: [primary] };
+  if (!Array.isArray(payload.effects) || payload.effects.length === 0) return { invalid: true, effects: [] };
+  const effects = payload.effects;
+  const valid = effects.includes(primary) && effects.every((effect) => effect === primary || derivedEffects.has(effect));
+  if (!valid || new Set(effects).size !== effects.length) return { invalid: true, effects };
+  return { effects };
+}
+
+function scopeFor(request, requireScope) {
+  const concept = request.payload.concept;
+  const scope = request.scope;
+  if (scope === undefined && !requireScope) return { scope: { concepts: [concept] } };
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope) || Object.keys(scope).length !== 1 ||
+    !Array.isArray(scope.concepts) || scope.concepts.length !== 1 || scope.concepts[0] !== concept) return { invalid: true, scope: scope || null };
+  return { scope };
+}
+
+function modeOf(bundleRoot, services) {
+  return validation.projectMode(bundleRoot, services);
+}
+
+function inside(root, file) {
+  const relative = path.relative(root, file);
+  return relative !== '' && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`);
+}
+
+function readEvidence(payload, bundleRoot, services) {
+  const required = ['create', 'revise', 'relationship', 'machine-verify'].includes(payload._operation);
+  if (!required) return { evidence: [] };
+  if (!Array.isArray(payload.evidence) || payload.evidence.length === 0 || payload.evidence.some((item) => typeof item !== 'string' || item === '')) return { invalid: true, evidence: [] };
+  const evidence = [];
+  for (const relative of payload.evidence) {
+    const file = path.resolve(bundleRoot, relative);
+    if (!inside(bundleRoot, file)) return { invalid: true, evidence };
+    try { services.readFile(file); } catch { return { unavailable: true, evidence }; }
+    evidence.push(relative.split(path.sep).join('/'));
+  }
+  return { evidence };
+}
+
+function unsupportedPayload(payload, operation) {
+  const set = payload.set;
+  if (set !== undefined && (set === null || typeof set !== 'object' || Array.isArray(set))) return true;
+  if (['rename', 'delete', 'status', 'redirect', 'alias', 'purge'].some((key) => Object.hasOwn(payload, key))) return true;
+  if (set && (Object.hasOwn(set, 'status') || Object.hasOwn(set, 'stale_after'))) return true;
+  if (set && Object.hasOwn(set, 'verified') && operation !== 'machine-verify') return true;
+  if (operation === 'machine-verify' && set && Object.hasOwn(set, 'verified')) {
+    const events = Array.isArray(set.verified) ? set.verified : [set.verified];
+    if (events.some((event) => !event || typeof event !== 'object' || event.kind !== 'machine')) return true;
+  }
+  return false;
+}
+
+function executeBounded(request, services, operation, requireScope = false) {
+  const effectsResult = boundedEffects(operation, request.payload);
+  const provisionalEffects = effectsResult.effects.length ? effectsResult.effects : [primaryEffects.get(operation)].filter(Boolean);
+  if (effectsResult.invalid || unsupportedPayload(request.payload, operation)) {
+    const finding = suiteFinding('UNSUPPORTED_INPUT', { gate: 'effects', operation });
+    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'UNSUPPORTED_INPUT');
+  }
+  const scoped = scopeFor(request, requireScope);
+  if (scoped.invalid) {
+    const finding = suiteFinding('INVALID_SCOPE', { gate: 'scope' });
+    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'INVALID_SCOPE', scoped.scope);
+  }
+  const payload = request.payload;
+  const bundleRoot = path.resolve(payload.cwd, payload.bundle);
+  const activeRoot = services.gitRootOf(path.resolve(payload.cwd));
+  const targetRoot = services.gitRootOf(bundleRoot);
+  if (!activeRoot || !targetRoot) {
+    const finding = suiteFinding('WRITE_OWNERSHIP_UNKNOWN', { gate: 'ownership', reason: 'unknown_or_non_local' });
+    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'WRITE_OWNERSHIP_UNKNOWN', scoped.scope);
+  }
+  if (activeRoot !== targetRoot) return targetOutsideWorktreeBlocked({ ...request, scope: scoped.scope });
+
+  const admitted = admission.admit({ ...request, scope: scoped.scope, payload: {
+    ...payload,
+    candidates: [{
+      path: activeRoot,
+      bundle: path.relative(activeRoot, bundleRoot) || '.',
+      declared: true,
+      named_by_user: true,
+      requires_repository: true,
+    }],
+  } }, services);
+  const candidate = admitted.data.candidates && admitted.data.candidates.find((item) => item.state === 'active' && item.bundle_root === bundleRoot);
+  if (!candidate) {
+    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', admitted.findings, 'BUNDLE_NOT_ADMITTED', scoped.scope);
+  }
+  const mode = modeOf(bundleRoot, services);
+  if (!mode) {
+    const finding = suiteFinding('PROJECT_MODE_INVALID', { gate: 'project mode' });
+    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'PROJECT_MODE_INVALID', scoped.scope);
+  }
+  if (mode === 'code-backed' && payload.code_recoverable === true) {
+    const finding = suiteFinding('CODE_RECOVERABLE_MATERIAL', { gate: 'project mode' });
+    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'CODE_RECOVERABLE_MATERIAL', scoped.scope);
+  }
+  const observed = readEvidence({ ...payload, _operation: operation }, bundleRoot, services);
+  if (observed.invalid || observed.unavailable) {
+    const code = observed.unavailable ? 'EVIDENCE_UNAVAILABLE' : 'EVIDENCE_REQUIRED';
+    const finding = suiteFinding(code, { gate: 'evidence' });
+    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), observed.evidence, 'not-run', [finding], code, scoped.scope);
+  }
+
+  let outcome;
+  try {
+    const writerRequest = { ...request, scope: scoped.scope, payload: { ...payload, bundle: bundleRoot } };
+    outcome = operation === 'create' ? validation.evaluateCreate(writerRequest, services) : validation.evaluate(writerRequest, services);
+  } catch (error) {
+    const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: error.message || 'write failed' });
+    return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', [finding], undefined, scoped.scope);
+  }
+  if (outcome.result === 'blocked') return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), observed.evidence, 'not-run', outcome.findings, undefined, scoped.scope);
+  if (outcome.result === 'failed/incomplete') return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', outcome.findings, undefined, scoped.scope);
+  if (!outcome.data.written) return writeResponse(request, 'no-op', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'not-needed', outcome.findings, undefined, scoped.scope);
+  const checked = validation.postWrite(bundleRoot, payload.concept, services, outcome.data.tree);
+  if (!checked.valid) return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', [...outcome.findings, ...checked.findings], undefined, scoped.scope);
+  return writeResponse(request, 'applied', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'valid', [...outcome.findings, ...checked.findings], undefined, scoped.scope);
 }
 
 // Both routing operations admit first, then route the admitted data. redact() runs
@@ -77,28 +218,29 @@ function admitAndNavigate(request, services, router) {
 }
 
 function unknownOperation(request) {
+  if (request.skill === 'okf-write' || request.skill === 'okf-lifecycle' || request.skill === 'okf') {
+    return writeResponse(request, 'blocked', 'blocked', [], [], 'not-run', [], 'UNKNOWN_OPERATION');
+  }
   return respond(request, 'blocked', { code: 'UNKNOWN_OPERATION' }, []);
 }
 
 function automaticMutation(skill, request) {
-  if (request.invocation !== 'automatic') return false;
-  if (skill === 'okf-write' && request.operation === 'revise') return true;
-  return skill === 'okf' && routerOwners.get(request.operation) === 'okf-write';
+  return request.invocation === 'automatic' && (
+    (skill === 'okf-write' && primaryEffects.has(request.operation)) ||
+    (skill === 'okf-lifecycle' && request.operation === 'sync') ||
+    (skill === 'okf' && (primaryEffects.has(request.operation) || request.operation === 'sync'))
+  );
 }
 
 function automaticMutationBlocked(request) {
-  return respond(request, 'blocked', { code: 'AUTOMATIC_MUTATION_BLOCKED' }, [{
+  const effect = primaryEffects.get(request.operation) || 'concept-revise';
+  return writeResponse(request, 'blocked', 'blocked', effectRecords([effect], 'blocked'), [], 'not-run', [{
     code: 'AUTOMATIC_MUTATION_BLOCKED',
     origin: 'suite',
     severity: 'error',
     blocks: true,
     detail: { gate: 'invocation', reason: 'automatic_mutation' },
-  }]);
-}
-
-function writeOperation(skill, request) {
-  return (skill === 'okf-write' && request.operation === 'revise') ||
-    (skill === 'okf' && routerOwners.get(request.operation) === 'okf-write');
+  }], 'AUTOMATIC_MUTATION_BLOCKED');
 }
 
 function validateRead(request, services) {
@@ -126,35 +268,15 @@ function validateRead(request, services) {
   return respond(request, 'ok', { ...admission.redact(admitted.data), ...read.data }, [...admitted.findings, ...read.findings]);
 }
 
-function resolvedPath(value, services) {
-  const absolute = path.resolve(value);
-  try {
-    return typeof services.realpath === 'function' ? services.realpath(absolute) : absolute;
-  } catch {
-    return absolute;
-  }
-}
-
-function targetOutsideWorktree(request, services) {
-  const payload = request.payload || {};
-  if (
-    typeof payload.cwd !== 'string' || payload.cwd === '' ||
-    typeof payload.bundle !== 'string' || payload.bundle === ''
-  ) return true;
-
-  const activeRoot = services.gitRootOf(resolvedPath(payload.cwd, services));
-  const targetRoot = services.gitRootOf(resolvedPath(payload.bundle, services));
-  return !activeRoot || !targetRoot || activeRoot !== targetRoot;
-}
-
 function targetOutsideWorktreeBlocked(request) {
-  return respond(request, 'blocked', { code: 'WRITE_TARGET_OUTSIDE_WORKTREE' }, [{
+  const effect = primaryEffects.get(request.operation) || 'concept-revise';
+  return writeResponse(request, 'blocked', 'blocked', effectRecords([effect], 'blocked'), [], 'not-run', [{
     code: 'WRITE_TARGET_OUTSIDE_WORKTREE',
     origin: 'suite',
     severity: 'error',
     blocks: true,
     detail: { gate: 'write routing', reason: 'outside_active_worktree' },
-  }]);
+  }], 'WRITE_TARGET_OUTSIDE_WORKTREE', request.scope || null);
 }
 
 function activationState(request, services) {
@@ -190,12 +312,22 @@ function runActive(skill, request, services) {
     }
     return unknownOperation(request);
   }
-  if (skill === 'okf-lifecycle') return unknownOperation(request);
-  if (request.operation === 'route') return admitAndRoute(request, services, routing.routeWrite);
-  if (request.operation !== 'revise') return unknownOperation(request);
-
-  const outcome = validation.evaluate(request, services);
-  return respond(request, outcome.result, outcome.data, outcome.findings);
+  if (skill === 'okf-lifecycle') {
+    if (request.operation !== 'sync') return unknownOperation(request);
+    const context = { bundle_root: path.resolve(request.payload.cwd, request.payload.bundle) };
+    const planned = lifecycle.plan(request, context, services);
+    if (planned.result === 'abstained') {
+      const scoped = scopeFor(request, true);
+      if (scoped.invalid) {
+        const finding = suiteFinding('INVALID_SCOPE', { gate: 'scope' });
+        return writeResponse(request, 'blocked', 'blocked', effectRecords([primaryEffects.get(planned.operation)], 'blocked'), [], 'not-run', [finding], 'INVALID_SCOPE', scoped.scope);
+      }
+      return writeResponse(request, 'abstained', 'allowed', effectRecords([primaryEffects.get(planned.operation)], 'allowed'), [], 'not-run', [], undefined, scoped.scope);
+    }
+    return executeBounded(planned.request, services, planned.operation, true);
+  }
+  if (!primaryEffects.has(request.operation)) return unknownOperation(request);
+  return executeBounded(request, services, request.operation);
 }
 
 function run(skill, request, services) {
@@ -229,10 +361,6 @@ function run(skill, request, services) {
     }]);
   }
   if (automaticMutation(skill, request)) return automaticMutationBlocked(request);
-  if (writeOperation(skill, request) && targetOutsideWorktree(request, services)) {
-    return targetOutsideWorktreeBlocked(request);
-  }
-
   return runActive(skill, request, services);
 }
 
