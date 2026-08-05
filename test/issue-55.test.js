@@ -283,7 +283,6 @@ test('defines the required skill inventory with fixtures', (t) => {
 });
 
 test('validates the exact shipped inventory before each skill', () => {
-  if (!fs.existsSync(skills)) return;
   assert.deepEqual(validateInventory(skills), [], 'skills inventory');
   for (const name of inventory) {
     const directory = path.join(skills, name);
