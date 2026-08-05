@@ -30,8 +30,8 @@ npx skills add 'artemVeduta/okf-agent-skills#v0.1.0'
 
 This is the one documented base install command, exact `#v0.1.0` Git-ref
 syntax included. It places the router, the four leaf skills, and their
-wrapper scripts into your skills store — the project `.agents/skills/` store
-or, with `-g`, the global `~/.agents/skills/` store — and creates
+wrapper scripts into one of the two canonical skills stores — the project
+`.agents/skills/` store or the global `~/.agents/skills/` store — and creates
 harness-specific links only where a harness requires them.
 
 **The base install only makes the skills discoverable.** It does not wire a
@@ -98,18 +98,13 @@ project skips it.
 node scripts/okf-adapter.js install opencode <target-directory>
 ```
 
-**No single verified target directory makes this adapter fully work today,
-and this is a recorded gap, not a recommendation withheld.** See
+**No single verified target directory makes this adapter fully work today.**
+Under the currently shipped flat layout, `plugin.js` — the file that wires
+the orientation hook — is not discovered under either candidate directory.
+See
 [`docs/research/adapter-install-targets.md`](docs/research/adapter-install-targets.md#opencode)
-for the full evidence: OpenCode's global config loader accepts
-`config.json` only inside its one global config directory, never inside a
-project's `.opencode/`; and its plugin loader discovers `plugin.js` only one
-directory level *below* whichever directory holds the config, in a
-`plugin/`/`plugins/` child — a level the manifest's flat `installs` layout
-does not create anywhere. No target directory satisfies both rules at once,
-so `plugin.js` — the file that actually wires the orientation hook — is not
-discovered by the currently shipped layout under either candidate
-directory. Fixing the layout is adapter-code work outside this release.
+for the loader evidence. Fixing the layout is adapter-code work outside this
+release.
 
 ## First run: two steps this release cannot do for you
 
@@ -180,6 +175,9 @@ retained design for a later guarded release, not part of `v0.1.0`.
   ceiling (**D10**).
 - Live Claude Code, Codex, and OpenCode process tests; the adapter
   fixtures in `test/` are this release's gate instead.
+- Windows. This release targets macOS and Linux only.
+- A CLI binary and an npm package. The skills install from this
+  repository, and the only executables are the wrapper scripts.
 
 **Unrelated to the other public OKF skill.** This project is unrelated to
 [`fabricioctelles/okf-open-knowledge-format`](https://github.com/fabricioctelles/okf-open-knowledge-format)

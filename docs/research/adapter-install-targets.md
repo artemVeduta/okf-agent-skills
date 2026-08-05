@@ -82,8 +82,7 @@ correct choice for a developer who wants the adapter active across every reposit
 not wrong, only broader in scope than this record recommends by default.
 
 Project-level hooks load only when Codex considers the project trusted; an untrusted project
-skips its `.codex/` layer entirely (config, hooks, and rules alike). This is a real,
-documented constraint, not a defect of the recommended path.
+skips its `.codex/` layer entirely (config, hooks, and rules alike).
 
 **Cross-check against `adapters/codex/manifest.json`.** The `installs` list is:
 
@@ -113,13 +112,11 @@ anything and does not conflict with hook discovery. Consistent: verified.
 
 **No single recommended target directory closes the gap. This is a recorded, evidenced,
 partial inconsistency in `adapters/opencode/manifest.json`'s `installs` list, not a fully
-usable adapter at any one directory. Recording it, rather than picking a directory anyway, is
-the correct outcome for this ticket.**
+usable adapter at any one directory.**
 
 **What is verified.** OpenCode reads its own JSON config file — file names `opencode.json` and
 `opencode.jsonc` project-side — but its **global** config loader additionally accepts a third,
-legacy file name, `config.json`, checked in the order `opencode.jsonc`, `opencode.json`,
-`config.json`, and only inside the single global config directory
+legacy file name, `config.json`, and accepts it only inside the single global config directory
 (`$XDG_CONFIG_HOME/opencode`, i.e. `~/.config/opencode/` when `XDG_CONFIG_HOME` is unset, or
 `$OPENCODE_CONFIG_DIR` when that flag is set). The project-level loader (any directory ending
 in `.opencode`, walked from the working directory to the git root) checks only `opencode.json`
@@ -158,10 +155,8 @@ orientation injection this suite depends on. Under either candidate directory th
 currently packaged, cannot both apply its `config.json` permission defaults and load its
 `plugin.js` orientation hook from one flat target directory.
 
-**What this record does not do.** Per the ticket's scope, this record adds no default, no
-path inference, and no adapter or install code change — fixing the layout (for example, by
-nesting `plugin.js` under `plugin/` in the adapter's own source tree) is an adapter-code
-change outside this research ticket. This gap blocks only the OpenCode row of the install
+Fixing the layout (for example, by nesting `plugin.js` under `plugin/` in the adapter's own
+source tree) is an adapter-code change outside this research ticket. This gap blocks only the OpenCode row of the install
 documentation; it does not block Claude Code's or Codex's rows above, and it does not imply
 anything about either of those harnesses.
 
