@@ -29,6 +29,7 @@ function request(root, skill, operation, extra = {}) {
     protocol: 'okf-wrapper/1',
     skill,
     operation,
+    task_kind: 'fix',
     scope: { concepts: ['note.md'] },
     payload: {
       cwd: root,
@@ -85,8 +86,8 @@ test('writer rechecks the saved bundle through its filesystem service', (t) => {
       set: { title: 'After', sources: [{ resource: 'source.md' }] },
     }), {
       ...services,
-      writeFile(file, data) {
-        services.writeFile(file, data);
+      publishFile(file, data, expected) {
+        services.publishFile(file, data, expected);
         change(root);
       },
     });
@@ -95,7 +96,7 @@ test('writer rechecks the saved bundle through its filesystem service', (t) => {
   }
 });
 
-test('direct scope is inferred and requested derivatives inherit the primary authorization without writes', (t) => {
+test('direct scope is inferred and requested derivatives append to a frontmatter-free log', (t) => {
   const root = bundle(t);
   concept(root);
   fs.writeFileSync(path.join(root, 'log.md'), '# Log\n');
@@ -103,11 +104,11 @@ test('direct scope is inferred and requested derivatives inherit the primary aut
     effects: ['concept-revise', 'index-maintenance', 'log-append'],
   });
   delete value.scope;
-  const beforeLog = fs.readFileSync(path.join(root, 'log.md'), 'utf8');
   const response = run(value).response;
   assert.deepEqual(response.scope, { concepts: ['note.md'] });
   assert.deepEqual(response.data.effects.map((item) => item.inherited), [false, true, true]);
-  assert.equal(fs.readFileSync(path.join(root, 'log.md'), 'utf8'), beforeLog);
+  assert.match(fs.readFileSync(path.join(root, 'index.md'), 'utf8'), /- \[note.md\]\(note.md\)/);
+  assert.match(fs.readFileSync(path.join(root, 'log.md'), 'utf8'), /- revise: \[note.md\]\(note.md\)/);
 });
 
 test('writer refuses unsupported composites before writing', (t) => {

@@ -16,7 +16,7 @@ const primaryEffects = new Map([
   ['create', 'concept-create'], ['revise', 'concept-revise'], ['format', 'format'],
   ['relationship', 'relationship'], ['machine-verify', 'machine-verify'],
 ]);
-const derivedEffects = new Set(['index-maintenance', 'log-append', 'mechanical-link-maintenance']);
+const derivedEffects = new Set(['index-maintenance', 'log-append']);
 const writeLimits = { writes: 'not serialized', crash_recovery: 'not provided' };
 
 function respond(request, result, data, findings, options = {}) {
@@ -37,8 +37,17 @@ function suiteFinding(code, detail) {
   return { code, origin: 'suite', severity: 'error', blocks: true, detail };
 }
 
-function writeResponse(request, result, authorization, effects, evidence, validationState, findings = [], code = undefined, scope = request.scope || null) {
-  const data = { authorization, effects, evidence, validation: validationState };
+function writeResponse(request, result, authorization, effects, evidence, validationState, findings = [], code = undefined, scope = request.scope || null, completedEffects = [], residue = []) {
+  const completed = new Set(completedEffects);
+  const data = {
+    authorization,
+    effects,
+    task_kind: request.task_kind === undefined ? null : request.task_kind,
+    actual_effects: effectRecords(effects.filter(({ effect }) => completed.has(effect)).map(({ effect }) => effect), 'notice'),
+    residue,
+    evidence,
+    validation: validationState,
+  };
   if (code !== undefined) data.code = code;
   const nextAction = result === 'applied' || result === 'no-op' ? null : 'Correct the reported gate and submit one bounded request.';
   return respond(request, result, data, findings, { scope, evidence_limits: writeLimits, next_action: nextAction });
@@ -53,10 +62,10 @@ function boundedEffects(operation, payload) {
   if (!primary) return { invalid: true, effects: [] };
   if (payload.effects === undefined) return { effects: [primary] };
   if (!Array.isArray(payload.effects) || payload.effects.length === 0) return { invalid: true, effects: [] };
-  const effects = payload.effects;
-  const valid = effects.includes(primary) && effects.every((effect) => effect === primary || derivedEffects.has(effect));
-  if (!valid || new Set(effects).size !== effects.length) return { invalid: true, effects };
-  return { effects };
+  const requested = payload.effects;
+  const valid = requested.includes(primary) && requested.every((effect) => effect === primary || derivedEffects.has(effect));
+  if (!valid || new Set(requested).size !== requested.length) return { invalid: true, effects: requested };
+  return { effects: [primary, ...requested.filter((effect) => effect !== primary)] };
 }
 
 function scopeFor(request, requireScope) {
@@ -104,12 +113,47 @@ function unsupportedPayload(payload, operation) {
   return false;
 }
 
+function writableTaskKind(request) {
+  return ['feature work', 'fix', 'research'].includes(request.task_kind);
+}
+
+function derivativeLine(effect, operation, concept) {
+  return effect === 'index-maintenance'
+    ? `- [${concept}](${concept})`
+    : `- ${operation}: [${concept}](${concept})`;
+}
+
+function appendDerivative(effect, operation, bundleRoot, concept, services) {
+  const file = path.join(bundleRoot, effect === 'index-maintenance' ? 'index.md' : 'log.md');
+  if (!services.exists(file)) return { written: false };
+  const current = services.readFile(file);
+  const line = derivativeLine(effect, operation, concept);
+  const parsed = current.split('\n', 1)[0].replace(/\r$/, '') === '---'
+    ? validation.parseFrontmatter(current)
+    : null;
+  if (parsed) validation.parseYAML(parsed.frontmatter);
+  const body = parsed ? parsed.body : current;
+  if (body.split('\n').some((entry) => entry.replace(/\r$/, '') === line)) return { written: false };
+  const rendered = `${current}${current === '' || current.endsWith('\n') ? '' : '\n'}${line}\n`;
+  if (parsed) validation.parseYAML(validation.parseFrontmatter(rendered).frontmatter);
+  services.publishFile(file, rendered, current);
+  if (parsed) validation.parseYAML(validation.parseFrontmatter(services.readFile(file)).frontmatter);
+  return { written: true };
+}
+
 function executeBounded(request, services, operation, requireScope = false) {
   const effectsResult = boundedEffects(operation, request.payload);
   const provisionalEffects = effectsResult.effects.length ? effectsResult.effects : [primaryEffects.get(operation)].filter(Boolean);
   if (effectsResult.invalid || unsupportedPayload(request.payload, operation)) {
     const finding = suiteFinding('UNSUPPORTED_INPUT', { gate: 'effects', operation });
     return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'UNSUPPORTED_INPUT');
+  }
+  if (!writableTaskKind(request)) {
+    const finding = suiteFinding('TASK_KIND_NOT_WRITE_ELIGIBLE', {
+      gate: 'task kind',
+      task_kind: request.task_kind === undefined ? null : request.task_kind,
+    });
+    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'TASK_KIND_NOT_WRITE_ELIGIBLE');
   }
   const scoped = scopeFor(request, requireScope);
   if (scoped.invalid) {
@@ -167,9 +211,32 @@ function executeBounded(request, services, operation, requireScope = false) {
   if (outcome.result === 'blocked') return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), observed.evidence, 'not-run', outcome.findings, undefined, scoped.scope);
   if (outcome.result === 'failed/incomplete') return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', outcome.findings, undefined, scoped.scope);
   if (!outcome.data.written) return writeResponse(request, 'no-op', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'not-needed', outcome.findings, undefined, scoped.scope);
+  const completedEffects = new Set();
+  try {
+    services.publishFile(outcome.data.file, outcome.data.rendered, outcome.data.expected);
+    completedEffects.add(primaryEffects.get(operation));
+  } catch (error) {
+    if (error && error.code === 'TARGET_CHANGED') {
+      const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: payload.concept, reason: error.message });
+      return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), observed.evidence, 'not-run', [...outcome.findings, finding], 'TARGET_CHANGED', scoped.scope);
+    }
+    const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: error.message || 'write failed' });
+    return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', [...outcome.findings, finding], undefined, scoped.scope, completedEffects);
+  }
   const checked = validation.postWrite(bundleRoot, payload.concept, services, outcome.data.tree);
-  if (!checked.valid) return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', [...outcome.findings, ...checked.findings], undefined, scoped.scope);
-  return writeResponse(request, 'applied', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'valid', [...outcome.findings, ...checked.findings], undefined, scoped.scope);
+  if (!checked.valid) return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', [...outcome.findings, ...checked.findings], undefined, scoped.scope, completedEffects);
+  for (const effect of provisionalEffects.filter((item) => item === 'index-maintenance' || item === 'log-append')) {
+    try {
+      if (appendDerivative(effect, operation, bundleRoot, payload.concept, services).written) {
+        completedEffects.add(effect);
+      }
+    } catch (error) {
+      const reason = error.message || 'derivative write failed';
+      const finding = suiteFinding('DERIVATIVE_WRITE_FAILED', { gate: 'derivative', effect, reason });
+      return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', [...outcome.findings, ...checked.findings, finding], undefined, scoped.scope, completedEffects, [{ effect, reason }]);
+    }
+  }
+  return writeResponse(request, 'applied', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'valid', [...outcome.findings, ...checked.findings], undefined, scoped.scope, completedEffects);
 }
 
 // Both routing operations admit first, then route the admitted data. redact() runs
@@ -287,6 +354,10 @@ function activationState(request, services) {
   return services.activationMarker(root);
 }
 
+function isWriteOperation(skill, request) {
+  return (skill === 'okf-write' || skill === 'okf') && primaryEffects.has(request.operation);
+}
+
 function routerRun(request, services) {
   const owner = routerOwners.get(request.operation);
   if (!owner) return unknownOperation(request);
@@ -351,6 +422,16 @@ function run(skill, request, services) {
         blocks: false,
         detail: { gate: 'activation', reason: 'marker_invalid' },
       }]);
+    }
+    if (isWriteOperation(skill, request)) {
+      const effect = primaryEffects.get(request.operation);
+      return writeResponse(request, 'blocked', 'blocked', effectRecords([effect], 'blocked'), [], 'not-run', [{
+        code: 'ACTIVATION_MARKER_INVALID',
+        origin: 'suite',
+        severity: 'error',
+        blocks: true,
+        detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
+      }], 'ACTIVATION_MARKER_INVALID');
     }
     return respond(request, 'blocked', { code: 'ACTIVATION_MARKER_INVALID' }, [{
       code: 'ACTIVATION_MARKER_INVALID',

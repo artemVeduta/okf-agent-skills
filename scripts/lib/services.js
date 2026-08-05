@@ -8,6 +8,27 @@ carrying separate copies of the same path-walking code.
 const fs = require('fs');
 const path = require('path');
 
+function targetChanged() {
+  const error = new Error('target changed before publication');
+  error.code = 'TARGET_CHANGED';
+  return error;
+}
+
+function publishFile(file, bytes, expected) {
+  const directory = path.dirname(file);
+  const temporary = path.join(directory, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
+  try {
+    fs.writeFileSync(temporary, bytes);
+    if (expected === null ? fs.existsSync(file) : !fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== expected) {
+      throw targetChanged();
+    }
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    try { fs.unlinkSync(temporary); } catch {}
+    throw error;
+  }
+}
+
 // Presence of `.git` marks a repository root, so a linked worktree, whose `.git` is a
 // file rather than a directory, still resolves to its own root.
 function gitRootOf(start) {
@@ -55,6 +76,7 @@ module.exports = {
   exists: fs.existsSync,
   readFile: (file) => fs.readFileSync(file, 'utf8'),
   writeFile: (file, data) => fs.writeFileSync(file, data, 'utf8'),
+  publishFile,
   realpath: fs.realpathSync,
   isFile: (file) => fs.statSync(file).isFile(),
   isLink: (file) => { try { return fs.lstatSync(file).isSymbolicLink(); } catch { return false; } },

@@ -48,7 +48,7 @@ function reviseRequest(root, invocation) {
     bundle: root,
     concept: 'concept.md',
     set: { title: 'Changed' },
-  }, invocation === undefined ? {} : { invocation });
+  }, { task_kind: 'fix', ...(invocation === undefined ? {} : { invocation }) });
 }
 
 function writeConcept(root) {
@@ -233,8 +233,8 @@ test('write targets must stay in the active worktree for direct and routed revis
   const before = treeHash(external);
 
   for (const [skill, value] of [
-    ['okf-write', request('okf-write', 'revise', payload)],
-    ['okf', request('okf', 'revise', payload)],
+    ['okf-write', request('okf-write', 'revise', payload, { task_kind: 'fix' })],
+    ['okf', request('okf', 'revise', payload, { task_kind: 'fix' })],
   ]) {
     const result = runWrapper(skill, value);
     assertEnvelope(result);
@@ -286,19 +286,35 @@ test('an invalid activation marker takes precedence over automatic mutation bloc
   fs.writeFileSync(path.join(root, '.okf-active'), 'invalid');
   const target = path.join(root, 'concept.md');
   const beforeTarget = fs.readFileSync(target);
-  const result = runWrapper('okf-write', reviseRequest(root, 'automatic'));
-
-  assertEnvelope(result);
-  assert.equal(result.response.result, 'blocked');
-  assert.deepEqual(result.response.data, { code: 'ACTIVATION_MARKER_INVALID' });
-  assert.deepEqual(result.response.findings, [{
+  const expectedData = {
+    authorization: 'blocked',
+    effects: [{ effect: 'concept-revise', authorization: 'blocked', inherited: false }],
+    task_kind: 'fix',
+    actual_effects: [],
+    residue: [],
+    evidence: [],
+    validation: 'not-run',
+    code: 'ACTIVATION_MARKER_INVALID',
+  };
+  const expectedFinding = [{
     code: 'ACTIVATION_MARKER_INVALID',
     origin: 'suite',
     severity: 'error',
     blocks: true,
     detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
-  }]);
-  assert.deepEqual(fs.readFileSync(target), beforeTarget);
+  }];
+
+  for (const [skill, value] of [
+    ['okf-write', reviseRequest(root, 'automatic')],
+    ['okf', { ...reviseRequest(root, 'automatic'), skill: 'okf' }],
+  ]) {
+    const result = runWrapper(skill, value);
+    assertEnvelope(result);
+    assert.equal(result.response.result, 'blocked', skill);
+    assert.deepEqual(result.response.data, expectedData, skill);
+    assert.deepEqual(result.response.findings, expectedFinding, skill);
+    assert.deepEqual(fs.readFileSync(target), beforeTarget, skill);
+  }
 });
 
 test('valid refusal has the fixed envelope, key order, newline, and empty stderr', (t) => {
@@ -434,6 +450,16 @@ test('non-empty, directory, and symlink markers block with the exact activation 
     blocks: true,
     detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
   };
+  const expectedData = {
+    authorization: 'blocked',
+    effects: [{ effect: 'concept-revise', authorization: 'blocked', inherited: false }],
+    task_kind: 'fix',
+    actual_effects: [],
+    residue: [],
+    evidence: [],
+    validation: 'not-run',
+    code: 'ACTIVATION_MARKER_INVALID',
+  };
 
   for (const [name, setup] of cases) {
     const root = repository(t, `okf-48-invalid-marker-${name}-`, false);
@@ -449,7 +475,7 @@ test('non-empty, directory, and symlink markers block with the exact activation 
     assert.ok(result.response, name);
     assert.deepEqual(Object.keys(result.response), responseKeys, name);
     assert.equal(result.response.result, 'blocked', name);
-    assert.deepEqual(result.response.data, { code: 'ACTIVATION_MARKER_INVALID' }, name);
+    assert.deepEqual(result.response.data, expectedData, name);
     assert.deepEqual(result.response.findings, [expected], name);
     assert.equal(fs.readFileSync(target).equals(beforeTarget), true, name);
     assert.equal(treeHash(root), beforeTree, name);

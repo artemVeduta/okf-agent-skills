@@ -544,8 +544,7 @@ function evaluate(request, services) {
   const rendered = serialized + current.body;
   if (rendered === current.text) return done('ok', { written: false, path: rel, tree });
 
-  svc.writeFile(conceptPath, rendered);
-  return done('ok', { written: true, path: rel, tree });
+  return done('ok', { written: true, path: rel, tree, rendered, expected: current.text, file: conceptPath });
 }
 
 function evaluateCreate(request, services) {
@@ -582,13 +581,14 @@ function evaluateCreate(request, services) {
     findings.push(blocker('PARSE_TREE_MISMATCH', 'suite', { path: rel, ...mismatch }));
     return done('blocked', { path: rel });
   }
-  try {
-    svc.writeFile(conceptPath, serialized + (typeof request.payload.body === 'string' ? request.payload.body : ''));
-  } catch (error) {
-    findings.push(blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: rel, reason: error.message || 'write failed' }));
-    return done('failed/incomplete', { written: false, path: rel });
-  }
-  return done('ok', { written: true, path: rel, tree });
+  return done('ok', {
+    written: true,
+    path: rel,
+    tree,
+    rendered: serialized + (typeof request.payload.body === 'string' ? request.payload.body : ''),
+    expected: null,
+    file: conceptPath,
+  });
 }
 
 function postWrite(bundleRoot, rel, services, expectedTree) {
