@@ -35,6 +35,8 @@ Safe inspection of an admitted OKF bundle. `okf-read` never writes, never transi
 
 Any request missing a required key for its operation, or carrying the wrong `skill` value, is invalid input and never reaches the runtime.
 
+`okf-read` runs this request through `node <skill-root>/scripts/okf-read.js`, where `<skill-root>` is the directory containing this SKILL.md — never a path resolved from the current working directory or PATH.
+
 ## Exit conditions
 
 Every wrapper call ends in exactly one of three conditions:

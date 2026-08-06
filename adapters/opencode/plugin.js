@@ -2,14 +2,12 @@
  * OpenCode plugin: injects orientation only through the awaited
  * `chat.system.transform` hook; `session.created`/`session.compacted` only
  * advance a generation counter, and the next eligible transform claims it.
- * The claim cycle and presentation policy live in lib/adapters.js, shared
- * with every other harness. A disabled install (`.okf-adapter-disabled`)
+ * The claim cycle and presentation policy live in the target-local
+ * okf-agent-skills/scripts/lib copy, shared with every other harness. A disabled install (`.okf-adapter-disabled`)
  * is a no-op.
  */
 const path = require('node:path');
 const fs = require('node:fs');
-
-const SUITE_ROOT = '__OKF_SUITE_ROOT__';
 
 function disabled() {
   return fs.existsSync(path.join(__dirname, '.okf-adapter-disabled'));
@@ -28,15 +26,20 @@ module.exports = async ({ directory }) => {
     },
     'chat.system.transform': async (_input, output) => {
       if (disabled()) return;
-      const adapters = require(path.join(SUITE_ROOT, 'scripts', 'lib', 'adapters'));
-      const services = require(path.join(SUITE_ROOT, 'scripts', 'lib', 'services'));
+      // An incomplete installed copy fails closed here, never into the host session.
+      let outcome;
+      try {
+        const lib = path.join(__dirname, 'okf-agent-skills', 'scripts', 'lib');
+        const adapters = require(path.join(lib, 'adapters'));
+        const services = require(path.join(lib, 'services'));
 
-      const version = suiteVersion();
-      const payload = {
-        cwd: directory, harness: 'opencode', context_id: String(generation), logical_cause: 'system-transform',
-        ...(version ? { suite_version: version } : {}),
-      };
-      const outcome = adapters.claimAndDispatch(payload, __dirname, services);
+        const version = suiteVersion();
+        const payload = {
+          cwd: directory, harness: 'opencode', context_id: String(generation), logical_cause: 'system-transform',
+          ...(version ? { suite_version: version } : {}),
+        };
+        outcome = adapters.claimAndDispatch(payload, __dirname, services);
+      } catch { return; }
       if (outcome && outcome.kind === 'clean') output.system.push(outcome.text);
       else if (outcome && outcome.kind === 'diagnostic') process.stderr.write(`${outcome.text}\n`);
     },

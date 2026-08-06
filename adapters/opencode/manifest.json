@@ -7,6 +7,7 @@
     { "native_event": "session.created", "role": "lifecycle-only" },
     { "native_event": "session.compacted", "role": "lifecycle-only" }
   ],
+  "scripts_tree": "okf-agent-skills/scripts",
   "installs": [
     { "source": "config.json", "target": "config.json" },
     { "source": "plugin.js", "target": "plugin.js" },

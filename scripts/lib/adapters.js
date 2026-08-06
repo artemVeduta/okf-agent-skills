@@ -6,8 +6,8 @@
  * Also the one at-most-once orientation claim cycle every harness adapter
  * shares: derive the occurrence key, pre-claim it 'unavailable' before
  * dispatch (so a crash mid-dispatch is reported, never replayed), dispatch
- * in-process (the runtime is already linked in; no child process needed),
- * then finalize the claim from the real result. Presentation is decided
+ * through the sibling okf-read wrapper as a child process (the wrapper is
+ * the one contract seam), then finalize the claim from the real result. Presentation is decided
  * here too, so every adapter agrees by construction: inject only on
  * 'clean', everything else is a diagnostic, never injected. A replay
  * reports the ORIGINAL reason, not the runtime's generic claimed-attempt
@@ -15,20 +15,34 @@
  */
 
 const path = require('node:path');
-const runtime = require('./runtime');
+const childProcess = require('node:child_process');
 const orientation = require('./orientation');
 
 const occurrencesName = '.okf-occurrences.json';
 const harnesses = new Set(['claude-code', 'codex', 'opencode']);
 const receiptName = '.okf-adapter.json';
 const disabledMarker = '.okf-adapter-disabled';
-const placeholderRoot = '__OKF_SUITE_ROOT__';
 const placeholderTarget = '__OKF_TARGET_DIR__';
 const suiteRoot = path.join(__dirname, '..', '..');
 const adaptersRoot = path.join(suiteRoot, 'adapters');
+const scriptsRoot = path.join(suiteRoot, 'scripts');
+const readWrapper = path.join(__dirname, '..', 'okf-read.js');
 
 function substitute(text, targetDir) {
-  return text.split(placeholderRoot).join(suiteRoot).split(placeholderTarget).join(targetDir);
+  return text.split(placeholderTarget).join(targetDir);
+}
+
+// The installed adapter runs from its own target, so the whole canonical
+// scripts tree is copied in: after installation the tag checkout is not a
+// runtime dependency of anything the harness executes.
+function copyScriptsTree(destination, resolvedTarget, services, installedFiles) {
+  for (const file of services.listFiles(scriptsRoot)) {
+    const relative = path.join(destination, path.relative(scriptsRoot, file));
+    const targetFile = path.join(resolvedTarget, relative);
+    services.mkdir(path.dirname(targetFile));
+    services.writeFile(targetFile, services.readFile(file));
+    installedFiles.push(relative);
+  }
 }
 
 function readReceipt(targetDir, services) {
@@ -50,6 +64,7 @@ function install(harness, targetDir, services) {
     services.writeFile(targetFile, content);
     installedFiles.push(entry.target);
   }
+  copyScriptsTree(manifest.scripts_tree, resolvedTarget, services, installedFiles);
 
   const receipt = { harness, suite_version: manifest.suite_version, installed_files: installedFiles, disabled: false };
   services.writeFile(path.join(resolvedTarget, receiptName), JSON.stringify(receipt));
@@ -139,8 +154,13 @@ function claimAndDispatch(payload, ledgerDir, services) {
     protocol: 'okf-wrapper/1', skill: 'okf-read', operation: 'orient', invocation: 'automatic',
     payload: { ...payload, claimed: firstAttempt ? [] : [{ occurrence_key: key, outcome: prior.outcome }] },
   };
+  // A non-zero exit, empty stdout, or unparseable stdout is indistinguishable
+  // from no response at all: the claim is released and nothing is presented.
   let response;
-  try { response = runtime.run('okf-read', request, services); } catch { response = null; }
+  try {
+    const dispatched = childProcess.spawnSync(process.execPath, [readWrapper], { input: JSON.stringify(request), encoding: 'utf8' });
+    response = dispatched.status === 0 ? JSON.parse(dispatched.stdout) : null;
+  } catch { response = null; }
 
   if (file && firstAttempt) {
     if (response) claims[key] = { outcome: claimOutcome(response.result), reason: reasonOf(response) };

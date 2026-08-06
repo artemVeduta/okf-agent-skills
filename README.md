@@ -32,7 +32,11 @@ This is the one documented base install command, exact `#v0.1.0` Git-ref
 syntax included. It places the router, the four leaf skills, and their
 wrapper scripts into one of the two canonical skills stores — the project
 `.agents/skills/` store or the global `~/.agents/skills/` store — and creates
-harness-specific links only where a harness requires them.
+harness-specific links only where a harness requires them. Each skill carries
+its own copy of the runtime under `<skill-root>/scripts/`, and each `SKILL.md`
+runs `node <skill-root>/scripts/<skill-name>.js`, so an installed skill is
+independently executable and never resolves its wrapper from your working
+directory or `PATH`.
 
 **The base install only makes the skills discoverable.** It does not wire a
 native session-start hook into any harness, does not create the OKF bundle
@@ -62,7 +66,10 @@ node scripts/okf-adapter.js install <harness> <target-directory>
 `<harness>` is one of `claude-code`, `codex`, `opencode`. `<target-directory>`
 is a **required argument you supply** — it is never inferred or defaulted —
 and the adapter writes only the files its `adapters/<harness>/manifest.json`
-lists, and nothing outside that directory. The same script also takes
+lists — including the canonical runtime tree it copies to
+`<target-directory>/okf-agent-skills/scripts/` — and nothing outside that
+directory. The installed hook runs that target-local copy, so the tag checkout
+is not a runtime dependency after installation. The same script also takes
 `disable` and `uninstall` in place of `install`, against the same directory.
 
 Per **D6**, the recommended directory below is a documentation value, drawn

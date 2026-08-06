@@ -18,6 +18,10 @@ description: Routes OKF requests to the owning skill when a user selects an oper
 
 This table is coarser than the runtime's: four user-facing categories, mapped to the skill that owns each. It is a map for a human or agent choosing which skill to reach for, not the authorization mechanism itself.
 
+## Wrapper invocation
+
+`okf` itself runs its wrapper as `node <skill-root>/scripts/okf.js`, where `<skill-root>` is the directory containing this SKILL.md — never a path resolved from the current working directory or PATH.
+
 ## Procedure
 
 1. Read the operation category from the request. Done when you can name it as one of `read`, `write`, `lifecycle`, or `review`; not done while more than one category still fits the request.

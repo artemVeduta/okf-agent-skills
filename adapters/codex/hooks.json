@@ -5,14 +5,14 @@
       {
         "matcher": "startup|resume|clear|compact",
         "hooks": [
-          { "type": "command", "command": "node __OKF_SUITE_ROOT__/scripts/adapter-hook.js codex __OKF_TARGET_DIR__/manifest.json" }
+          { "type": "command", "command": "node __OKF_TARGET_DIR__/okf-agent-skills/scripts/adapter-hook.js codex __OKF_TARGET_DIR__/manifest.json" }
         ]
       }
     ],
     "SubagentStart": [
       {
         "hooks": [
-          { "type": "command", "command": "node __OKF_SUITE_ROOT__/scripts/adapter-hook.js codex __OKF_TARGET_DIR__/manifest.json" }
+          { "type": "command", "command": "node __OKF_TARGET_DIR__/okf-agent-skills/scripts/adapter-hook.js codex __OKF_TARGET_DIR__/manifest.json" }
         ]
       }
     ]

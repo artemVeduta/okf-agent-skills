@@ -27,6 +27,8 @@ description: Reviews trust tiers and review baselines, verifying human verificat
 
 `payload.cwd`, `payload.bundle`, and `payload.concept` are required non-empty strings. `payload.today`, if present, must be a valid calendar date in `YYYY-MM-DD` form.
 
+`okf-review` sends this request to `node <skill-root>/scripts/okf-review.js`, where `<skill-root>` is the directory containing this SKILL.md — never a path resolved from the current working directory or PATH.
+
 ## Exit conditions
 
 Every wrapper call ends in exactly one of three conditions:

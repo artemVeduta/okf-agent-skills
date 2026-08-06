@@ -6,6 +6,7 @@
     { "native_event": "SessionStart", "matcher": "startup|resume|clear|compact", "logical_causes": ["startup", "resume", "clear", "compact"] },
     { "native_event": "SubagentStart", "logical_causes": ["subagent-start"] }
   ],
+  "scripts_tree": "okf-agent-skills/scripts",
   "installs": [
     { "source": "hooks.json", "target": "hooks.json" },
     { "source": "manifest.json", "target": "manifest.json" }

@@ -39,6 +39,8 @@ For `sync`, `okf-lifecycle` constructs:
 
 `sync` is a bounded operation: `payload.cwd`, `payload.bundle`, and `payload.concept` are all required, non-empty strings, and a request missing any of them fails before the runtime ever sees it.
 
+`okf-lifecycle` runs this request through `node <skill-root>/scripts/okf-lifecycle.js`, where `<skill-root>` is the directory containing this SKILL.md — never a path resolved from the current working directory or PATH.
+
 ## Exit conditions
 
 Every wrapper call ends in exactly one of three conditions:

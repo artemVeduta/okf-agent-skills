@@ -27,6 +27,8 @@ description: Writes bounded OKF mutations when another skill must invoke it.
 
 `protocol` is always the literal `okf-wrapper/1` and `skill` is always the literal `okf-write`. `operation` names one of the five bounded operations this skill performs: `create`, `revise`, `format`, `relationship`, `machine-verify`. Every one of these is bounded, so `payload` always carries non-empty `cwd`, `bundle`, and `concept`, plus whatever keys the operation itself needs — `evidence` for a claim or verification write, `effects` for a relationship change, `set` for a status or field change.
 
+`okf-write` sends this request to `node <skill-root>/scripts/okf-write.js`, where `<skill-root>` is the directory containing this SKILL.md — never a path resolved from the current working directory or PATH.
+
 ## Exit conditions
 
 Every wrapper call ends in exactly one of three conditions:

@@ -5,6 +5,7 @@
   "seams": [
     { "native_event": "SessionStart", "matcher": "startup|resume|clear|compact|fork", "logical_causes": ["startup", "resume", "clear", "compact", "fork"] }
   ],
+  "scripts_tree": "okf-agent-skills/scripts",
   "installs": [
     { "source": ".claude-plugin/plugin.json", "target": ".claude-plugin/plugin.json" },
     { "source": "hooks/hooks.json", "target": "hooks/hooks.json" },
