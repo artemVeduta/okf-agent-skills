@@ -1,0 +1,13 @@
+{
+  "name": "okf-agent-skills-flue-eval",
+  "private": true,
+  "description": "Non-gating Flue eval slice for OKF skill activation. Development tooling only, not part of the shipped product.",
+  "type": "module",
+  "scripts": {
+    "check": "node --test lib/*.check.js",
+    "eval": "node run.js"
+  },
+  "dependencies": {
+    "@flue/runtime": "2.0.3"
+  }
+}
