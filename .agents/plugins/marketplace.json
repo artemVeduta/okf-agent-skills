@@ -1,0 +1,14 @@
+{
+  "name": "okf-agent-skills",
+  "version": "0.1.0",
+  "description": "Marker-gated, read-only orientation for OKF-managed bundles",
+  "author": { "name": "artemVeduta", "url": "https://github.com/artemVeduta/okf-agent-skills" },
+  "homepage": "https://github.com/artemVeduta/okf-agent-skills",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "repository": "https://github.com/artemVeduta/okf-agent-skills",
+  "install": {
+    "source": "packages/codex",
+    "label": "Copy the packages/codex directory into the Codex plugin directory"
+  }
+}

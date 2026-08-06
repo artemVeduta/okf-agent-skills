@@ -1,0 +1,21 @@
+{
+  "name": "@artemVeduta/okf-agent-skills-opencode",
+  "version": "0.1.0",
+  "description": "Marker-gated, read-only orientation for OKF-managed bundles — OpenCode plugin",
+  "main": ".opencode/plugins/okf.mjs",
+  "type": "module",
+  "files": [
+    ".opencode/",
+    "scripts/",
+    "skills/",
+    "manifest.json"
+  ],
+  "keywords": ["opencode", "okf", "open-knowledge-format"],
+  "author": "artemVeduta",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/artemVeduta/okf-agent-skills",
+    "directory": "packages/opencode"
+  }
+}

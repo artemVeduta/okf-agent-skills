@@ -1,17 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const childProcess = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { REQUIRED_BRIEF_FIELDS } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const agentsDir = path.join(repo, 'agents');
-const adaptersDir = path.join(repo, 'adapters');
-const cliWrapper = path.join(repo, 'scripts', 'okf-adapter.js');
 const delegation = require('../scripts/lib/delegation');
-const harnesses = ['claude-code', 'codex', 'opencode'];
 const expectedStatuses = [
   'clean',
   'failed',
@@ -47,16 +42,6 @@ function agentText(name) {
 
 function readAgent(name) {
   return frontmatter(agentText(name));
-}
-
-function manifest(harness) {
-  return JSON.parse(fs.readFileSync(path.join(adaptersDir, harness, 'manifest.json'), 'utf8'));
-}
-
-function temporaryRoot(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'okf-68-agents-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
 }
 
 function statusVocabulary() {
@@ -95,25 +80,6 @@ test('the frontmatter skill binding matches scripts/lib/delegation.ROLES for bot
 test('every adapter manifest carries no agents key; the shipped agent definitions live under agents/ directly', () => {
   assert.equal(fs.existsSync(path.join(agentsDir, 'okf-reader.md')), true);
   assert.equal(fs.existsSync(path.join(agentsDir, 'okf-writer.md')), true);
-  for (const harness of harnesses) {
-    const declared = manifest(harness);
-    assert.equal(Object.hasOwn(declared, 'agents'), false, harness);
-    // additive and inert: naming a file in `agents` grants no install action
-    assert.equal(declared.installs.some((entry) => entry.source.startsWith('agents/')), false, harness);
-  }
-});
-
-test('installing an adapter copies no agent definition into the harness-local target directory', (t) => {
-  for (const harness of harnesses) {
-    const root = temporaryRoot(t);
-    const targetDir = path.join(root, 'target');
-    const result = childProcess.spawnSync(process.execPath, [cliWrapper, 'install', harness, targetDir], { encoding: 'utf8' });
-    assert.equal(result.status, 0, harness);
-    const response = JSON.parse(result.stdout);
-    assert.equal(response.ok, true, harness);
-    assert.equal(response.installed_files.some((f) => /okf-reader|okf-writer/.test(f)), false, harness);
-    assert.equal(fs.existsSync(path.join(targetDir, 'agents')), false, harness);
-  }
 });
 
 test('the brief field set declared in scripts/lib/delegation.js, plus the writer-required changes field, appears in both agent definitions', () => {

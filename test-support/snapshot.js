@@ -108,15 +108,14 @@ function runSilent(wrapper, value, options) {
   assert.equal(result.stdout, '');
 }
 
-function adapterManifest(harness) {
-  return JSON.parse(fs.readFileSync(path.join(repo, 'adapters', harness, 'manifest.json'), 'utf8'));
-}
+const manifests = {
+  'claude-code': path.join(repo, 'manifest.json'),
+  codex: path.join(repo, 'packages', 'codex', 'manifest.json'),
+  opencode: path.join(repo, 'packages', 'opencode', 'manifest.json'),
+};
 
-function runAdapterCli(args) {
-  const result = childProcess.spawnSync(process.execPath, [path.join(repo, 'scripts', 'okf-adapter.js'), ...args], { encoding: 'utf8' });
-  assert.equal(result.stdout.endsWith('\n'), true);
-  assert.equal(result.stdout.split('\n').length, 2);
-  return { status: result.status, stderr: result.stderr, response: JSON.parse(result.stdout) };
+function adapterManifest(harness) {
+  return JSON.parse(fs.readFileSync(manifests[harness], 'utf8'));
 }
 
 module.exports = {
@@ -126,7 +125,6 @@ module.exports = {
   assertEnvelope,
   bundle,
   repository,
-  runAdapterCli,
   runSilent,
   runWrapper,
   snapshot,

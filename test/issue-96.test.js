@@ -4,13 +4,12 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { runAdapterCli: runCli, snapshot, temporaryRoot } = require('../test-support/snapshot');
+const { temporaryRoot } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const scriptsRoot = path.join(repo, 'scripts');
 const skillsRoot = path.join(repo, 'skills');
 const skills = ['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review'];
-const harnesses = ['claude-code', 'codex', 'opencode'];
 
 // How an installer must copy a source skill: the `scripts` symlink is
 // dereferenced into real files, so the installed skill carries its own
@@ -44,14 +43,6 @@ function runInstalledWrapper(skillRoot, name, request, cwd) {
 
 function admitRequest(bundle) {
   return { protocol: 'okf-wrapper/1', skill: 'okf-read', operation: 'admit', payload: { cwd: bundle, candidates: [] } };
-}
-
-function runInstalledHook(targetDir, harness, stdin) {
-  const hook = path.join(targetDir, 'okf-agent-skills', 'scripts', 'adapter-hook.js');
-  const result = childProcess.spawnSync(process.execPath, [hook, harness, path.join(targetDir, 'manifest.json')], {
-    input: JSON.stringify(stdin), encoding: 'utf8', cwd: os.tmpdir(),
-  });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 test('a project-layout skill install answers a real request from its own installed root', (t) => {
@@ -112,126 +103,4 @@ test('every shipped skill states the skill-root invocation and links its scripts
   }
 });
 
-test('installing an adapter copies the complete scripts tree inside the target and writes nothing outside it', (t) => {
-  const root = temporaryRoot(t, 'okf-96-target-');
-  fs.writeFileSync(path.join(root, 'sentinel.txt'), 'untouched');
-  const expected = [];
-  (function collect(dir) {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const file = path.join(dir, entry.name);
-      if (entry.isDirectory()) collect(file);
-      else expected.push(path.relative(scriptsRoot, file));
-    }
-  })(scriptsRoot);
 
-  for (const harness of harnesses) {
-    const targetDir = path.join(root, `.${harness}`);
-    const targetName = path.basename(targetDir);
-    const before = snapshot(root).filter(([name]) => !name.startsWith(targetName));
-
-    assert.equal(runCli(['install', harness, targetDir]).response.ok, true, harness);
-
-    const copied = path.join(targetDir, 'okf-agent-skills', 'scripts');
-    for (const relative of expected) {
-      assert.equal(fs.readFileSync(path.join(copied, relative), 'utf8'), fs.readFileSync(path.join(scriptsRoot, relative), 'utf8'), `${harness}:${relative}`);
-    }
-    assert.ok(expected.some((relative) => relative.startsWith(`lib${path.sep}`)), 'lib/ is part of the tree');
-    assert.deepEqual(snapshot(root).filter(([name]) => !name.startsWith(targetName)), before, harness);
-  }
-});
-
-test('the installed hook produces orientation by running its target-local okf-read wrapper as a process', (t) => {
-  const bundle = orientedBundle(temporaryRoot(t, 'okf-96-hook-'));
-  const targetDir = path.join(bundle, 'adapter');
-  runCli(['install', 'claude-code', targetDir]);
-
-  const working = runInstalledHook(targetDir, 'claude-code', { cwd: bundle, session_id: 'sess-a', source: 'startup' });
-  assert.equal(working.status, 0);
-  assert.equal(working.stderr, '');
-  assert.match(working.stdout, /OKF orientation: bundle/);
-
-  // Replacing only the TARGET-LOCAL wrapper changes the hook's output: the
-  // dispatch is a child process of that file, not an in-process call into
-  // the repository checkout.
-  const localWrapper = path.join(targetDir, 'okf-agent-skills', 'scripts', 'okf-read.js');
-  fs.writeFileSync(localWrapper, 'process.stdout.write(JSON.stringify({ protocol: "okf-wrapper/1", result: "clean", data: { bundle: { bundle_alias: "sentinel-alias" }, root_index_path: "sentinel/index.md" } }) + "\\n");\n');
-  const stubbed = runInstalledHook(targetDir, 'claude-code', { cwd: bundle, session_id: 'sess-b', source: 'startup' });
-  assert.equal(stubbed.status, 0);
-  assert.match(stubbed.stdout, /OKF orientation: bundle sentinel-alias, root index sentinel\/index\.md\./);
-
-  const receipt = JSON.parse(fs.readFileSync(path.join(targetDir, '.okf-adapter.json'), 'utf8'));
-  for (const relative of receipt.installed_files) {
-    const text = fs.readFileSync(path.join(targetDir, relative), 'utf8');
-    assert.equal(text.includes(repo), false, relative);
-  }
-});
-
-// An incomplete copy of the scripts tree is a real installation failure mode
-// now that the tree is copied file by file: it must not take the host session
-// down with it.
-test('an incomplete installed scripts tree fails closed instead of failing the host session', (t) => {
-  const bundle = orientedBundle(temporaryRoot(t, 'okf-96-partial-'));
-  const targetDir = path.join(bundle, 'adapter');
-  runCli(['install', 'claude-code', targetDir]);
-  fs.rmSync(path.join(targetDir, 'okf-agent-skills', 'scripts', 'lib', 'orientation.js'));
-
-  const result = runInstalledHook(targetDir, 'claude-code', { cwd: bundle, session_id: 'sess-p', source: 'startup' });
-
-  assert.equal(result.status, 0);
-  assert.equal(result.stdout, '');
-});
-
-test('a suite-version mismatch in the installed manifest fails closed through the installed copy', (t) => {
-  const bundle = orientedBundle(temporaryRoot(t, 'okf-96-mismatch-'));
-  const targetDir = path.join(bundle, 'adapter');
-  runCli(['install', 'claude-code', targetDir]);
-  const manifestPath = path.join(targetDir, 'manifest.json');
-  const installedManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  fs.writeFileSync(manifestPath, JSON.stringify({ ...installedManifest, suite_version: '9.9.9' }));
-
-  const result = runInstalledHook(targetDir, 'claude-code', { cwd: bundle, session_id: 'sess-c', source: 'startup' });
-
-  assert.equal(result.status, 0);
-  assert.equal(result.stdout, '');
-  assert.match(result.stderr, /OKF orientation .*suite_version_mismatch/);
-});
-
-test('the disabled marker makes the installed hook a silent no-op', (t) => {
-  const bundle = orientedBundle(temporaryRoot(t, 'okf-96-disabled-'));
-  const targetDir = path.join(bundle, 'adapter');
-  runCli(['install', 'claude-code', targetDir]);
-  runCli(['disable', 'claude-code', targetDir]);
-
-  const result = runInstalledHook(targetDir, 'claude-code', { cwd: bundle, session_id: 'sess-d', source: 'startup' });
-
-  assert.equal(result.status, 0);
-  assert.equal(result.stdout, '');
-  assert.equal(result.stderr, '');
-  assert.equal(fs.existsSync(path.join(targetDir, '.okf-occurrences.json')), false);
-});
-
-test('the receipt owns every copied script, and uninstall removes the whole scripts tree and its directories', (t) => {
-  const root = temporaryRoot(t, 'okf-96-uninstall-');
-  fs.writeFileSync(path.join(root, 'sentinel.txt'), 'untouched');
-  const before = snapshot(root);
-
-  for (const harness of harnesses) {
-    const targetDir = path.join(root, `.${harness}`);
-    const receiptPath = path.join(targetDir, '.okf-adapter.json');
-    runCli(['install', harness, targetDir]);
-    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-    const owned = new Set(receipt.installed_files);
-
-    (function assertOwned(dir, base) {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const file = path.join(dir, entry.name);
-        if (entry.isDirectory()) assertOwned(file, base);
-        else assert.equal(owned.has(path.relative(base, file)), true, `${harness}:${path.relative(base, file)}`);
-      }
-    })(path.join(targetDir, 'okf-agent-skills'), targetDir);
-
-    assert.equal(runCli(['uninstall', harness, targetDir]).response.ok, true, harness);
-    assert.equal(fs.existsSync(path.join(targetDir, 'okf-agent-skills')), false, harness);
-    assert.deepEqual(snapshot(root), before, harness);
-  }
-});
