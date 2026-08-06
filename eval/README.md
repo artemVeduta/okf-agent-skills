@@ -82,6 +82,16 @@ environment can score today without a model.
 
 ## Running it
 
+Use the script. It installs the packages if they are absent, runs the
+deterministic checks, then runs the cases:
+
+```sh
+./eval.sh              # all six cases
+./eval.sh okf-write    # only cases whose id contains "okf-write"
+```
+
+The steps on their own:
+
 ```sh
 cd eval
 npm install
@@ -92,9 +102,10 @@ npm run eval    # the six cases against a live Flue agent
 ## Credentials
 
 `npm run eval` needs a model provider credential. Each provider reads its own
-environment variable. Put the variable in `eval/.env`, or export it in your
-shell. `npm run eval` loads `eval/.env` if the file is there. Do not commit
-`.env`. It is in `eval/.gitignore`.
+environment variable. Copy `.env.example` to `.env`, then fill in the
+credential. `npm run eval` loads `.env` from this directory and from the
+repository root, if the file is there. You can export the variable in your
+shell instead. Do not commit `.env`. It is git-ignored.
 
 Two environment variables select the model:
 
