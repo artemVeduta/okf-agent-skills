@@ -22,8 +22,6 @@ below as **D5**–**D10**.
 
 ## Install
 
-### Base install
-
 ```
 npx skills add 'artemVeduta/okf-agent-skills#v0.1.0'
 ```
@@ -51,97 +49,62 @@ them:
 3. Create the `.okf-active` activation marker (below) — nothing runs
    automatically until you do, and installing never does this for you.
 
-### Per-adapter install (native harnesses)
+### Claude Code
 
-Each native adapter ships inside the `v0.1.0` tag at `adapters/<harness>/`
-(decision **D6**) — there is no separate package and no second tag. Get a
-checkout of the tag, then run its install script:
+The repo root is a self-contained Claude Code plugin. After base install the
+repo lands at `~/.claude/skills/okf-agent-skills/` and Claude Code
+auto-discovers `.claude-plugin/plugin.json` at startup. No separate adapter
+install step.
+
+If the base install skipped Claude Code linkage, install from the
+marketplace inside an active Claude Code session:
+
+```
+/plugin marketplace add artemVeduta/okf-agent-skills
+/plugin install okf-agent-skills@okf-agent-skills
+```
+
+Hook approval must be enabled in Claude Code for the `SessionStart` hook to
+fire. The hook runs `node ${CLAUDE_PLUGIN_ROOT}/scripts/adapter-hook.js
+claude-code ${CLAUDE_PLUGIN_ROOT}/manifest.json` — all paths resolved
+relative to the plugin install root, no target directory placeholder.
+
+### OpenCode
+
+Install the `@artemVeduta/okf-agent-skills-opencode` npm package as a plugin.
+Either:
+
+```
+opencode plug @artemVeduta/okf-agent-skills-opencode
+```
+
+Or add it to your `opencode.json` or `opencode.jsonc`:
+
+```json
+{ "plugin": ["@artemVeduta/okf-agent-skills-opencode"] }
+```
+
+**A successful install is not a working adapter by itself.** Permission rules
+are a required manual step this release does not perform. Merge the
+`permission.skill` deny rules from
+[`packages/opencode/config.json`](packages/opencode/config.json) into your
+opencode config, after any broader permission pattern, since OpenCode applies
+the last matching rule.
+
+### Codex
+
+Copy `packages/codex/` from the release tag into the Codex plugin directory.
+One install command is not yet available; the directory copy is the supported
+path until the marketplace end-to-end flow hardens.
 
 ```
 git clone --branch v0.1.0 https://github.com/artemVeduta/okf-agent-skills.git
-cd okf-agent-skills
-node scripts/okf-adapter.js install <harness> <target-directory>
+cp -r okf-agent-skills/packages/codex ~/.codex/plugins/okf-agent-skills
 ```
 
-`<harness>` is one of `claude-code`, `codex`, `opencode`. `<target-directory>`
-is a **required argument you supply** — it is never inferred or defaulted —
-and the adapter writes only the files its `adapters/<harness>/manifest.json`
-lists — including the canonical runtime tree it copies to
-`<target-directory>/okf-agent-skills/scripts/` — and nothing outside that
-directory. The installed hook runs that target-local copy, so the tag checkout
-is not a runtime dependency after installation. The same script also takes
-`disable` and `uninstall` in place of `install`, against the same directory.
-No manifest lists an `agents/` path: `v0.1.0` installs no delegated agent
-definition, and the delegated execution path is not reachable after
-installation.
-
-Per **D6**, the recommended directory below is a documentation value, drawn
-from current, verified, first-party harness evidence
-([`docs/research/adapter-install-targets.md`](docs/research/adapter-install-targets.md)),
-not a value the code invents or falls back to.
-
-#### Claude Code
-
-```
-node scripts/okf-adapter.js install claude-code ~/.claude/skills/okf-agent-skills
-```
-
-Recommended: `~/.claude/skills/<name>/`, per-user. Claude Code auto-loads any
-folder here that carries a `.claude-plugin/plugin.json`, with no trust
-dialog and no marketplace step.
-
-#### Codex
-
-```
-node scripts/okf-adapter.js install codex .codex
-```
-
-Recommended: `<repo>/.codex/`, per-project — one adapter installation paired
-with one bundle's repository. `~/.codex/` (or `$CODEX_HOME`) is an equally
-valid, broader-scoped alternative. Either way, Codex loads a project's
-`.codex/` layer only when it considers that project trusted; an untrusted
-project skips it.
-
-#### OpenCode
-
-```
-node scripts/okf-adapter.js install opencode <target-directory>
-```
-
-`<target-directory>` names the OpenCode configuration root and stays a
-required argument you supply — never inferred. Two shapes are supported:
-
-- **Project scope:** `<repo>/.opencode/`.
-- **Global scope:** `$OPENCODE_CONFIG_DIR` when set; otherwise
-  `$XDG_CONFIG_HOME/opencode/`, defaulting to `~/.config/opencode/`.
-
-Install places the plugin below OpenCode's native `plugins/` directory under
-an OKF-specific filename — `<target-directory>/plugins/okf-agent-skills.js`
-— never flat alongside the config file, and it never creates, replaces,
-merges, or removes `opencode.json`, `opencode.jsonc`, or the legacy global
-`config.json`.
-
-**A successful `install` is not a working adapter by itself.** OpenCode
-configuration is a required manual step this release does not perform. Merge
-the `permission.skill` rules from
-[`adapters/opencode/config.json`](adapters/opencode/config.json) into your own
-`opencode.json` or `opencode.jsonc`, after any broader permission pattern,
-since OpenCode applies the last matching rule.
-
-`install`'s response reports this merge as its `next_action` and never
-claims the adapter is ready. `disable` and `uninstall` touch only
-receipt-owned adapter files under `<target-directory>` and never read or
-write `opencode.json`, `opencode.jsonc`, or `config.json`:
-
-```
-node scripts/okf-adapter.js disable opencode <target-directory>
-node scripts/okf-adapter.js uninstall opencode <target-directory>
-```
-
-No live OpenCode process test gates this release; deterministic fixtures
-(`test/issue-105.test.js`, alongside `test/issue-66-adapters.test.js`) prove
-the paths above, file ownership, the non-overwrite guarantee, the reported
-`next_action`, disablement, and removal.
+The `.codex-plugin/plugin.json` at the plugin root declares skills and hooks
+paths; hooks use `${PLUGIN_ROOT}` for all path resolution. Codex loads the
+plugin layer only for trusted projects.
 
 ## First run: two steps this release cannot do for you
 
