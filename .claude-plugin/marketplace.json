@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "okf-agent-skills",
+  "description": "Cross-harness agent skills for maintaining an Open Knowledge Format bundle — a lightweight, file-based knowledge base of Markdown concepts.",
+  "owner": {
+    "name": "artemVeduta",
+    "url": "https://github.com/artemVeduta/okf-agent-skills"
+  },
+  "plugins": [
+    {
+      "name": "okf-agent-skills",
+      "description": "Marker-gated, read-only orientation for OKF-managed bundles. One okf router dispatches to read, write, lifecycle, and review leaf skills.",
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/artemVeduta/okf-agent-skills"
+    }
+  ]
+}
