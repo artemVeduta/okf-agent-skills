@@ -21,13 +21,10 @@ function runBridge(harness, skill) {
   });
 }
 
-test('no adapter manifest installs entry names an agents/ path', () => {
+test('no harness manifest carries an installs key: the install-script model is removed', () => {
   for (const harness of harnesses) {
     const declared = manifest(harness);
-    for (const entry of declared.installs) {
-      assert.equal(entry.source.split('/').includes('agents'), false, `${harness}:${entry.source}`);
-      assert.equal(entry.target.split('/').includes('agents'), false, `${harness}:${entry.target}`);
-    }
+    assert.equal(Object.hasOwn(declared, 'installs'), false, harness);
   }
 });
 

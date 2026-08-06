@@ -1,0 +1,11 @@
+{
+  "harness": "opencode",
+  "suite_version": "0.1.0",
+  "bridge": { "script": "scripts/adapter-bridge.js", "skills": ["okf-read", "okf-write"] },
+  "seams": [
+    { "native_event": "experimental.chat.system.transform", "role": "orientation", "logical_causes": ["system-transform"] },
+    { "native_event": "session.created", "role": "lifecycle-only" },
+    { "native_event": "session.compacted", "role": "lifecycle-only" }
+  ],
+  "next_action": "Manually merge the permission.skill: deny rules for okf, okf-read, okf-write, okf-lifecycle, and okf-review into the applicable opencode.json or opencode.jsonc, after any broader permission pattern so it stays the last matching rule."
+}
