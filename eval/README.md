@@ -89,32 +89,52 @@ npm run check   # deterministic checks: no Flue, no model, always runs
 npm run eval    # the six cases against a live Flue agent
 ```
 
-`npm run eval` needs a model provider API key in the environment. The default
-model is `anthropic/claude-haiku-4-5`, which reads `ANTHROPIC_API_KEY`. To use
-a different provider, set `OKF_EVAL_MODEL` and the key for that provider:
+## Credentials
 
-```bash
-export OPENAI_API_KEY="sk-..."
-OKF_EVAL_MODEL="openai/<model>" npm run eval
+`npm run eval` needs a model provider credential. Each provider reads its own
+environment variable. Put the variable in `eval/.env`, or export it in your
+shell. `npm run eval` loads `eval/.env` if the file is there. Do not commit
+`.env`. It is in `eval/.gitignore`.
+
+Two environment variables select the model:
+
+| Variable | Effect |
+| --- | --- |
+| `OKF_EVAL_MODEL` | The `provider/model` specifier. The default is `anthropic/claude-haiku-4-5`. |
+| `OKF_EVAL_THINKING_LEVEL` | The thinking level. The runtime drops it if the model does not reason. |
+
+Example, for an OpenCode Go subscription:
+
+```sh title="eval/.env"
+OPENCODE_API_KEY="..."
+OKF_EVAL_MODEL="opencode-go/deepseek-v4-pro"
+OKF_EVAL_THINKING_LEVEL="max"
 ```
 
-`anthropic` reads `ANTHROPIC_API_KEY` and `openai` reads `OPENAI_API_KEY`. The
-same pattern applies to the other providers. See `docs/guide/models.md` in the
-installed `@flue/runtime` package for the full list.
+The `opencode-go` provider and the `OPENCODE_API_KEY` variable are built into
+the pinned runtime's provider set. This was confirmed against this pinned
+version: a wrong key gets `401 Invalid API key` from the provider, which
+proves the runtime read the variable and called the provider.
 
-The key must be an API key with API billing. A chat subscription is not an API
-key. This runner uses the in-process `start()`/`init()` API, which does not read
-a `.env` file. Export the key in the shell, or start the runner with Node's
-`--env-file` option.
+A missing credential and a rejected credential both report `status:
+"blocked"`. Neither one is a result about the OKF skills.
 
-Without a key, every case that needs a live model reports `status: "blocked"`
-with the exact reason, and the wrapper-contract case still
-reports `status: "pass"` or `status: "fail"` for real. No Flue case (the
-five activation cases) has ever been scored in this repository — every
-recorded run so far reports them `blocked`. Only the wrapper-contract case,
-which needs no model, has run to a real answer. See
-[`docs/flue-eval-results.md`](../docs/flue-eval-results.md) for the last
-recorded run, what it proved, and what it could not prove.
+Without a credential, every case that needs a live model reports `status:
+"blocked"` with the exact reason, and the wrapper-contract case still
+reports `status: "pass"` or `status: "fail"` for real.
+
+The five activation cases have been scored with a live model. The result is
+not stable between runs: one case passed 5 times and failed 2 times out of 7
+trials, with no change to the skill or the prompt. Do not read one trial as
+a pass or fail claim about trigger quality. See
+[`docs/flue-eval-results.md`](../docs/flue-eval-results.md) for the recorded
+runs, the per-case trial counts, and what they prove.
+
+Add one optional argument to run a subset of the cases by id:
+
+```sh
+npm run eval -- okf-write        # only cases whose id contains "okf-write"
+```
 
 ## What a case result looks like
 

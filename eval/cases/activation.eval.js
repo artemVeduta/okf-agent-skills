@@ -6,8 +6,9 @@ const OKF_SKILLS = ['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review
 export const CASES = [
   {
     id: 'okf-read-positive-activation',
-    description: 'A plain read-only inspection request activates okf, okf-read, or both.',
-    prompt: 'Open note.md in this bundle and tell me its current title and type. Do not change anything.',
+    description: 'A read-only validation request activates okf, okf-read, or both.',
+    prompt:
+      'Validate the shape of the concept note.md in this bundle and report its title and type. Do not change anything.',
     expected: ['okf', 'okf-read'],
   },
   {

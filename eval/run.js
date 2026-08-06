@@ -16,15 +16,29 @@ import * as wrapperContract from './cases/wrapper-contract.eval.js';
 
 const CASES = [...ACTIVATION_CASES.map(activationCaseModule), wrapperContract];
 
-// A run that fails for lack of a model provider credential throws an
-// OperationFailedError whose own message names the missing provider
-// (observed directly against this pinned @flue/runtime version — see
-// docs/flue-eval-results.md). Anything else — a skill, sandbox, or fixture
-// problem — is a real failure of this eval slice, not a credential gap, and
-// must not be reported as one, so the match stays narrow to this one
-// documented message rather than any string that merely mentions a
-// credential.
-const CREDENTIAL_FAILURE = /provider is not configured/i;
+// A run that cannot get a model throws an OperationFailedError. Two
+// conditions are credential gaps, not defects of the OKF skills. The runtime
+// reports an absent credential as "Provider is not configured". It reports a
+// rejected credential as a 401 from the provider. Both were observed
+// directly against this pinned @flue/runtime version — see
+// docs/flue-eval-results.md. Anything else — a skill, sandbox, or fixture
+// problem — is a real failure of this eval slice and must not be reported as
+// a credential gap, so the match stays narrow to these two conditions.
+const CREDENTIAL_FAILURE = /provider is not configured|\b401\b|invalid api key/i;
+
+// The provider can also drop a stream or rate-limit the run. That is outside
+// the case's own logic, so it reports `blocked`, not `fail`. A `fail` must
+// mean the OKF skills did something wrong. Observed: a `deepseek-v4-pro` run
+// that ended with "Stream ended without finish_reason", and passed on retry.
+const PROVIDER_TRANSPORT_FAILURE = /stream ended without finish_reason|\b(429|5\d\d)\b|overloaded|rate limit/i;
+
+// The runtime puts the provider's own words in `meta.reason`. It leaves
+// `cause` undefined for both conditions above.
+function failureReason(error) {
+  if (!error) return '';
+  const parts = [error.message, error.meta && error.meta.reason, error.cause && error.cause.message];
+  return parts.filter((part) => typeof part === 'string').join(' | ');
+}
 
 async function dispatchAndCollect({ fixtureRoot, prompt }) {
   const activated = [];
@@ -39,11 +53,16 @@ async function dispatchAndCollect({ fixtureRoot, prompt }) {
       },
     });
   } catch (error) {
-    const reason = error && error.cause && typeof error.cause.message === 'string' ? error.cause.message : error.message;
+    const reason = failureReason(error);
     if (CREDENTIAL_FAILURE.test(reason)) {
       throw new BlockedCase(`no usable model provider credential: ${reason}`);
     }
-    throw error;
+    if (PROVIDER_TRANSPORT_FAILURE.test(reason)) {
+      throw new BlockedCase(`the model provider did not complete the run: ${reason}`);
+    }
+    // The runtime's own message says only that the run failed. The provider's
+    // words are in `meta.reason`. Report both, or the record says nothing.
+    throw new Error(reason, { cause: error });
   }
   return { activated };
 }
@@ -53,7 +72,10 @@ async function main() {
   const records = [];
 
   try {
-    for (const caseModule of CASES) {
+    // One optional argument selects cases whose id contains it. Use it to
+    // repeat one case, because a model run is not deterministic.
+    const only = process.argv[2];
+    for (const caseModule of CASES.filter((c) => !only || c.id.includes(only))) {
       const fixture = createFixture();
       try {
         const record = await runCase(caseModule, () =>

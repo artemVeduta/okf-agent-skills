@@ -1,136 +1,137 @@
 # Flue eval results
 
-This record covers one run of the eval slice in `eval/`. The eval slice is
-development tooling. It does not gate the release. See
+This record covers the eval slice in `eval/`. The eval slice is development
+tooling. It does not gate the release. See
 [`eval/README.md`](../eval/README.md) for the setup and
 [`docs/research/flue-skill-evaluation.md`](research/flue-skill-evaluation.md)
 for the accepted design this eval slice follows.
 
-## Environment at the time of this run
+This record has two parts. The first run had no model credential. The second
+run had one, and scored the five activation cases for the first time.
+
+## Run 1 — no model credential
+
+- Date: 2026-08-06.
+- No model provider credential was set in the environment.
+
+`npm install` added 118 packages under `eval/node_modules/` and created
+`eval/package-lock.json`, which pins `@flue/runtime` to exactly `2.0.3`. The
+install needed no dependency outside `eval/`. It changed no file in
+`skills/`, `scripts/`, `adapters/`, or `agents/`.
+
+`npm run eval` scored 1 case and blocked 5:
+
+```
+{"summary":{"total":6,"pass":1,"fail":0,"blocked":5}}
+```
+
+Each blocked case gave `Provider is not configured: anthropic`. Each one ran
+for real and stopped only at the model turn. This proved the fixture built
+correctly, the `local()` sandbox attached correctly, and Flue accepted the
+five real copied skill directories. It proved nothing about activation.
+
+## Run 2 — with a model credential
 
 - Date: 2026-08-06.
 - Branch: `feat/issue-41-spec-v0.1.0`.
 - Node.js version: `v26.5.0`.
-- `env | grep -iE "key|token|secret|credential"` found no match. No model
-  provider credential was set in the environment.
-- `curl -sS -m 8 -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/@flue/runtime/2.0.3`
-  returned `200`. The npm registry was reachable.
-- `curl -sS -m 8 -o /dev/null -w '%{http_code}\n' https://api.github.com/repos/withastro/flue/tags`
-  returned `200`. GitHub was reachable.
+- Provider: `opencode-go`, credential `OPENCODE_API_KEY`.
+- Model: `opencode-go/deepseek-v4-pro`, thinking level `max`.
 
-This run could reach the network. It could not reach a model.
-
-## Commands run
+Command:
 
 ```sh
 cd eval
-npm install
-npm run check
-npm run eval
+OKF_EVAL_MODEL='opencode-go/deepseek-v4-pro' OKF_EVAL_THINKING_LEVEL=max npm run eval
 ```
 
-## What `npm install` proved
+`npm run check` gave 9 tests, 9 pass, 0 fail. This check needs no Flue
+runtime and no model.
 
-`npm install` added 118 packages under `eval/node_modules/` and finished
-with 0 vulnerabilities. It created `eval/package-lock.json`, which pins
-`@flue/runtime` to exactly `2.0.3`. The install needed no dependency outside
-`eval/`. It changed no file in `skills/`, `scripts/`, `adapters/`, or
-`agents/`.
+### The five activation cases scored for the first time
 
-## What `npm run check` proved
+This is the first recorded run in which a live model turn ran. The result is
+not stable between runs. Three full runs and several single-case runs gave
+these counts:
 
-`npm run check` runs `node --test lib/*.check.js`. Every test in it passed:
+| Case | Trials | Pass | Fail | Blocked |
+| --- | --- | --- | --- | --- |
+| `okf-read-positive-activation`, first prompt | 4 | 0 | 4 | 0 |
+| `okf-read-positive-activation`, corrected prompt | 4 | 4 | 0 | 0 |
+| `okf-write-positive-activation` | 7 | 5 | 2 | 0 |
+| `okf-lifecycle-positive-activation` | 4 | 2 | 0 | 2 |
+| `okf-review-positive-activation` | 3 | 3 | 0 | 0 |
+| `unrelated-negative-activation` | 3 | 3 | 0 | 0 |
+| `okf-write-wrapper-contract` | 3 | 3 | 0 | 0 |
 
-```
-✔ runCase records a pass and a null detail when the case function does not throw
-✔ runCase records a fail with the thrown message for an ordinary error
-✔ runCase records blocked, not fail, for a BlockedCase
-✔ a BlockedCase is an ordinary Error, not a special control-flow value
-✔ classifyWrapperExit reports valid-response for exit 0 with one JSON line on stdout
-✔ classifyWrapperExit reports invalid-input for exit 64 with nothing on stdout
-✔ classifyWrapperExit throws for exit 64 with something on stdout
-✔ classifyWrapperExit reports internal-failure for the documented exit-70 shape
-✔ classifyWrapperExit throws on an exit code outside the three documented conditions
-tests 9, pass 9, fail 0
-```
+The negative case never activated an OKF skill for an unrelated task. The
+wrapper-contract case passed every time. It needs no model.
 
-This check needs no Flue runtime and no model. It exercises only
-`classifyWrapperExit`'s pure branches, against literal `{ status, stdout,
-stderr }` records. The wrapper-process contract itself — spawning the real
-`scripts/okf-write.js` — is verified at the one gated seam in `test/`
-(`test/write-gate.test.js`, `test/issue-48.test.js`, `test/issue-52.test.js`,
-`test/issue-53.test.js`, `test/issue-64.test.js`), not duplicated here.
+### Finding 1 — a plain file-read prompt activates no OKF skill
 
-## What `npm run eval` proved
+The first `okf-read` prompt was:
 
-`npm run eval` ran all six cases. One case passed. Five cases were blocked.
-No case failed:
+    Open note.md in this bundle and tell me its current title and type.
+    Do not change anything.
 
-```
-{"id":"okf-read-positive-activation", ..., "status":"blocked", "detail":"no usable model provider credential: dispatch(...) failed: Provider is not configured: anthropic"}
-{"id":"okf-write-positive-activation", ..., "status":"blocked", "detail":"no usable model provider credential: dispatch(...) failed: Provider is not configured: anthropic"}
-{"id":"okf-lifecycle-positive-activation", ..., "status":"blocked", "detail":"no usable model provider credential: dispatch(...) failed: Provider is not configured: anthropic"}
-{"id":"okf-review-positive-activation", ..., "status":"blocked", "detail":"no usable model provider credential: dispatch(...) failed: Provider is not configured: anthropic"}
-{"id":"unrelated-negative-activation", ..., "status":"blocked", "detail":"no usable model provider credential: dispatch(...) failed: Provider is not configured: anthropic"}
-{"id":"okf-write-wrapper-contract", ..., "status":"pass", "detail":null}
-{"summary":{"total":6,"pass":1,"fail":0,"blocked":5}}
-```
+No OKF skill activated. This repeated 4 times out of 4. The model read the
+file with its own tools.
 
-The `okf-write-wrapper-contract` case is a `spawnSync` of the real wrapper
-script, not a Flue dispatch. No Flue case (the five
-`activation-positive`/`activation-negative` cases above it) has ever been
-scored in this repository.
+This is the specified behavior, not a defect. `okf-read`'s description ends
+with the reach clause `when another skill must invoke it`, which
+`docs/spec/okf-agent-skills-v0.1.0.md` requires for a leaf skill (#26). The
+router `okf` activates `when a user selects an operation`. The prompt above
+selects no operation. So the eval case's expectation was wrong, not the
+skills.
 
-The exact `detail` text is the real error `@flue/runtime` 2.0.3 raised in
-this environment, captured verbatim.
+The prompt now names the read operation:
 
-### What the five blocked cases verified before they stopped
+    Validate the shape of the concept note.md in this bundle and report its
+    title and type. Do not change anything.
 
-Each blocked case ran for real. Each one reached the point where the model
-turn needed a provider, and stopped only there. This run also used one
-extra, direct probe against the pinned `@flue/runtime` package, separate
-from the six cases, to confirm exactly where that stop happens:
+This passed 4 times out of 4.
 
-- A fixture with the five real skills copied under `.agents/skills/<name>`
-  raised no skill-validation error, no copy error, and no
-  sandbox-construction error. With the fixture skills present, the one
-  observed failure was the same `Provider is not configured: anthropic`
-  error a probe with no skills mounted at all also raised.
+An open question stays for a person to answer: a user who asks for a plain
+file read gets no OKF behavior at all. That may be correct. This record does
+not decide it.
 
-This is direct evidence that, in this environment: the fixture repository
-built correctly; the `local()` sandbox attached to it correctly; and
-Flue's workspace-skill discovery accepted the five real, copied skill
-directories without error. The only unmet requirement was a model provider
-credential.
+### Finding 2 — positive activation is not stable between runs
 
-This run makes no claim that any of the five skills would actually activate
-for a matching prompt. That claim needs a live model turn, which this
-environment could not run.
+`okf-write-positive-activation` passed 5 times and failed 2 times out of 7,
+with no change to the skill, the prompt, or the runner between trials. A
+failure reports `got: []`, which means no skill activated at all.
 
-## What is blocked, and exactly what would unblock it
+One trial therefore cannot support a pass or fail claim about trigger
+quality. Flue supplies no trial count, no pass-rate rule, and no aggregate
+threshold, as
+[`docs/research/flue-skill-evaluation.md`](research/flue-skill-evaluation.md)
+records. This eval slice adds none. This is direct evidence for the accepted
+decision to keep the eval slice out of the release gate.
 
-Every `activation-positive` and `activation-negative` case needs one model
-provider credential in the process environment. The eval slice's
-`useModel('anthropic/claude-haiku-4-5')` needs `ANTHROPIC_API_KEY`.
+### Finding 3 — the provider can drop a run
 
-To complete this run: set `ANTHROPIC_API_KEY` in the process environment,
-then run `cd eval && npm run eval` again. No other setup step is missing.
-The package is installed, the fixture builds correctly, and the agent
-constructs correctly.
+Two trials ended with `Stream ended without finish_reason` from the
+provider. The runner now reports this as `blocked`, not `fail`, because it
+happens outside the case's own logic. A `fail` must mean the OKF skills did
+something wrong.
 
-## Real defects found
+The runtime's own error message says only that the run failed. The
+provider's words are in `meta.reason`. The runner now reports both, or the
+record would say nothing useful.
 
-None. This run found no discrepancy between the shipped skills, the shipped
-wrapper scripts, and their own documented contract. The wrapper-contract
-case passed against the current working tree without any change to
-`skills/`, `scripts/`, `adapters/`, or `agents/`. `git status --porcelain
-skills/` was empty before and after this run: the fixture mounts a copy of
+## Real defects found in the shipped product
+
+None. No run found a discrepancy between the shipped skills, the shipped
+wrapper scripts, and their own documented contract. `git status --porcelain
+skills/` was empty before and after every run. The fixture mounts a copy of
 each skill directory, not a link into the real one, so a live model turn
 cannot write through to the release candidate under test.
 
 ## Defect tickets to raise
 
-None. No case in this run reached a real observed failure in the shipped
-product. Per the task's own rule, a defect ticket is raised only for a real
-observed failure, never a speculative one.
+None against `skills/`, `scripts/`, `adapters/`, or `agents/`.
 
+Finding 2 needs a decision about repeated trials and a pass-rate rule before
+any trigger-quality claim is made from this eval slice. Finding 1 leaves one
+open question about a plain read request. Both belong to the eval slice and
+its evidence rules, not to the shipped product.

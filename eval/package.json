@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "node --test lib/*.check.js",
-    "eval": "node run.js"
+    "eval": "node --env-file-if-exists=../.env --env-file-if-exists=.env run.js"
   },
   "dependencies": {
     "@flue/runtime": "2.0.3"
