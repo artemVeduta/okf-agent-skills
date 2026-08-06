@@ -71,6 +71,9 @@ lists — including the canonical runtime tree it copies to
 directory. The installed hook runs that target-local copy, so the tag checkout
 is not a runtime dependency after installation. The same script also takes
 `disable` and `uninstall` in place of `install`, against the same directory.
+No manifest lists an `agents/` path: `v0.1.0` installs no delegated agent
+definition, and the delegated execution path is not reachable after
+installation.
 
 Per **D6**, the recommended directory below is a documentation value, drawn
 from current, verified, first-party harness evidence
@@ -105,13 +108,54 @@ project skips it.
 node scripts/okf-adapter.js install opencode <target-directory>
 ```
 
-**No single verified target directory makes this adapter fully work today.**
-Under the currently shipped flat layout, `plugin.js` — the file that wires
-the orientation hook — is not discovered under either candidate directory.
-See
-[`docs/research/adapter-install-targets.md`](docs/research/adapter-install-targets.md#opencode)
-for the loader evidence. Fixing the layout is adapter-code work outside this
-release.
+`<target-directory>` names the OpenCode configuration root and stays a
+required argument you supply — never inferred. Two shapes are supported:
+
+- **Project scope:** `<repo>/.opencode/`.
+- **Global scope:** `$OPENCODE_CONFIG_DIR` when set; otherwise
+  `$XDG_CONFIG_HOME/opencode/`, defaulting to `~/.config/opencode/`.
+
+Install places the plugin below OpenCode's native `plugins/` directory under
+an OKF-specific filename — `<target-directory>/plugins/okf-agent-skills.js`
+— never flat alongside the config file, and it never creates, replaces,
+merges, or removes `opencode.json`, `opencode.jsonc`, or the legacy global
+`config.json`.
+
+**A successful `install` is not a working adapter by itself.** OpenCode
+configuration is a required manual step this release does not perform: merge
+the effective `permission.skill: deny` rules for `okf`, `okf-read`,
+`okf-write`, `okf-lifecycle`, and `okf-review` — shown below — into your own
+`opencode.json` or `opencode.jsonc`, after any broader permission pattern,
+since OpenCode applies the last matching rule:
+
+```json
+{
+  "permission": {
+    "skill": {
+      "okf": "deny",
+      "okf-read": "deny",
+      "okf-write": "deny",
+      "okf-lifecycle": "deny",
+      "okf-review": "deny"
+    }
+  }
+}
+```
+
+`install`'s response reports this merge as its `next_action` and never
+claims the adapter is ready. `disable` and `uninstall` touch only
+receipt-owned adapter files under `<target-directory>` and never read or
+write `opencode.json`, `opencode.jsonc`, or `config.json`:
+
+```
+node scripts/okf-adapter.js disable opencode <target-directory>
+node scripts/okf-adapter.js uninstall opencode <target-directory>
+```
+
+No live OpenCode process test gates this release; deterministic fixtures
+(`test/issue-105.test.js`, alongside `test/issue-66-adapters.test.js`) prove
+the paths above, file ownership, the non-overwrite guarantee, the reported
+`next_action`, disablement, and removal.
 
 ## First run: two steps this release cannot do for you
 

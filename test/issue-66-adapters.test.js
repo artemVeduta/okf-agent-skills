@@ -25,6 +25,14 @@ function manifest(harness) {
   return JSON.parse(fs.readFileSync(path.join(adaptersDir, harness, 'manifest.json'), 'utf8'));
 }
 
+// Issue #105: the installed OpenCode plugin lands under its native `plugins/`
+// directory, one level below the target root, under an OKF-specific
+// filename declared by the manifest rather than a literal repeated here.
+function opencodePluginPath(targetDir) {
+  const entry = manifest('opencode').installs.find((candidate) => candidate.source === 'plugin.js');
+  return path.join(targetDir, entry.target);
+}
+
 function allText(dir) {
   let text = '';
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -227,7 +235,7 @@ test('an unavailable orientation capability emits no clean orientation and canno
     runCli(['install', harness, targetDir]);
 
     if (harness === 'opencode') {
-      const plugin = require(path.join(targetDir, 'plugin.js'));
+      const plugin = require(opencodePluginPath(targetDir));
       const hooks = await plugin({ directory: root });
       const output = { system: [] };
       await hooks['chat.system.transform']({}, output);
@@ -406,7 +414,7 @@ test('opencode: the next system transform claims the generation, a duplicate tra
   const root = orientedRepo(t);
   const targetDir = path.join(root, 'adapter');
   runCli(['install', 'opencode', targetDir]);
-  const plugin = require(path.join(targetDir, 'plugin.js'));
+  const plugin = require(opencodePluginPath(targetDir));
 
   const output = () => ({ system: [] });
   const hooks = await plugin({ directory: root });

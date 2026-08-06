@@ -443,10 +443,15 @@ function sourceLinks(tree) {
     .map((s) => s.resource);
 }
 
+// A directory is not an existing file for source-link resolution purposes.
+function resolvesToFile(file, bundleRoot, services) {
+  return Boolean(file) && inside(file, bundleRoot) && services.exists(file) && services.isFile(file);
+}
+
 function checkLinks(tree, rel, bundleRoot, services, findings) {
   for (const resource of sourceLinks(tree)) {
     const file = sourceResourcePath(bundleRoot, resource);
-    if (!file || !inside(file, bundleRoot) || !services.exists(file)) {
+    if (!resolvesToFile(file, bundleRoot, services)) {
       findings.push(warn('UNRESOLVED_INTERNAL_LINK', 'okf', { path: rel, resource }));
     }
   }
@@ -457,7 +462,7 @@ function checkLinks(tree, rel, bundleRoot, services, findings) {
 function checkUpstreams(tree, rel, bundleRoot, services, findings) {
   for (const resource of sourceLinks(tree)) {
     const file = sourceResourcePath(bundleRoot, resource);
-    if (!file || !inside(file, bundleRoot) || !services.exists(file)) continue;
+    if (!resolvesToFile(file, bundleRoot, services)) continue;
     const upstream = readConcept(file, resource, services);
     const upstreamFindings = [];
     if (upstream.finding) {

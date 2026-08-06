@@ -30,6 +30,9 @@ function parseRequest(text, expectedSkill) {
   if (obj.invocation !== undefined && !['explicit', 'automatic'].includes(obj.invocation)) {
     throw new Error('Invalid invocation');
   }
+  if (obj.operation === 'sync' && obj.invocation === undefined) {
+    throw new Error('Missing invocation');
+  }
   const boundedOperation = ['create', 'revise', 'format', 'relationship', 'machine-verify', 'sync'].includes(obj.operation);
   if (boundedOperation && (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '')) {
     throw new Error('Missing payload.cwd');

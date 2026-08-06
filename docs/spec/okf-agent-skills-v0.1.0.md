@@ -3430,7 +3430,20 @@ The table uses `A` for allowed, `N` for notice, `P` for occurrence-bound preview
 | Repair a directly affected mechanical link | `okf-write` | `scripts/lib/runtime.js` | Inherited from parent |
 | Standalone broad rebuild | `okf-lifecycle` | `scripts/lib/runtime.js` | User-invoked |
 
-#### Post-operation checks (D8)
+#### Post-write validation checks (D8)
+
+These twelve checks are the primary-concept boundary `validation.postWrite` runs against the
+saved concept immediately after a bounded write publishes it. They are narrower than the
+post-operation checks named elsewhere in this specification (OKF conformance, suite checks,
+identity, link, provenance, trust, and validation bound to the approved plan): this table
+validates the primary concept only, not the later index and log derivative writes a composite
+operation also performs.
+
+Six of the twelve — Reserved bundle files, Required concept type, Source resource, Generated-by
+value, Attested Computation runtime, and Human actor prefix — are defense-in-depth copies of the
+same shared gates the pre-write path already runs before publication. The pre-write copy blocks a
+normal invalid request before anything is written; the post-write copy stays in place as
+defense-in-depth for a changed saved state.
 
 | Check | Pass observation | Fail observation |
 |---|---|---|
@@ -3444,8 +3457,24 @@ The table uses `A` for allowed, `N` for notice, `P` for occurrence-bound preview
 | Generated-by value | Each truthy object in a `generated` array has a `by` value other than `undefined`, `null`, or `""`; a non-array `generated` value is ignored. | A `GENERATED_BY_MISSING` finding when such an entry has a `by` value of `undefined`, `null`, or `""`. |
 | Attested Computation runtime | When `type` is exactly `"Attested Computation"`, `runtime` is not `undefined`, `null`, or `""`. | A `RUNTIME_MISSING` finding when `type` is exactly `"Attested Computation"` and `runtime` is `undefined`, `null`, or `""`. |
 | Human actor prefix | Each non-empty string `author` or `confirmed` value, or array item, uses `human:` or a recognized non-human prefix; non-string values are ignored. | A `HUMAN_PREFIX_MISSING` finding for a non-empty string value without one of those prefixes. |
-| Source link | Each source resource resolves inside the bundle to an existing file. | An `UNRESOLVED_INTERNAL_LINK` warning; `valid` can remain `true`. |
+| Source link | Each source resource resolves inside the bundle to an existing file; a directory is not an existing file for this check. | An `UNRESOLVED_INTERNAL_LINK` warning; `valid` can remain `true`. |
 | Upstream source | No readable source resource has a blocking concept finding. | A `DEPENDS_ON_BLOCKED_CONCEPT` finding. |
+
+A check fail is that check's Validation Verdict, not itself the lifecycle result. The runtime
+aggregates every reachable verdict into the write's lifecycle result and its `data.validation`
+aggregate state:
+
+| Reachable case | Lifecycle result | `data.validation` |
+|---|---|---|
+| Every post-write check passes. | `applied` | `valid` |
+| A blocking post-write check fails after publication. | `failed/incomplete` | `failed` |
+| A shared gate finds normal invalid input before publication (the pre-write copy of a defense-in-depth check). | `blocked` | `not-run` |
+| Only the non-blocking Source link check fails. | `applied` | `valid` |
+
+The exception handler around this boundary is error containment, not a thirteenth check: it has
+no pass observation of its own, only the fail observation of an unexpected post-write error being
+reported as `failed/incomplete` instead of crashing the process. It is not counted in the twelve
+and carries no Validation Verdict.
 
 #### Composite operation placement
 
@@ -3616,7 +3645,7 @@ Tickets inside one wave MAY run in parallel. (#41)
 | Recovery snapshot scope selector | Deferred (#43) | What a snapshot must contain before an operation may execute | #11 requires a snapshot of the affected bundles and "relevant untracked files" and #37 repeats it for both repositories; neither defines which untracked files are relevant | Define the rule that decides which untracked paths enter the snapshot |
 | Recovery snapshot content addressing and completeness proof | Deferred (#43) | The pass condition of recovery evidence; the claim that a snapshot covers its declared scope | #7 requires an independent content-addressed snapshot and matching restored bytes or hashes, but names no content-address algorithm and no record that proves the snapshot covers the declared scope | Name the content-address algorithm and the completeness record a snapshot carries |
 | Recovery snapshot discard timing | Deferred (#43) | Cleanup after a settled operation; whether a snapshot survives to a later repair | No ticket states when a snapshot may be discarded; #7 requires it for the recovery gate and #37 requires it for both repositories, and both stop there | State the event after which a snapshot may be discarded |
-| Enumerated post-operation checks and per-check pass criteria | Closed (D8) | Every claim that an operation succeeded; the `ValidationVerdict` and `PostOpChecks` results | #7 names the check families — OKF conformance, suite checks, identity, link, provenance, trust, and post-operation validation bound to the approved plan — but enumerates no individual check and states no per-check pass condition; #30 carried these across as explicitly opaque | **Adopted (D8):** the post-operation check table enumerates the checks in `scripts/lib/validation.js` and their observable pass and fail conditions. |
+| Enumerated post-operation checks and per-check pass criteria | Closed (D8) | Every claim that an operation succeeded; the `ValidationVerdict` and `PostOpChecks` results | #7 names the check families — OKF conformance, suite checks, identity, link, provenance, trust, and post-operation validation bound to the approved plan — but enumerates no individual check and states no per-check pass condition; #30 carried these across as explicitly opaque | **Adopted (D8):** the post-write validation check table enumerates the checks in `scripts/lib/validation.js` and their observable pass and fail conditions. |
 | Crash-point reconciliation table | Deferred (#43) | Recovery from every interrupted operation | #30 supplies the record ordering (`INTENT{undo}` → mutate → `OUTCOME`, sealed manifest before the first mutation, spend and epoch advance between the last `OUTCOME` and `SETTLED`) and #31 supplies the ledger `in-flight`/`failed`/unknown outcomes, but no ticket maps every crash point to a next action; #7 classifies missing, torn, corrupt, truncated, and unknown-schema data as `indeterminate` without stating the reconciliation step | Publish one table mapping each crash point — including a missing manifest, a torn record, a dangling `INTENT`, a partial inverse, and ambiguous filesystem state — to its next action |
 | Result label for a reconciled identical-byte concurrent foreign write | Deferred (#43) | Whether an operation may settle clean after a foreign session produced identical bytes | #30 records that reconciliation cannot distinguish authorship and reads bytes equal to the expected hash as done, and lists this as an accepted cost rather than a reported outcome; #7 records foreign mutation only on observed drift; #37 defines `partially-applied` and `indeterminate` for other cross-repository outcomes | State whether this case settles `clean` or is recorded as an ambiguity that makes the terminal `dirty` |
 | New-bundle write-gate bootstrap exception | Open | `okf init`; migration into a repository with no bundle; adoption of a bundle root that does not yet exist | #21 gates mutation on a pre-existing bundle-root `index.md` whose parsed `okf_version` is exactly `"0.2"` and defines an adoption operation only for a bundle root that already exists; #19 creates new bundles through migration; #35 allows guarded initialization; none states the predicate under which the first write to a non-existent bundle root is permitted | State the exact condition under which creating a bundle root is permitted without a pre-existing `okf_version: "0.2"` declaration, and the atomicity requirement for that first write |

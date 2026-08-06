@@ -25,8 +25,26 @@ _Avoid_: Documentation of the code, prose mirror
 **Automatic lifecycle**:
 The recurring behavior through which an agent consults relevant OKF knowledge
 and maintains small, evidence-backed documentation changes while doing normal
-project work.
-_Avoid_: Automatic full sync
+project work. This behavior reaches the wrapper as an explicit invocation,
+never an automatic invocation: the agent, not an adapter or hook, sends the
+request.
+_Avoid_: Automatic full sync, automatic invocation
+
+**Explicit invocation**:
+A deliberate wrapper process request, carried as `invocation: "explicit"` on
+the request. It is the value an agent sends for lifecycle synchronization it
+selects during an established user task, whether narrow (incremental) or
+requested by name (reconciliation). Model or parent-skill routing does not
+change it to an automatic invocation. It does not attest that a human
+directly approved the mutation.
+_Avoid_: Invocation class, invocation attestation, human approval
+
+**Automatic invocation**:
+A wrapper request an adapter or hook emits on its own, carried as
+`invocation: "automatic"`. It stays read-only: an automatic `okf-lifecycle`
+`sync` request returns `AUTOMATIC_MUTATION_BLOCKED`, even when its evidence
+and scope are otherwise valid.
+_Avoid_: Invocation class, invocation attestation, model-invoked
 
 **Project mode**:
 The explicit authority model of an affected bundle: code-backed or
@@ -186,7 +204,10 @@ _Avoid_: Automatic writer, authority holder, unrestricted sub-agent
 **Execution preference**:
 A user setting that chooses `inline` or `delegated` placement for eligible reads
 or bounded writes. It does not change safety or authority and remains below the
-shared rules.
+shared rules. The placement choice is retained design for a later release, in
+the same form as `docs/spec/okf-agent-skills-v0.1.0.md`'s `#43` guard items:
+no `v0.1.0` adapter installs a
+delegated target, so no live placement decision is reachable. (#91)
 _Avoid_: Permission setting, policy override
 
 **Delegation receipt**:
@@ -639,18 +660,32 @@ may be discarded — is an open item.
 _Avoid_: Retention window, recovery evidence
 
 **Validation verdict**:
-The pass or fail outcome of one individual check run during lifecycle or
-post-operation validation. Its exact schema is an open item; only the
-constraint that each check carries an observable pass or fail outcome is
-settled.
-_Avoid_: Lifecycle result, post-operation checks, orientation result
+The pass or fail outcome of one individual check run during lifecycle,
+post-operation, or post-write validation. A verdict is never itself the
+lifecycle result: the runtime aggregates every reachable verdict into the
+write's lifecycle result and its `data.validation` aggregate state. Its
+exact schema is an open item; only the constraint that each check carries
+an observable pass or fail outcome is settled.
+_Avoid_: Lifecycle result, post-operation checks, post-write validation
+checks, orientation result
 
 **Post-operation checks**:
 The enumerated checks — OKF conformance, suite checks, identity, link,
 provenance, trust, and validation bound to the approved plan — that run
 after an operation to support a claim that it succeeded. Each carries an
 observable pass and fail condition; their exact schema is an open item.
-_Avoid_: Recovery evidence, validation verdict, required checks
+_Avoid_: Recovery evidence, validation verdict, required checks, post-write
+validation checks
+
+**Post-write validation checks**:
+The twelve-check boundary `validation.postWrite` runs against the primary
+saved concept immediately after a bounded write publishes it, including the
+six defense-in-depth copies of the shared pre-write gates. It is narrower
+than post-operation checks: it validates the primary concept only, not the
+later index and log derivative writes a composite operation also performs.
+Its outer exception handler is error containment around this boundary, not
+a thirteenth check.
+_Avoid_: Post-operation checks, validation verdict, pre-write gate
 
 **Settlement**:
 One of the two independent axes of terminal classification, with the values
@@ -714,13 +749,20 @@ _Avoid_: Harness adapter, skill wrapper script, guard skill
 **Session override**:
 The highest-precedence layer in the settings chain — `adapter defaults <
 user/global settings < project/worktree settings < current-session override`
-— that expires at session end.
+— that expires at session end. The full precedence chain is retained design
+for a later release, in the same form as `docs/spec/okf-agent-skills-v0.1.0.md`'s
+`#43` guard items: `v0.1.0` validates `brief.settings` and then discards it,
+and resolves no precedence chain. (#91)
 _Avoid_: Effective settings, local override, project mode
 
 **Effective settings**:
 The fully resolved settings value produced by applying the
 settings-precedence chain, including any session override. The main session
-resolves it and carries it into a delegation brief.
+resolves it and carries it into a delegation brief. The full precedence
+chain is retained design for a later release, in the same form as
+`docs/spec/okf-agent-skills-v0.1.0.md`'s `#43` guard items: `v0.1.0`
+resolves no precedence chain, so nothing resolves this value or carries
+it into a brief. (#91)
 _Avoid_: Session override, execution preference
 
 **Supported entry seam**:

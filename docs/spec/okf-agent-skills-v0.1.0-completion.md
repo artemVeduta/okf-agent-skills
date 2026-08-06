@@ -121,9 +121,18 @@ Row L3569 blocks every claim that an operation succeeded. Its closing decision i
 
 Decision: the enumerated set is exactly the checks the shared post-write validation already
 performs. Each is written with one observable pass condition — what a reader can see that says
-`pass`, and what it sees that says `fail` — and each gets a fixture test at the wrapper seam.
-No check is added that the runtime does not perform, and no check the runtime performs is left out
-of the enumeration.
+`pass`, and what it sees that says `fail`. No check is added that the runtime does not perform, and
+no check the runtime performs is left out of the enumeration.
+
+Issue #86 refines the fixture obligation this decision states: a wrapper-seam fixture is required
+for each *reachable* pass/fail observable, not for every internal defensive branch. Several of the
+twelve — the post-write copies of the six shared gates, the saved-concept re-read, and the
+saved-tree comparison — cannot be driven to their fail branch through `postWrite` by a normal
+wrapper request, because the pre-write gate already returns `blocked` for that same input before
+publication. Those checks keep a fixture at the boundary that is actually reachable (the pre-write
+`blocked` case) and stay documented, not fixture-forced, at their unreachable post-write fail
+branch. The outer exception handler around `postWrite` is error containment, not a thirteenth
+check, and is not fixture-forced either.
 
 ### D9 — Coexistence with the third-party OKF skill is closed by explicit deferral
 
@@ -208,7 +217,7 @@ without claiming completeness. Naming the fixture corpora and strata is deferred
     boundaries rather than incidentally.
 24. As a maintainer, I want a semantic-preservation round-trip fixture whose failure blocks the
     write, so that a frontmatter rewrite cannot silently change meaning.
-25. As a maintainer, I want a fixture per enumerated post-operation check, so that a success claim
+25. As a maintainer, I want a fixture per enumerated post-write validation check, so that a success claim
     rests on a named observable rather than on absence of error.
 26. As a maintainer, I want every safety test to assert the refusal, its reason, and its origin,
     so that a write that fails for the wrong reason is caught as the defect it is.
@@ -395,6 +404,36 @@ gate `v0.1.0`.
 
 ---
 
+## Narrowed claims (issue #91, issue #97)
+
+Issue #91 asked which delegated-execution and settings-precedence behavior must be reachable
+after `v0.1.0` installation. No adapter manifest installs `agents/okf-reader.md` or
+`agents/okf-writer.md` (`test/issue-68-agents.test.js`), `scripts/adapter-bridge.js` accepts only
+`okf-read` and `okf-write`, and `scripts/lib/delegation.js` validates `brief.settings` and then
+discards it. Two accepted claims are narrowed to what that shipped code can demonstrate, and no
+dispatch code moves:
+
+- **Execution preference and session override.** `CONTEXT.md`'s `Execution preference` and
+  `Session override` entries are retained design for a later release, in the same form as the
+  `#43` guard items. Delegation stays a repository-internal process-seam contract that
+  `node --test "test/*.test.js"` covers; it is not reachable after installation in `v0.1.0`.
+- **`brief.settings`.** The field stays required and enum-validated and stays inert: it selects
+  no execution placement. The brief shape and the twelve-field checks do not change.
+
+This narrows accepted claims; it closes no `Open` row. The settings storage, syntax, and scope
+row (`docs/spec/okf-agent-skills-v0.1.0.md` line 3836) stays `Open`, last touched by (#38).
+Line 3360's `v0.1.0` MUST for deterministic wrapper-seam fixtures covering "settings precedence,
+invalid settings" is narrowed with this claim: invalid settings stays fixture-covered
+(`scripts/lib/delegation.js:67-71`, `test/issue-68.test.js:236`), but settings precedence does
+not, since `v0.1.0` resolves no precedence chain to have a fixture cover.
+
+Evidence: `test/issue-68-agents.test.js` already asserts installation copies no agent definition.
+Issue #97 adds the one assertion this narrowing was missing — that no adapter manifest `installs`
+entry names an `agents/` path and that `scripts/adapter-bridge.js` rejects `okf-delegate` — in
+`test/issue-97-delegation-narrowing.test.js`.
+
+---
+
 ## Out of Scope
 
 Everything the pinned spec's out-of-scope section already excludes stays excluded: Windows, a CLI
@@ -426,7 +465,7 @@ results. No `.github/` directory. Note that `node --test test/` does not work in
 written; CI MUST use an invocation verified to discover all 19 files.
 
 **Sequencing.** The atomic-effect ownership table from D7 is authored first, because a skill cannot
-state which effects it owns before the table exists. The post-operation check enumeration from D8
+state which effects it owns before the table exists. The post-write validation check enumeration from D8
 is authored next, because it is what a completion criterion in `okf-write` points at. The five
 `SKILL.md` files follow, and the `existsSync` deletion lands with them so that the suite is never
 green about skills that do not exist. Repository setup is independent of all of it and may run in

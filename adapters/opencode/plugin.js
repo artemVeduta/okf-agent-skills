@@ -5,16 +5,21 @@
  * The claim cycle and presentation policy live in the target-local
  * okf-agent-skills/scripts/lib copy, shared with every other harness. A disabled install (`.okf-adapter-disabled`)
  * is a no-op.
+ *
+ * Installed one level below the adapter's target directory, so every other
+ * adapter-owned path resolves relative to the parent directory, not `__dirname`.
  */
 const path = require('node:path');
 const fs = require('node:fs');
 
+const targetRoot = path.join(__dirname, '..');
+
 function disabled() {
-  return fs.existsSync(path.join(__dirname, '.okf-adapter-disabled'));
+  return fs.existsSync(path.join(targetRoot, '.okf-adapter-disabled'));
 }
 
 function suiteVersion() {
-  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8')).suite_version; } catch { return undefined; }
+  try { return JSON.parse(fs.readFileSync(path.join(targetRoot, 'manifest.json'), 'utf8')).suite_version; } catch { return undefined; }
 }
 
 module.exports = async ({ directory }) => {
@@ -29,7 +34,7 @@ module.exports = async ({ directory }) => {
       // An incomplete installed copy fails closed here, never into the host session.
       let outcome;
       try {
-        const lib = path.join(__dirname, 'okf-agent-skills', 'scripts', 'lib');
+        const lib = path.join(targetRoot, 'okf-agent-skills', 'scripts', 'lib');
         const adapters = require(path.join(lib, 'adapters'));
         const services = require(path.join(lib, 'services'));
 
@@ -38,7 +43,7 @@ module.exports = async ({ directory }) => {
           cwd: directory, harness: 'opencode', context_id: String(generation), logical_cause: 'system-transform',
           ...(version ? { suite_version: version } : {}),
         };
-        outcome = adapters.claimAndDispatch(payload, __dirname, services);
+        outcome = adapters.claimAndDispatch(payload, targetRoot, services);
       } catch { return; }
       if (outcome && outcome.kind === 'clean') output.system.push(outcome.text);
       else if (outcome && outcome.kind === 'diagnostic') process.stderr.write(`${outcome.text}\n`);

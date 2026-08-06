@@ -46,6 +46,7 @@ function syncRequest(root, concept = 'note.md', payload = {}) {
     skill: 'okf-lifecycle',
     operation: 'sync',
     task_kind: 'fix',
+    invocation: 'explicit',
     scope: { concepts: [concept] },
     payload: {
       cwd: root,
@@ -178,6 +179,38 @@ test('sync blocks unavailable evidence and unknown write ownership without chang
   assert.deepEqual(ownership.evidence_limits, writeLimits);
   assert.deepEqual(snapshot(root), before);
   assert.deepEqual(snapshot(outside), outsideBefore);
+});
+
+test('sync without invocation is invalid wrapper input, and automatic invocation blocks the mutation', (t) => {
+  const root = bundle(t);
+  fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Note\n');
+  const before = snapshot(root);
+
+  const missing = syncRequest(root);
+  delete missing.invocation;
+  const missingResult = childProcess.spawnSync(process.execPath, [lifecycleWrapper], {
+    input: JSON.stringify(missing), encoding: 'utf8',
+  });
+  assert.equal(missingResult.status, 64);
+  assert.equal(missingResult.stdout, '');
+  assert.ok(missingResult.stderr.trim().length > 0);
+  assert.equal(missingResult.stderr.trim().includes('\n'), false);
+  assert.equal(missingResult.stderr.includes('\n    at '), false);
+  assert.deepEqual(snapshot(root), before);
+
+  const automatic = run(lifecycleWrapper, { ...syncRequest(root), invocation: 'automatic' });
+  assert.equal(automatic.result, 'blocked');
+  assert.equal(automatic.data.code, 'AUTOMATIC_MUTATION_BLOCKED');
+  assert.deepEqual(snapshot(root), before);
+
+  const routerMissing = { ...syncRequest(root), skill: 'okf' };
+  delete routerMissing.invocation;
+  const routerMissingResult = childProcess.spawnSync(process.execPath, [routerWrapper], {
+    input: JSON.stringify(routerMissing), encoding: 'utf8',
+  });
+  assert.equal(routerMissingResult.status, 64);
+  assert.equal(routerMissingResult.stdout, '');
+  assert.deepEqual(snapshot(root), before);
 });
 
 test('router rejects unsupported broad lifecycle operations without changes', (t) => {

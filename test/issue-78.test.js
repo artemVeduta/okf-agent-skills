@@ -1,8 +1,10 @@
 /*
-Issue #78 — wrapper-seam fixtures for every check `validation.postWrite` runs
-after a published concept write. Each fixture builds a bundle under the OS temp
-dir and drives `scripts/okf-write.js` as a child process, asserting on the one
-JSON response line — the same seam `test/write-gate.test.js` uses.
+Issue #94 (applying the issue #86 resolution to issue #78's fixtures) —
+wrapper-seam fixtures for the twelve post-write validation checks
+`validation.postWrite` runs against the primary saved concept after a
+publish. Each fixture builds a bundle under the OS temp dir and drives
+`scripts/okf-write.js` as a child process, asserting on the one JSON
+response line — the same seam `test/write-gate.test.js` uses.
 
 Check                       Finding code                  Pass observable                                     Fail observable
  1 bundle-root declaration   ROOT_DECLARATION_NOT_EXACT    root `okf_version` is exactly the string "0.2"      `failed/incomplete`
@@ -15,9 +17,13 @@ Check                       Finding code                  Pass observable       
  8 generated                 GENERATED_BY_MISSING          every generated entry names a `by`                  `blocked` (2)
  9 runtime                   RUNTIME_MISSING               `Attested Computation` carries a `runtime`          `blocked` (2)
 10 identity prefix           HUMAN_PREFIX_MISSING          `author` carries a human/agent/tool prefix          `blocked` (2)
-11 links                     UNRESOLVED_INTERNAL_LINK      every reference resolves                            `applied` with a warning (3)
+11 links                     UNRESOLVED_INTERNAL_LINK      every reference resolves to an existing file        `applied` with a warning (3)
 12 upstreams                 DEPENDS_ON_BLOCKED_CONCEPT    no source is a blocked concept                      `failed/incomplete`
-13 outer catch               POST_WRITE_VALIDATION_FAILED   the concept read raises nothing                     `failed/incomplete`
+
+The outer exception handler around `postWrite` is error containment, not a
+thirteenth check: it has no pass observation, and no wrapper fixture forces
+its fail observation through a normal request (that would be fault
+injection, which issue #86 rules out).
 
 The pass column is covered by one shared conformant fixture rather than one
 fixture per check: that request drives every check's pass branch in a single
@@ -35,12 +41,15 @@ of these fixtures:
     shared fixture below asserts what does happen — the pre-write block, with
     the check's own code and the concept untouched on disk.
  3. Check 11 reports a warning, not a blocker, so it cannot move the result off
-    `applied`.
+    `applied`. A source that resolves to a directory takes this same branch:
+    a directory is not an existing file for this check.
 
-Consequence: nine of the thirteen checks have no `failed/incomplete`
-observable, so this file covers their reachable observable instead. Whether
-that criterion is renegotiated or the duplicate pre-write copies of checks
-5-10 are removed is recorded on issue #78, not decided here.
+Consequence: nine of the twelve checks have no `failed/incomplete` observable
+reachable from a normal wrapper request, so this file covers their reachable
+observable instead — the pre-write `blocked` case for checks 5-10, and no
+forced fixture at all for checks 3 and 4, whose fail conditions stay
+documented rather than fixture-forced. This reflects the issue #86
+resolution, not a renegotiated criterion.
 */
 
 const test = require('node:test');
@@ -112,6 +121,7 @@ test('a write that makes the bundle root non-conforming reports incomplete and s
     set: { type: 'Bundle', okf_version: '0.3' },
   }));
   assert.equal(response.result, 'failed/incomplete');
+  assert.equal(response.data.validation, 'failed');
   const finding = response.findings.find((f) => f.code === 'ROOT_DECLARATION_NOT_EXACT');
   assert.ok(finding, 'expected ROOT_DECLARATION_NOT_EXACT');
   assert.equal(finding.origin, 'suite');
@@ -126,6 +136,7 @@ test('a write that makes the project mode invalid reports incomplete and stays o
     set: { type: 'Bundle', project_mode: 'both' },
   }));
   assert.equal(response.result, 'failed/incomplete');
+  assert.equal(response.data.validation, 'failed');
   const finding = response.findings.find((f) => f.code === 'PROJECT_MODE_INVALID');
   assert.ok(finding, 'expected PROJECT_MODE_INVALID');
   assert.equal(finding.origin, 'suite');
@@ -142,6 +153,7 @@ test('a created concept whose source is blocked reports incomplete after the wri
     set: { type: 'Note', sources: [{ resource: 'blocked.md' }] },
   }));
   assert.equal(response.result, 'failed/incomplete');
+  assert.equal(response.data.validation, 'failed');
   const finding = response.findings.find((f) => f.code === 'DEPENDS_ON_BLOCKED_CONCEPT');
   assert.ok(finding, 'expected DEPENDS_ON_BLOCKED_CONCEPT');
   assert.equal(finding.origin, 'suite');
@@ -165,7 +177,7 @@ test('an unresolved reference is reported as a warning and the write stays appli
   assert.match(fs.readFileSync(path.join(root, 'child.md'), 'utf8'), /resource: missing\.md/);
 });
 
-test('an unexpected read error is reported as incomplete instead of crashing', (t) => {
+test('a source that resolves to a directory is reported as an unresolved link, not read', (t) => {
   const root = bundle(t);
   fs.mkdirSync(path.join(root, 'a-directory'));
   const response = run(request(root, {
@@ -173,12 +185,12 @@ test('an unexpected read error is reported as incomplete instead of crashing', (
     concept: 'child.md',
     set: { type: 'Note', sources: [{ resource: 'a-directory' }] },
   }));
-  assert.equal(response.result, 'failed/incomplete');
-  const finding = response.findings.find((f) => f.code === 'POST_WRITE_VALIDATION_FAILED');
-  assert.ok(finding, 'expected POST_WRITE_VALIDATION_FAILED');
-  assert.equal(finding.origin, 'suite');
-  assert.equal(finding.detail.path, 'child.md');
-  assert.match(finding.detail.reason, /EISDIR|illegal operation/i);
+  assert.equal(response.result, 'applied');
+  assert.equal(response.data.validation, 'valid');
+  const finding = response.findings.find((f) => f.code === 'UNRESOLVED_INTERNAL_LINK');
+  assert.ok(finding, 'expected UNRESOLVED_INTERNAL_LINK');
+  assert.equal(finding.origin, 'okf');
+  assert.deepEqual(finding.detail, { path: 'child.md', resource: 'a-directory' });
   assert.match(fs.readFileSync(path.join(root, 'child.md'), 'utf8'), /type: Note/);
 });
 
@@ -190,6 +202,7 @@ function preWriteBlock(t, code, set) {
   const before = fs.readFileSync(path.join(root, 'note.md'), 'utf8');
   const response = run(request(root, { set }));
   assert.equal(response.result, 'blocked');
+  assert.equal(response.data.validation, 'not-run');
   const finding = response.findings.find((f) => f.code === code);
   assert.ok(finding, `expected ${code}`);
   assert.equal(finding.origin, 'okf');

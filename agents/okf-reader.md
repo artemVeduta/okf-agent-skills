@@ -32,6 +32,9 @@ Every call carries an immutable brief with exactly these fields: `role`,
 `read_execution` and `write_execution`), `expected_result`, and `changes`
 (absent or empty for `okf-reader`). `allowed_effects` is required but MAY be
 empty. The brief is a request and constraint set, not approval or authority.
+`settings` is enum-validated and inert in `v0.1.0`: it selects no execution
+placement, because `okf-reader` is not reachable through an installed
+adapter to place work onto.
 
 ## Rule precedence
 

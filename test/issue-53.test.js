@@ -31,6 +31,7 @@ function request(root, skill, operation, extra = {}) {
     operation,
     task_kind: 'fix',
     scope: { concepts: ['note.md'] },
+    invocation: 'explicit',
     payload: {
       cwd: root,
       bundle: root,

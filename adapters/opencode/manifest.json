@@ -8,9 +8,9 @@
     { "native_event": "session.compacted", "role": "lifecycle-only" }
   ],
   "scripts_tree": "okf-agent-skills/scripts",
+  "next_action": "Manually merge the permission.skill: deny rules for okf, okf-read, okf-write, okf-lifecycle, and okf-review into the applicable opencode.json or opencode.jsonc, after any broader permission pattern so it stays the last matching rule.",
   "installs": [
-    { "source": "config.json", "target": "config.json" },
-    { "source": "plugin.js", "target": "plugin.js" },
+    { "source": "plugin.js", "target": "plugins/okf-agent-skills.js" },
     { "source": "manifest.json", "target": "manifest.json" }
   ]
 }

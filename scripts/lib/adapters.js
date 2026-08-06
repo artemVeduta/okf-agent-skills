@@ -68,7 +68,10 @@ function install(harness, targetDir, services) {
 
   const receipt = { harness, suite_version: manifest.suite_version, installed_files: installedFiles, disabled: false };
   services.writeFile(path.join(resolvedTarget, receiptName), JSON.stringify(receipt));
-  return { ok: true, harness, target: resolvedTarget, installed_files: installedFiles };
+  return {
+    ok: true, harness, target: resolvedTarget, installed_files: installedFiles,
+    ...(manifest.next_action ? { next_action: manifest.next_action } : {}),
+  };
 }
 
 function disable(harness, targetDir, services) {
