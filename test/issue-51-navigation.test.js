@@ -1,19 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
+const { bundle, repository } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const runtime = require(path.join(repo, 'scripts', 'lib', 'runtime'));
 const defaultServices = require(path.join(repo, 'scripts', 'lib', 'services'));
 
-function repository(t) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-51-')));
-  fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
-  fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+function navigationRepository(t) {
+  const root = repository(t, 'okf-51-');
+  bundle(root);
   return root;
 }
 
@@ -39,7 +36,7 @@ function searchRequest(root, query, extra = {}) {
 }
 
 test('search explicitly includes a deprecated concept with a warning and preserves the index', (t) => {
-  const root = repository(t);
+  const root = navigationRepository(t);
   const index = path.join(root, 'index.md');
   const deprecated = writeConcept(root, 'old.md', 'type: Note\nstatus: deprecated', '# Legacy');
   const before = fs.readFileSync(index);
@@ -63,7 +60,7 @@ test('search explicitly includes a deprecated concept with a warning and preserv
 });
 
 test('ordinary search excludes observed deprecated concepts and preserves the index', (t) => {
-  const root = repository(t);
+  const root = navigationRepository(t);
   const index = path.join(root, 'index.md');
   const current = writeConcept(root, 'current.md', 'type: Note\nstatus: current', '# Current');
   const deprecated = writeConcept(root, 'old.md', 'type: Note\nstatus: deprecated', '# Legacy');
@@ -82,7 +79,7 @@ test('ordinary search excludes observed deprecated concepts and preserves the in
 });
 
 test('a deprecated-only query and non-literal opt-in exclude observed deprecated concepts', (t) => {
-  const root = repository(t);
+  const root = navigationRepository(t);
   const index = path.join(root, 'index.md');
   const deprecated = writeConcept(root, 'old.md', 'type: Note\nstatus: deprecated', '# Legacy');
 
@@ -103,7 +100,7 @@ test('a deprecated-only query and non-literal opt-in exclude observed deprecated
 });
 
 test('search with unobserved status is degraded and preserves the index', (t) => {
-  const root = repository(t);
+  const root = navigationRepository(t);
   const index = path.join(root, 'index.md');
   const concept = writeConcept(root, 'unknown.md', 'type: Note', '# Unknown');
   const before = fs.readFileSync(index);

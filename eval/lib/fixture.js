@@ -23,7 +23,8 @@ export function createFixture() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-flue-eval-')));
 
   // A minimal conforming bundle: declared okf_version, the activation
-  // marker, and one concept a case can read or revise.
+  // marker, one concept a case can read or revise, and an empty `.git` so the
+  // wrapper's repository-root walk (scripts/lib/services.js) stops here.
   fs.mkdirSync(path.join(root, '.git'));
   fs.writeFileSync(path.join(root, '.okf-active'), '');
   fs.writeFileSync(

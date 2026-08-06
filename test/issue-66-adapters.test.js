@@ -2,9 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-const { snapshot } = require('../test-support/snapshot');
+const {
+  adapterManifest: manifest,
+  runAdapterCli: runCli,
+  snapshot,
+  temporaryRoot,
+} = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const cliWrapper = path.join(repo, 'scripts', 'okf-adapter.js');
@@ -14,16 +18,7 @@ const writeWrapper = path.join(repo, 'scripts', 'okf-write.js');
 const adapterHookWrapper = path.join(repo, 'scripts', 'adapter-hook.js');
 const adaptersDir = path.join(repo, 'adapters');
 const orientation = require('../scripts/lib/orientation');
-
-function temporaryRoot(t, prefix = 'okf-66-adapters-') {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
-}
-
-function manifest(harness) {
-  return JSON.parse(fs.readFileSync(path.join(adaptersDir, harness, 'manifest.json'), 'utf8'));
-}
+const harnesses = ['claude-code', 'codex', 'opencode'];
 
 // Issue #105: the installed OpenCode plugin lands under its native `plugins/`
 // directory, one level below the target root, under an OKF-specific
@@ -40,13 +35,6 @@ function allText(dir) {
     text += entry.isDirectory() ? allText(file) : fs.readFileSync(file, 'utf8');
   }
   return text;
-}
-
-function runCli(args) {
-  const result = childProcess.spawnSync(process.execPath, [cliWrapper, ...args], { encoding: 'utf8' });
-  assert.equal(result.stdout.endsWith('\n'), true);
-  assert.equal(result.stdout.split('\n').length, 2);
-  return { status: result.status, stderr: result.stderr, response: JSON.parse(result.stdout) };
 }
 
 function orientedRepo(t) {
@@ -79,7 +67,7 @@ function writeRequest(root) {
 }
 
 test('each adapter manifest declares this suite version and its own installs', () => {
-  for (const harness of ['claude-code', 'codex', 'opencode']) {
+  for (const harness of harnesses) {
     const declared = manifest(harness);
     assert.equal(declared.harness, harness);
     assert.equal(declared.suite_version, orientation.suiteVersion);
@@ -92,7 +80,7 @@ test('each adapter manifest declares this suite version and its own installs', (
 });
 
 test('each adapter declares the shared wrapper bridge without a native tool mapping', () => {
-  for (const harness of ['claude-code', 'codex', 'opencode']) {
+  for (const harness of harnesses) {
     const declared = manifest(harness);
     assert.deepEqual(declared.bridge, { script: 'scripts/adapter-bridge.js', skills: ['okf-read', 'okf-write'] }, harness);
     assert.equal(Object.hasOwn(declared, 'native_tool_mapping'), false, harness);
@@ -100,7 +88,7 @@ test('each adapter declares the shared wrapper bridge without a native tool mapp
 });
 
 test('each adapter manifest declares exactly the orient logical causes in the shared seam table', () => {
-  for (const harness of ['claude-code', 'codex', 'opencode']) {
+  for (const harness of harnesses) {
     const declared = manifest(harness);
     const declaredCauses = declared.seams.flatMap((seam) => seam.logical_causes || []);
     assert.deepEqual(declaredCauses.slice().sort(), [...orientation.seamTable[harness].orient].sort(), harness);
@@ -163,7 +151,7 @@ test('install writes only inside each harness-local target directory, leaving th
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
   fs.mkdirSync(path.join(root, '.other-adapter'));
   fs.writeFileSync(path.join(root, '.other-adapter', 'sentinel.txt'), 'untouched');
-  for (const harness of ['claude-code', 'codex', 'opencode']) {
+  for (const harness of harnesses) {
     const targetDir = path.join(root, `.${harness}`);
     const targetName = path.basename(targetDir);
     const before = snapshot(root).filter(([name]) => !name.startsWith(targetName));
@@ -205,7 +193,7 @@ test('the bridge transports unchanged wrapper JSON through every adapter and use
   fs.writeFileSync(path.join(root, 'note.md'), original);
   const directWrite = childProcess.spawnSync(process.execPath, [writeWrapper], { input: JSON.stringify(writeRequest(root)), encoding: 'utf8' });
 
-  for (const harness of ['claude-code', 'codex', 'opencode']) {
+  for (const harness of harnesses) {
     const read = runBridge(harness, 'okf-read', JSON.stringify(readRequest));
     assert.equal(read.status, 0, harness);
     assert.equal(read.stderr, '', harness);
@@ -227,7 +215,7 @@ test('the bridge transports unchanged wrapper JSON through every adapter and use
 });
 
 test('an unavailable orientation capability emits no clean orientation and cannot claim a successful write', async (t) => {
-  for (const harness of ['claude-code', 'codex', 'opencode']) {
+  for (const harness of harnesses) {
     const root = orientedRepo(t);
     fs.writeFileSync(path.join(root, 'evidence.md'), 'observed\n');
     fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Body\n');

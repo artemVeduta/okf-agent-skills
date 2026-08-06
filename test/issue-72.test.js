@@ -1,13 +1,13 @@
 // Symlink following is relied on only for this covered layout. Exclusions: broken links, cyclic links, links escaping a trusted root, sibling repositories, and future harness versions.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { runWrapper } = require('../test-support/snapshot');
+const orientation = require('../scripts/lib/orientation');
 
 const repo = path.resolve(__dirname, '..');
-const responseKeys = ['protocol', 'skill', 'operation', 'result', 'scope', 'evidence_limits', 'data', 'findings', 'next_action'];
 
 function temporaryRoot(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-72-')));
@@ -25,8 +25,7 @@ function installedWrapper(t, store) {
     ? path.join(worktree, '.agents', 'skills')
     : path.join(home, '.agents', 'skills');
 
-  // The repository has no shipped SKILL.md yet, so this fixture copies only
-  // the shipped wrapper tree and does not invent fixture-only skill text.
+  // Wrapper resolution needs the scripts tree; SKILL.md is not part of this path.
   fs.cpSync(path.join(repo, 'scripts'), path.join(release, 'scripts'), { recursive: true });
   fs.mkdirSync(skill, { recursive: true });
   fs.symlinkSync(path.relative(skill, path.join(release, 'scripts')), path.join(skill, 'scripts'), 'dir');
@@ -40,28 +39,20 @@ function installedWrapper(t, store) {
 }
 
 function run(wrapper, cwd, home, payload) {
-  return childProcess.spawnSync(process.execPath, [wrapper], {
+  return runWrapper(wrapper, {
+    protocol: 'okf-wrapper/1', skill: 'okf-read', operation: 'orient', invocation: 'automatic', payload,
+  }, {
     cwd,
     env: { ...process.env, HOME: home },
-    input: JSON.stringify({ protocol: 'okf-wrapper/1', skill: 'okf-read', operation: 'orient', invocation: 'automatic', payload }),
-    encoding: 'utf8',
-  }).stdout;
-}
-
-function response(stdout) {
-  assert.equal(stdout.endsWith('\n'), true);
-  assert.equal(stdout.split('\n').length, 2);
-  const value = JSON.parse(stdout);
-  assert.deepEqual(Object.keys(value), responseKeys);
-  return value;
+  });
 }
 
 for (const store of ['project', 'global']) {
   test(`${store} skill store resolves the installed wrapper`, (t) => {
     const fixture = installedWrapper(t, store);
-    const value = response(run(fixture.wrapper, fixture.worktree, fixture.home, {
-      cwd: fixture.worktree, harness: 'opencode', context_id: store, logical_cause: 'system-transform', suite_version: '0.1.0',
-    }));
+    const value = run(fixture.wrapper, fixture.worktree, fixture.home, {
+      cwd: fixture.worktree, harness: 'opencode', context_id: store, logical_cause: 'system-transform', suite_version: orientation.suiteVersion,
+    });
 
     assert.equal(value.result, 'clean');
   });
@@ -70,12 +61,13 @@ for (const store of ['project', 'global']) {
 test('a mismatched installed version fails closed with a suite reason', (t) => {
   const fixture = installedWrapper(t, 'project');
   const installedRuntime = path.join(path.dirname(fixture.wrapper), 'lib', 'orientation.js');
-  fs.writeFileSync(installedRuntime, fs.readFileSync(installedRuntime, 'utf8').replace(
-    "const suiteVersion = '0.1.0';", "const suiteVersion = '0.0.0';",
-  ));
-  const value = response(run(fixture.wrapper, fixture.worktree, fixture.home, {
-    cwd: fixture.worktree, harness: 'opencode', context_id: 'mismatch', logical_cause: 'system-transform', suite_version: '0.1.0',
-  }));
+  const source = fs.readFileSync(installedRuntime, 'utf8');
+  const patched = source.replace(`const suiteVersion = '${orientation.suiteVersion}';`, "const suiteVersion = '0.0.0';");
+  assert.notEqual(patched, source);
+  fs.writeFileSync(installedRuntime, patched);
+  const value = run(fixture.wrapper, fixture.worktree, fixture.home, {
+    cwd: fixture.worktree, harness: 'opencode', context_id: 'mismatch', logical_cause: 'system-transform', suite_version: orientation.suiteVersion,
+  });
 
   assert.equal(value.result, 'invalid');
   assert.deepEqual(value.findings, [{

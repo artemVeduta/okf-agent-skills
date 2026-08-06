@@ -4,7 +4,10 @@ Read `docs/spec/okf-agent-skills-v0.1.0-completion.md` and
 `docs/spec/okf-agent-skills-v0.1.0.md` before a behavioral change. Four rules
 apply on top:
 
-- **Zero dependencies.** Nothing outside the Node.js standard library.
+- **Zero dependencies.** The shipped runtime, skills, and adapters use
+  nothing outside the Node.js standard library, and the deterministic suite
+  runs without any `package.json`. The non-gating `eval/` slice is the one
+  development-only exception.
 - **One contract seam.** Only a skill's wrapper script, run as a process, is
   a tested contract boundary.
 - **No invented value for an open specification row.** An `Open` row in

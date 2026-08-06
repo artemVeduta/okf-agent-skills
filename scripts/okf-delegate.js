@@ -13,7 +13,8 @@ function dispatchFinding(code, skill, extra) {
   return { code, origin: 'suite', severity: 'error', blocks: true, detail: { gate: 'delegation', skill, ...extra } };
 }
 
-function dispatch(skill, request) {
+function dispatch(request) {
+  const skill = request.skill;
   const wrapperPath = path.join(__dirname, `${skill}.js`);
   if (!fs.existsSync(wrapperPath)) {
     return { status: 'blocked: missing-skill', findings: [dispatchFinding('MISSING_SKILL', skill)], next_action: NEXT_ACTION };
@@ -47,7 +48,7 @@ function main() {
     }
     try {
       const validated = delegation.validateBrief(brief);
-      const response = validated.ok ? dispatch(delegation.ROLES[brief.role].skill, validated.request) : validated;
+      const response = validated.ok ? dispatch(validated.request) : validated;
       emit(delegation.receipt(brief, response));
       process.exitCode = 0;
     } catch (error) {

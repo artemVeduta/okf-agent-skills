@@ -4,20 +4,13 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { snapshot } = require('../test-support/snapshot');
+const { runAdapterCli: runCli, snapshot, temporaryRoot } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const scriptsRoot = path.join(repo, 'scripts');
 const skillsRoot = path.join(repo, 'skills');
-const cliWrapper = path.join(scriptsRoot, 'okf-adapter.js');
 const skills = ['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review'];
 const harnesses = ['claude-code', 'codex', 'opencode'];
-
-function temporaryRoot(t, prefix = 'okf-96-') {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
-}
 
 // How an installer must copy a source skill: the `scripts` symlink is
 // dereferenced into real files, so the installed skill carries its own
@@ -51,11 +44,6 @@ function runInstalledWrapper(skillRoot, name, request, cwd) {
 
 function admitRequest(bundle) {
   return { protocol: 'okf-wrapper/1', skill: 'okf-read', operation: 'admit', payload: { cwd: bundle, candidates: [] } };
-}
-
-function runCli(args) {
-  const result = childProcess.spawnSync(process.execPath, [cliWrapper, ...args], { encoding: 'utf8' });
-  return { status: result.status, stderr: result.stderr, response: JSON.parse(result.stdout) };
 }
 
 function runInstalledHook(targetDir, harness, stdin) {
@@ -166,7 +154,7 @@ test('the installed hook produces orientation by running its target-local okf-re
   // dispatch is a child process of that file, not an in-process call into
   // the repository checkout.
   const localWrapper = path.join(targetDir, 'okf-agent-skills', 'scripts', 'okf-read.js');
-  fs.writeFileSync(localWrapper, 'process.stdout.write(JSON.stringify({ result: "clean", data: { bundle: { bundle_alias: "sentinel-alias" }, root_index_path: "sentinel/index.md" } }) + "\\n");\n');
+  fs.writeFileSync(localWrapper, 'process.stdout.write(JSON.stringify({ protocol: "okf-wrapper/1", result: "clean", data: { bundle: { bundle_alias: "sentinel-alias" }, root_index_path: "sentinel/index.md" } }) + "\\n");\n');
   const stubbed = runInstalledHook(targetDir, 'claude-code', { cwd: bundle, session_id: 'sess-b', source: 'startup' });
   assert.equal(stubbed.status, 0);
   assert.match(stubbed.stdout, /OKF orientation: bundle sentinel-alias, root index sentinel\/index\.md\./);

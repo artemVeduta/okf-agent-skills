@@ -12,12 +12,19 @@ gate or product behavior.
   network, harness process, or model call.
 - For `v0.1.0`, use a short manual smoke run outside the release gate. Run it
   in each supported harness when credentials are available.
-- For `v0.2.0`, add an optional repository-local runner only if repeated manual
-  runs become a real maintenance cost.
-- If that runner is added, use repository-local JSON data and the Node.js
+- For `v0.1.0`, a non-gating, development-only Flue slice was also added under
+  `eval/`. It runs outside `node --test "test/*.test.js"`, and its recorded
+  runs are in [`docs/flue-eval-results.md`](../flue-eval-results.md). See
+  [`eval/README.md`](../../eval/README.md) for the setup.
+- For a native-harness runner, use repository-local JSON data and the Node.js
   standard library. Do not add a framework or service.
-- Do not use Flue as the native harness evaluator. Its current eval path puts
-  skill text in a model prompt. It does not test native skill discovery.
+- Do not use `skills-autoresearch-flue` as the native harness evaluator. Its
+  alpha eval path serializes candidate skill text into the producer prompt; it
+  does not test native skill discovery.
+- The Flue framework itself is used only for the non-gating activation eval in
+  `eval/` (one dependency, `@flue/runtime`), which exercises Flue's own
+  workspace-skill discovery, not native Claude Code, Codex, or OpenCode
+  discovery.
 - Do not use Langfuse as the runner. Langfuse can store and compare results,
   but application code must still run each task.
 
@@ -81,7 +88,7 @@ answer.
 | --- | --- | --- | --- | --- | --- | --- |
 | Manual smoke run | Yes | Manual copy or temporary clone | Possible, but slow | Non-gating only | Harness or provider credentials | No code |
 | Local JSON plus Node.js runner | Yes, because it starts each native CLI | Automatic temporary directory per trial | Simple skill/no-skill pairs and repeated runs | Optional, non-gating job only | Harness or provider credentials | One data file and one runner |
-| Flue harness | No, not for this use | Its own generated phase workspaces | Strong loop support | Separate system and dependency set | Anthropic plus its secret tools | High |
+| `skills-autoresearch-flue` | No, not for this use | Its own generated phase workspaces | Strong loop support | Separate system and dependency set | Anthropic plus its secret tools | High |
 | Langfuse | Only through a separate task runner | The task runner must provide it | Strong storage and comparison features | Supported, but adds network services and SDKs | Langfuse plus model and harness credentials | Medium to high |
 
 ### Manual Smoke Run
@@ -98,8 +105,8 @@ confidence. It is a smoke check, not a release gate.
 
 ### Repository-Local JSON Plus Node.js Runner
 
-This is the smallest useful automation for `v0.2.0`. Node.js already supplies
-the required parts:
+For a future native-harness runner, Node.js already supplies the required
+parts:
 
 - `node:child_process` starts a CLI with an argument array, selected working
   directory, environment, timeout, and captured streams.[R12]
@@ -108,19 +115,25 @@ the required parts:
 - `node:test` and `node:assert` can check the runner itself without another
   package. The test runner sets a failure exit code when a test fails.[R14]
 
-Keep the design small:
+The shipped, non-gating Flue slice follows this small shape:
 
 ```text
 eval/
-  cases.json
-  run.mjs
+  run.js
+  agent.js
+  cases/activation.eval.js
+  cases/wrapper-contract.eval.js
+  lib/
 ```
 
-Each case needs only a stable ID, fixture path, prompt, harness command, trial
-count, skill mode, timeout, and deterministic outcome checks. `skill mode`
-must support `with-skill` and `without-skill`. The runner must create a new
-workspace for every trial, install or omit the skill, start the native CLI,
-capture its events and final files, run the checks, and write one JSON result.
+Each shipped case has a stable ID, kind, description, and run function. The
+runner creates a new fixture workspace for every case. Activation cases use a
+live Flue agent; the wrapper-contract case checks the real wrapper process
+without a model.
+
+A future native-harness runner must also install or omit the skill, start the
+native CLI, capture its events and final files, run deterministic checks, and
+write one JSON result per trial.
 
 Use the no-skill run as an ablation. It shows whether the skill changes task
 success. Use repeated trials before comparing rates, and record the trial count
@@ -131,46 +144,17 @@ Do not put live cases under `test/`. Keep runner self-tests deterministic and
 keep live runs behind an explicit command. A scheduled or manually started CI
 job can publish its JSON artifact, but it must not block `v0.1.0`.
 
-### Flue
+### `skills-autoresearch-flue`
 
-The examined project identifies itself as an alpha skills autoresearch harness.
-It has separate researcher, producer, and judge model phases.[R15] Its package
-requires Node.js 24, pnpm, `@flue/runtime`, Valibot, and a set of development
-packages.[R16] Its model-backed flow uses Anthropic credentials through Varlock
-and 1Password.[R15]
-
-The important mismatch is fidelity. Its guide states that the alpha eval path
-serializes all text candidate-skill files into the producer prompt. It does not
-execute candidate scripts or load resources on demand.[R17] The source builds a
-producer prompt from copied input, reference, and skill files, then dispatches
-that prompt to a Flue producer agent.[R18][R19] This tests the effect of supplied
-skill instructions. It does not test whether Claude Code, Codex, or OpenCode
-discovers and invokes this repository's installed skill.
-
-Flue has useful ideas for a later improvement loop: separate producer and
-judge roles, baseline comparison, cost tracking, and saved artifacts. Adopting
-its current system for this repository would add more code and dependencies
-than a native CLI runner, while it would test a different boundary.
+The alpha harness serializes candidate skill text into a producer prompt, so it
+does not test native skill discovery; see the dedicated
+[`skills-autoresearch-flue` assessment](./flue-skill-evaluation.md).
 
 ### Langfuse
 
-Langfuse supplies datasets, experiments, scores, tracing, and result comparison.
-Its SDK experiment runner loops an application task over local or hosted data.
-The user still supplies the task function.[R20][R21] Thus, Langfuse does not
-start these three native agents by itself. A separate harness runner is still
-necessary.
-
-The JavaScript example adds Langfuse packages, OpenTelemetry, and an application
-model client. It sends traces to Langfuse and requires an explicit flush.[R20]
-The CI integration needs Langfuse public and secret keys, SDK packages, network
-access, and usually provider keys for the evaluated application.[R22] These
-requirements conflict with this repository's zero-dependency deterministic
-gate, although an independent optional job could use them.
-
-Langfuse becomes useful only after local JSON artifacts are insufficient. Add
-it when maintainers need shared dashboards, annotation queues, production trace
-sampling, or long-term experiment comparison. Until then, the local result file
-is the simpler source of evidence.
+Langfuse can store and compare results, but it does not start the three native
+agents; see the dedicated
+[`Langfuse assessment`](./langfuse-coding-agent-skill-evaluation.md).
 
 ## Recommended Sequence
 
@@ -181,7 +165,11 @@ is the simpler source of evidence.
    available.
 3. Record `not observable` instead of failure when a harness does not expose a
    documented skill-invocation event.
-4. Do not add Flue, Langfuse, a judge model, or evaluation CI.
+4. Do not add Langfuse, a judge model, or evaluation CI.
+5. The one model-backed addition taken is the non-gating Flue slice under
+   `eval/`. It is development-only tooling: it adds no dependency to `skills/`,
+   `scripts/`, `adapters/`, or `agents/`, and it runs outside the release gate.
+   Its results are evidence, never a gate.
 
 ### `v0.2.0`
 
@@ -212,7 +200,7 @@ policy, and failure policy.
 - **R2.** Repository contribution rules, [What a good test is here](../../CONTRIBUTING.md#what-a-good-test-is-here).
 - **R3.** Anthropic, [Run Claude Code programmatically](https://code.claude.com/docs/en/headless).
 - **R4.** Anthropic, [Hooks reference](https://code.claude.com/docs/en/hooks).
-- **R5.** OpenAI, [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive).
+- **R5.** OpenAI, [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode) (the former `developers.openai.com` URL redirects here).
 - **R6.** OpenAI, [Codex developer commands](https://developers.openai.com/codex/cli/reference).
 - **R7.** OpenAI, [Build skills](https://developers.openai.com/codex/skills).
 - **R8.** OpenCode, [CLI](https://opencode.ai/docs/cli/).
@@ -222,11 +210,3 @@ policy, and failure policy.
 - **R12.** Node.js, [`child_process.spawn`](https://nodejs.org/api/child_process.html#child_processspawncommand-args-options).
 - **R13.** Node.js, [`fsPromises.mkdtemp`](https://nodejs.org/api/fs.html#fspromisesmkdtempprefix-options) and [`fsPromises.cp`](https://nodejs.org/api/fs.html#fspromisescpsrc-dest-options).
 - **R14.** Node.js, [`node:test`](https://nodejs.org/api/test.html#test-runner).
-- **R15.** `skills-autoresearch-flue`, [README at commit `ecd77cf`](https://github.com/schalkneethling/skills-autoresearch-flue/blob/ecd77cfeb95d2fdddba297bfbfff65ee393a096f/README.md).
-- **R16.** `skills-autoresearch-flue`, [`package.json` at commit `ecd77cf`](https://github.com/schalkneethling/skills-autoresearch-flue/blob/ecd77cfeb95d2fdddba297bfbfff65ee393a096f/package.json).
-- **R17.** `skills-autoresearch-flue`, [Using the Harness at commit `ecd77cf`](https://github.com/schalkneethling/skills-autoresearch-flue/blob/ecd77cfeb95d2fdddba297bfbfff65ee393a096f/docs/using-the-harness.md#candidate-skill-resources).
-- **R18.** `skills-autoresearch-flue`, [`model-agent.ts` at commit `ecd77cf`](https://github.com/schalkneethling/skills-autoresearch-flue/blob/ecd77cfeb95d2fdddba297bfbfff65ee393a096f/src/model-agent.ts).
-- **R19.** `skills-autoresearch-flue`, [`flue-harness.ts` at commit `ecd77cf`](https://github.com/schalkneethling/skills-autoresearch-flue/blob/ecd77cfeb95d2fdddba297bfbfff65ee393a096f/src/flue-harness.ts).
-- **R20.** Langfuse, [Experiments via SDK](https://langfuse.com/docs/evaluation/experiments/experiments-via-sdk).
-- **R21.** Langfuse, [Datasets](https://langfuse.com/docs/evaluation/experiments/datasets).
-- **R22.** Langfuse, [Experiments in CI/CD](https://langfuse.com/docs/evaluation/experiments/experiments-ci-cd).

@@ -8,5 +8,4 @@ the maintainer without a public issue, pull request, or discussion.
 
 ## Supported versions
 
-No version is tagged yet. Until `v0.1.0` ships, only the `main` branch
-receives fixes.
+`v0.1.0` is the supported release; only its tag and `main` receive fixes.

@@ -36,4 +36,4 @@ function main(skill, services) {
   });
 }
 
-module.exports = { main };
+module.exports = { diagnostic, main };

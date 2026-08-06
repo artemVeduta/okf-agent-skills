@@ -1,10 +1,6 @@
-// Red-before-green seam: the wrapper-process contract classifier's pure
-// branches. `test/` already spawns the real wrapper and asserts `applied`
-// (test/write-gate.test.js, test/issue-53.test.js, test/issue-64.test.js)
-// and exit 64 (test/issue-48.test.js, test/issue-52.test.js) at the one
-// gated contract seam (AGENTS.md). Duplicating that here, outside the
-// release gate, would let a regression there go silent, so this file
-// checks only classifyWrapperExit itself, against literal fixtures.
+// The wrapper-process contract classifier's pure branches. The gated suite
+// under `test/` owns the real wrapper spawn (AGENTS.md, one contract seam).
+// This file checks only `classifyWrapperExit` against literal fixtures.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 

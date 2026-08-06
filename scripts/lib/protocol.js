@@ -1,5 +1,18 @@
 const requestKeys = ['protocol', 'skill', 'operation', 'payload', 'task_kind', 'scope', 'target', 'settings', 'invocation', 'brief'];
 const responseKeys = ['protocol', 'skill', 'operation', 'result', 'scope', 'evidence_limits', 'data', 'findings', 'next_action'];
+const requiredPayload = new Map([
+  ['create', ['cwd', 'bundle', 'concept']],
+  ['revise', ['cwd', 'bundle', 'concept']],
+  ['format', ['cwd', 'bundle', 'concept']],
+  ['relationship', ['cwd', 'bundle', 'concept']],
+  ['machine-verify', ['cwd', 'bundle', 'concept']],
+  ['sync', ['cwd', 'bundle', 'concept']],
+  ['review', ['cwd', 'bundle', 'concept']],
+  ['resolve', ['cwd']],
+  ['read', ['cwd', 'target']],
+  ['search', ['cwd', 'query']],
+  ['orient', ['cwd', 'harness', 'context_id', 'logical_cause']],
+]);
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -33,26 +46,12 @@ function parseRequest(text, expectedSkill) {
   if (obj.operation === 'sync' && obj.invocation === undefined) {
     throw new Error('Missing invocation');
   }
-  const boundedOperation = ['create', 'revise', 'format', 'relationship', 'machine-verify', 'sync'].includes(obj.operation);
-  if (boundedOperation && (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '')) {
-    throw new Error('Missing payload.cwd');
-  }
-  if (boundedOperation && (
-    typeof obj.payload.bundle !== 'string' || obj.payload.bundle === '' ||
-    typeof obj.payload.concept !== 'string' || obj.payload.concept === ''
-  )) {
-    throw new Error('Missing payload.bundle or payload.concept');
-  }
-  if (obj.skill === 'okf-review' && obj.operation === 'review') {
-    if (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '') {
-      throw new Error('Missing payload.cwd');
+  for (const field of requiredPayload.get(obj.operation) || []) {
+    if (typeof obj.payload[field] !== 'string' || obj.payload[field] === '') {
+      throw new Error(`Missing payload.${field}`);
     }
-    if (
-      typeof obj.payload.bundle !== 'string' || obj.payload.bundle === '' ||
-      typeof obj.payload.concept !== 'string' || obj.payload.concept === ''
-    ) {
-      throw new Error('Missing payload.bundle or payload.concept');
-    }
+  }
+  if (obj.operation === 'review') {
     if (Object.hasOwn(obj.payload, 'today') && (typeof obj.payload.today !== 'string' || !isISODate(obj.payload.today))) {
       throw new Error('Invalid payload.today');
     }
@@ -74,21 +73,6 @@ function parseRequest(text, expectedSkill) {
     }
   }
   if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');
-  if (obj.operation === 'read') {
-    if (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '') throw new Error('Missing payload.cwd');
-    if (typeof obj.payload.target !== 'string' || obj.payload.target === '') throw new Error('Missing payload.target');
-  }
-  if (obj.operation === 'search') {
-    if (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '') throw new Error('Missing payload.cwd');
-    if (typeof obj.payload.query !== 'string' || obj.payload.query === '') throw new Error('Missing payload.query');
-  }
-  if (obj.operation === 'route' && typeof obj.payload.concept !== 'string') throw new Error('Missing payload.concept');
-  if (obj.operation === 'orient') {
-    if (typeof obj.payload.cwd !== 'string' || obj.payload.cwd === '') throw new Error('Missing payload.cwd');
-    if (typeof obj.payload.harness !== 'string' || obj.payload.harness === '') throw new Error('Missing payload.harness');
-    if (typeof obj.payload.context_id !== 'string' || obj.payload.context_id === '') throw new Error('Missing payload.context_id');
-    if (typeof obj.payload.logical_cause !== 'string' || obj.payload.logical_cause === '') throw new Error('Missing payload.logical_cause');
-  }
 
   return obj;
 }

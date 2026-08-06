@@ -4,16 +4,22 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { snapshot } = require('../test-support/snapshot');
+const { runSilent, runWrapper, snapshot } = require('../test-support/snapshot');
 
 const readWrapper = path.join(__dirname, '..', 'scripts', 'okf-read.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
-const responseKeys = ['protocol', 'skill', 'operation', 'result', 'scope', 'evidence_limits', 'data', 'findings', 'next_action'];
 const orientationDataKeys = ['activation', 'bundle', 'root_index_path', 'workspace_health', 'occurrence_key'];
-const emptyBundleFields = { bundle: null, root_index_path: null, workspace_health: null };
 
 function assertDataKeys(response) {
   assert.deepEqual(Object.keys(response.data), orientationDataKeys);
+}
+
+function assertNoBundle(response) {
+  assert.deepEqual({
+    bundle: response.data.bundle,
+    root_index_path: response.data.root_index_path,
+    workspace_health: response.data.workspace_health,
+  }, { bundle: null, root_index_path: null, workspace_health: null });
 }
 
 function repository(t, prefix = 'okf-66-') {
@@ -55,20 +61,7 @@ function run(wrapper, request) {
 }
 
 function runOk(wrapper, request) {
-  const result = run(wrapper, request);
-  assert.equal(result.status, 0);
-  assert.equal(result.stderr, '');
-  const response = JSON.parse(result.stdout);
-  assert.deepEqual(Object.keys(response), responseKeys);
-  assert.equal(result.stdout, `${JSON.stringify(response)}\n`);
-  return response;
-}
-
-function runSilent(wrapper, request) {
-  const result = run(wrapper, request);
-  assert.equal(result.status, 0);
-  assert.equal(result.stderr, '');
-  assert.equal(result.stdout, '');
+  return runWrapper(wrapper, request);
 }
 
 test('orient reports not-configured when the activation marker is absent', (t) => {
@@ -81,7 +74,7 @@ test('orient reports not-configured when the activation marker is absent', (t) =
   assert.equal(response.result, 'not-configured');
   assertDataKeys(response);
   assert.equal(response.data.activation, 'absent');
-  assert.deepEqual({ bundle: response.data.bundle, root_index_path: response.data.root_index_path, workspace_health: response.data.workspace_health }, emptyBundleFields);
+  assertNoBundle(response);
   assert.equal(typeof response.data.occurrence_key, 'string');
   assert.ok(response.data.occurrence_key.length > 0);
   assert.ok(response.findings.length > 0);
@@ -99,7 +92,7 @@ test('orient reports invalid when the activation marker is malformed', (t) => {
   assert.equal(response.result, 'invalid');
   assertDataKeys(response);
   assert.equal(response.data.activation, 'invalid');
-  assert.deepEqual({ bundle: response.data.bundle, root_index_path: response.data.root_index_path, workspace_health: response.data.workspace_health }, emptyBundleFields);
+  assertNoBundle(response);
   assert.equal(typeof response.data.occurrence_key, 'string');
   assert.deepEqual(snapshot(root), before);
 });
@@ -155,7 +148,7 @@ test('orient reports unavailable when the root index cannot be read', (t) => {
   assert.equal(response.result, 'unavailable');
   assertDataKeys(response);
   assert.equal(response.data.activation, 'active');
-  assert.deepEqual({ bundle: response.data.bundle, root_index_path: response.data.root_index_path, workspace_health: response.data.workspace_health }, emptyBundleFields);
+  assertNoBundle(response);
   assert.ok(response.findings.some((finding) => finding.detail.gate === 'orientation'));
   assert.deepEqual(snapshot(root), before);
 });
@@ -169,7 +162,7 @@ test('orient reports degraded for a seam unsupported by the harness', (t) => {
 
   assert.equal(response.result, 'degraded');
   assertDataKeys(response);
-  assert.deepEqual({ bundle: response.data.bundle, root_index_path: response.data.root_index_path, workspace_health: response.data.workspace_health }, emptyBundleFields);
+  assertNoBundle(response);
 });
 
 test('orient emits nothing for a silent lifecycle cause', (t) => {
@@ -195,7 +188,7 @@ test('a duplicate native signal emits no second orientation, and a failed claim 
   assert.equal(failedClaim.result, 'failed');
   assertDataKeys(failedClaim);
   assert.equal(failedClaim.data.occurrence_key, key);
-  assert.deepEqual({ bundle: failedClaim.data.bundle, root_index_path: failedClaim.data.root_index_path, workspace_health: failedClaim.data.workspace_health }, emptyBundleFields);
+  assertNoBundle(failedClaim);
 
   const unavailableClaim = runOk(readWrapper, orientRequest(root, { claimed: [{ occurrence_key: key, outcome: 'unavailable' }] }));
   assert.equal(unavailableClaim.result, 'failed');

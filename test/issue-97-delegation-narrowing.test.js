@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
-const fs = require('node:fs');
 const path = require('node:path');
+const { adapterManifest: manifest } = require('../test-support/snapshot');
 
 // Issue #97 records the narrowed delegated-execution and settings claims
 // from issue #91: no v0.1.0 adapter installs a delegated agent definition,
@@ -12,13 +12,8 @@ const path = require('node:path');
 // "Narrowed claims (issue #91, issue #97)".
 
 const repo = path.resolve(__dirname, '..');
-const adaptersDir = path.join(repo, 'adapters');
 const bridgeWrapper = path.join(repo, 'scripts', 'adapter-bridge.js');
 const harnesses = ['claude-code', 'codex', 'opencode'];
-
-function manifest(harness) {
-  return JSON.parse(fs.readFileSync(path.join(adaptersDir, harness, 'manifest.json'), 'utf8'));
-}
 
 function runBridge(harness, skill) {
   return childProcess.spawnSync(process.execPath, [bridgeWrapper, harness, skill], {
@@ -30,8 +25,8 @@ test('no adapter manifest installs entry names an agents/ path', () => {
   for (const harness of harnesses) {
     const declared = manifest(harness);
     for (const entry of declared.installs) {
-      assert.ok(!entry.source.startsWith('agents/'), `${harness}:${entry.source}`);
-      assert.ok(!entry.target.startsWith('agents/'), `${harness}:${entry.target}`);
+      assert.equal(entry.source.split('/').includes('agents'), false, `${harness}:${entry.source}`);
+      assert.equal(entry.target.split('/').includes('agents'), false, `${harness}:${entry.target}`);
     }
   }
 });

@@ -54,7 +54,8 @@ function enumerate(root, payload) {
 test('enumerate reports inline Markdown inbound links without writes', (t) => {
   const root = bundle(t);
   fs.writeFileSync(path.join(root, 'target.md'), '---\ntype: Note\n---\n# Target\n');
-  fs.writeFileSync(path.join(root, 'source.md'), '---\ntype: Note\n---\nSee [target](target.md).\n');
+  const source = '---\ntype: Note\n---\nSee [target](target.md).\n';
+  fs.writeFileSync(path.join(root, 'source.md'), source);
   const before = snapshot(root);
 
   const response = enumerate(root);
@@ -65,7 +66,7 @@ test('enumerate reports inline Markdown inbound links without writes', (t) => {
     incomplete_reasons: [],
     links: [{
       carrier: 'markdown.inline',
-      source: { bundle_alias: '.', path: 'source.md', byte_offset: 32 },
+      source: { bundle_alias: '.', path: 'source.md', byte_offset: source.indexOf('target.md') },
       reference: 'target.md',
       verdict: 'resolves',
     }],
@@ -84,7 +85,7 @@ test('enumerate discovers each required link carrier', (t) => {
     bundles: [{ alias: 'main', owner: 'app', root: '.', required: true, mode: 'source' }],
   }));
   fs.writeFileSync(path.join(root, 'target.md'), '---\ntype: Note\n---\n# Target\n');
-  fs.writeFileSync(path.join(root, 'source.md'), `---
+  const source = `---
 type: Note
 resource: target.md
 sources:
@@ -98,7 +99,8 @@ attester:
 [inline](target.md)
 [reference]: target.md
 [workspace](okf-workspace://main/target)
-`);
+`;
+  fs.writeFileSync(path.join(root, 'source.md'), source);
 
   const response = enumerate(root);
 
@@ -155,7 +157,7 @@ Prose target.md is not a link.
 test('enumerate follows parsed frontmatter paths and source locations', (t) => {
   const root = bundle(t);
   fs.writeFileSync(path.join(root, 'target.md'), '---\ntype: Note\n---\n# Target\n');
-  fs.writeFileSync(path.join(root, 'source.md'), `---
+  const source = `---
 type: Note
 resource: target.md
 metadata:
@@ -170,16 +172,18 @@ attester:
   resource: target.md
 ---
 # Source
-`);
+`;
+  fs.writeFileSync(path.join(root, 'source.md'), source);
+  const offsets = [...source.matchAll(/target\.md/g)].map((match) => match.index);
 
   const response = enumerate(root);
 
   assert.equal(response.result, 'ok');
   assert.deepEqual(response.data.inbound_links.links.map((link) => ({ carrier: link.carrier, reference: link.reference, byte_offset: link.source.byte_offset })), [
-    { carrier: 'frontmatter.resource', reference: 'target.md', byte_offset: 25 },
-    { carrier: 'frontmatter.sources[].resource', reference: 'target.md', byte_offset: 90 },
-    { carrier: 'frontmatter.executor.resource', reference: 'target.md', byte_offset: 134 },
-    { carrier: 'frontmatter.attester.resource', reference: 'target.md', byte_offset: 188 },
+    { carrier: 'frontmatter.resource', reference: 'target.md', byte_offset: offsets[0] },
+    { carrier: 'frontmatter.sources[].resource', reference: 'target.md', byte_offset: offsets[2] },
+    { carrier: 'frontmatter.executor.resource', reference: 'target.md', byte_offset: offsets[3] },
+    { carrier: 'frontmatter.attester.resource', reference: 'target.md', byte_offset: offsets[5] },
   ]);
 });
 
@@ -308,8 +312,9 @@ test('unlisted identity changes and unsupported writer payloads do not write', (
     const response = run(writeWrapper, root, 'okf-write', 'revise', {
       task_kind: 'fix', concept: 'note.md', set: { title: 'Changed' }, evidence: ['evidence.md'], ...payload,
     });
-    assert.equal(response.result, 'blocked');
-    assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
-    assert.equal(snapshot(root), before);
+    const label = JSON.stringify(payload);
+    assert.equal(response.result, 'blocked', label);
+    assert.equal(response.data.code, 'UNSUPPORTED_INPUT', label);
+    assert.equal(snapshot(root), before, label);
   }
 });

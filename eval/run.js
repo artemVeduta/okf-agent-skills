@@ -12,7 +12,7 @@ import { createFixture, repoRoot } from './lib/fixture.js';
 import { BlockedCase, runCase } from './lib/report.js';
 
 import { CASES as ACTIVATION_CASES, activationCaseModule } from './cases/activation.eval.js';
-import * as wrapperContract from './cases/wrapper-contract.eval.js';
+import { CASE as wrapperContract } from './cases/wrapper-contract.eval.js';
 
 const CASES = [...ACTIVATION_CASES.map(activationCaseModule), wrapperContract];
 
@@ -28,9 +28,11 @@ const CREDENTIAL_FAILURE = /provider is not configured|\b401\b|invalid api key/i
 
 // The provider can also drop a stream or rate-limit the run. That is outside
 // the case's own logic, so it reports `blocked`, not `fail`. A `fail` must
-// mean the OKF skills did something wrong. Observed: a `deepseek-v4-pro` run
-// that ended with "Stream ended without finish_reason", and passed on retry.
-const PROVIDER_TRANSPORT_FAILURE = /stream ended without finish_reason|\b(429|5\d\d)\b|overloaded|rate limit/i;
+// mean the OKF skills did something wrong. The runtime reports a dropped
+// stream as "Stream ended without finish_reason"; recorded runs are in
+// docs/flue-eval-results.md.
+const PROVIDER_TRANSPORT_FAILURE =
+  /stream ended without finish_reason|overloaded|rate limit|too many requests|internal server error|bad gateway|service unavailable|gateway timeout/i;
 
 // The runtime puts the provider's own words in `meta.reason`. It leaves
 // `cause` undefined for both conditions above.
@@ -62,7 +64,7 @@ async function dispatchAndCollect({ fixtureRoot, prompt }) {
     }
     // The runtime's own message says only that the run failed. The provider's
     // words are in `meta.reason`. Report both, or the record says nothing.
-    throw new Error(reason, { cause: error });
+    throw new Error(reason || String(error), { cause: error });
   }
   return { activated };
 }

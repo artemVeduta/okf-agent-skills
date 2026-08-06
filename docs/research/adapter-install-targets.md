@@ -99,9 +99,10 @@ anything and does not conflict with hook discovery. Consistent: verified.
 **Citations (first-party, OpenAI's own current docs, checked 2026-08-05):**
 
 - [Hooks](https://learn.chatgpt.com/docs/hooks) (redirects from
-  `developers.openai.com/codex/hooks`) — the four standalone locations quoted above:
-  `~/.codex/hooks.json`, `~/.codex/config.toml`, `<repo>/.codex/hooks.json`,
-  `<repo>/.codex/config.toml`, and the project-trust gating rule.
+  `developers.openai.com/codex/hooks`) — the standalone hook locations named
+  above, plus the two `config.toml` layers Codex reads from the same
+  directories: `~/.codex/config.toml` and `<repo>/.codex/config.toml`; also the
+  project-trust gating rule.
 - [Advanced configuration](https://learn.chatgpt.com/docs/config-file/config-advanced)
   (redirects from `developers.openai.com/codex/config-advanced`) — `CODEX_HOME` defaulting to
   `~/.codex`, and hooks loading from every configuration layer concurrently.
@@ -110,55 +111,46 @@ anything and does not conflict with hook discovery. Consistent: verified.
 
 ## OpenCode
 
-**No single recommended target directory closes the gap. This is a recorded, evidenced,
-partial inconsistency in `adapters/opencode/manifest.json`'s `installs` list, not a fully
-usable adapter at any one directory.**
+**The plugin target is addressable. The permission configuration is not installed by the
+adapter and stays a manual step, so this row carries a recorded gap rather than a readiness
+claim.**
 
-**What is verified.** OpenCode reads its own JSON config file — file names `opencode.json` and
-`opencode.jsonc` project-side — but its **global** config loader additionally accepts a third,
-legacy file name, `config.json`, and accepts it only inside the single global config directory
-(`$XDG_CONFIG_HOME/opencode`, i.e. `~/.config/opencode/` when `XDG_CONFIG_HOME` is unset, or
-`$OPENCODE_CONFIG_DIR` when that flag is set). The project-level loader (any directory ending
-in `.opencode`, walked from the working directory to the git root) checks only `opencode.json`
-and `opencode.jsonc` — **not** `config.json`. So `adapters/opencode/config.json` is only ever
-picked up as configuration if it lands directly inside the global config directory, never
-inside a project's `.opencode/`.
+**What is verified.** OpenCode discovers plugin scripts by globbing `{plugin,plugins}/*.{ts,js}`
+**inside** either the single global config directory (`$XDG_CONFIG_HOME/opencode`, i.e.
+`~/.config/opencode/` when `XDG_CONFIG_HOME` is unset, or `$OPENCODE_CONFIG_DIR` when that flag
+is set) or a project's `.opencode/` directory — i.e. a plugin file must sit in a `plugin/` or
+`plugins/` subdirectory one level below the directory that also holds the config file, never
+flat alongside it.
 
-Separately, OpenCode discovers plugin scripts by globbing `{plugin,plugins}/*.{ts,js}`
-**inside** either the global config directory or a project's `.opencode/` directory — i.e. a
-plugin file must sit in a `plugin/` or `plugins/` subdirectory one level below the directory
-that also holds the config file, never flat alongside it.
+OpenCode reads its own JSON config file separately. Its **global** loader accepts
+`opencode.jsonc`, `opencode.json`, and a third, legacy file name, `config.json`, and accepts
+the legacy name only inside the global config directory. The project-level loader (any
+directory ending in `.opencode`, walked from the working directory to the git root) checks only
+`opencode.json` and `opencode.jsonc` — **not** `config.json`.
 
-**The conflict.** `adapters/opencode/manifest.json`'s `installs` list places `config.json`,
-`plugin.js`, and `manifest.json` all flat, directly in one target directory:
+**Cross-check against the shipped manifest.** `adapters/opencode/manifest.json`'s `installs`
+list has exactly two entries:
 
 ```
-config.json   -> config.json
-plugin.js     -> plugin.js
+plugin.js     -> plugins/okf-agent-skills.js
 manifest.json -> manifest.json
 ```
 
-No single target directory satisfies both discovery rules at once:
+`plugins/okf-agent-skills.js` matches the plugin glob under either candidate directory — the
+global config directory (`~/.config/opencode/`) or a project's `.opencode/`. So the file that
+wires the adapter into `experimental.chat.system.transform`, and performs the orientation
+injection this suite depends on, lands where OpenCode looks for it. The second entry,
+`manifest.json`, is this suite's own installation record; OpenCode never reads it, and it is
+inert wherever it lands.
 
-- Target = the global config directory (`~/.config/opencode/`): `config.json` is read
-  correctly (it is one of the three accepted global filenames). `plugin.js` is **not**
-  discovered — it needs to be one level deeper, in a `plugin/` or `plugins/` child directory,
-  and the manifest does not place it there.
-- Target = a project's `.opencode/` directory: `plugin.js` still needs a `plugin/`/`plugins/`
-  child directory to be discovered, and separately `config.json` is never a recognized
-  filename at project scope at all (only `opencode.json`/`opencode.jsonc` are), so the config
-  file is inert either way.
-
-`plugin.js` is the file that actually wires the adapter into
-`experimental.chat.system.transform` — it is the only one of the three that performs the
-orientation injection this suite depends on. Under either candidate directory the adapter, as
-currently packaged, cannot both apply its `config.json` permission defaults and load its
-`plugin.js` orientation hook from one flat target directory.
-
-Fixing the layout (for example, by nesting `plugin.js` under `plugin/` in the adapter's own
-source tree) is an adapter-code change outside this research ticket. This gap blocks only the OpenCode row of the install
-documentation; it does not block Claude Code's or Codex's rows above, and it does not imply
-anything about either of those harnesses.
+**What stays open.** The adapter installs no configuration file, so it applies no permission
+defaults of its own. The manifest's `next_action` names the remaining manual step: merge the
+`permission.skill` deny rules for `okf`, `okf-read`, `okf-write`, `okf-lifecycle`, and
+`okf-review` into the applicable `opencode.json` or `opencode.jsonc`, after any broader
+permission pattern so a deny rule stays the last matching rule. Until a person performs that
+merge, an install of this adapter is incomplete. This gap belongs to the OpenCode row only; it
+does not block Claude Code's or Codex's rows above, and it implies nothing about either of
+those harnesses.
 
 **Searches already tried, so a future reader does not repeat them:**
 
@@ -194,4 +186,4 @@ may be removed).
 | :---------- | :-------------------------- | :---------- | :-------------------------------------------------------------- |
 | claude-code | `~/.claude/skills/<name>/`  | per-user    | Verified, consistent with `manifest.json`                      |
 | codex       | `<repo>/.codex/`            | per-project | Verified, consistent with `manifest.json`; `~/.codex/` also valid (per-user) |
-| opencode    | *(none — recorded gap)*     | n/a         | Verified evidence found; the manifest's flat file layout is not fully addressable by any one directory. See above. |
+| opencode    | `~/.config/opencode/` or `<repo>/.opencode/` | per-user or per-project | Plugin target verified, consistent with `manifest.json`; the `permission.skill` deny rules are a recorded manual merge, not installed. See above. |

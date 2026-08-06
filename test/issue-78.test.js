@@ -207,7 +207,6 @@ function preWriteBlock(t, code, set) {
   assert.ok(finding, `expected ${code}`);
   assert.equal(finding.origin, 'okf');
   assert.equal(fs.readFileSync(path.join(root, 'note.md'), 'utf8'), before);
-  return root;
 }
 
 test('a reserved bundle file that fails to parse is reported by the pre-write gate', (t) => {

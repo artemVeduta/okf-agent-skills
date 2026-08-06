@@ -2,17 +2,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const cp = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
+const { bundle, repository } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-read.js');
 
 function rootFor(t) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-51-links-')));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
-  fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  const root = repository(t, 'okf-51-links-');
+  bundle(root);
   return root;
 }
 
@@ -78,21 +75,24 @@ test('validate reports a directory target as an unexpectedly broken link', (t) =
   });
 });
 
-test('validate keeps Markdown-link verdicts independent of status and an earlier search', (t) => {
+test('validate keeps Markdown-link verdicts independent of status and earlier navigation', (t) => {
   const root = rootFor(t);
   write(root, 'deprecated.md', '---\ntype: Note\nstatus: deprecated\n---\n# Deprecated\n');
   write(root, 'links.md', '---\ntype: Note\n---\n[Deprecated](deprecated.md)\n');
 
-  const beforeSearch = validate(root).data.link_verdicts;
-  const search = run(root, 'search', {
-    query: 'Deprecated',
-    candidates: [{ path: root, bundle: '.', declared: true, named_by_user: true }],
+  const beforeNavigation = validate(root).data.link_verdicts;
+  const read = run(root, 'read', {
+    target: 'deprecated',
+    bundle: root,
+    candidates: [{ path: '.', bundle: '.', declared: true, named_by_user: true }],
   });
-  const afterSearch = validate(root).data.link_verdicts;
+  const afterNavigation = validate(root).data.link_verdicts;
 
-  assert.equal(search.operation, 'search');
-  assert.deepEqual(beforeSearch, [
+  assert.equal(read.operation, 'read');
+  assert.equal(read.result, 'ok');
+  assert.deepEqual(read.data.read.map((record) => record.path), ['deprecated.md']);
+  assert.deepEqual(beforeNavigation, [
     { path: 'links.md', resource: 'deprecated.md', verdict: 'resolves' },
   ]);
-  assert.deepEqual(afterSearch, beforeSearch);
+  assert.deepEqual(afterNavigation, beforeNavigation);
 });

@@ -204,10 +204,8 @@ _Avoid_: Automatic writer, authority holder, unrestricted sub-agent
 **Execution preference**:
 A user setting that chooses `inline` or `delegated` placement for eligible reads
 or bounded writes. It does not change safety or authority and remains below the
-shared rules. The placement choice is retained design for a later release, in
-the same form as `docs/spec/okf-agent-skills-v0.1.0.md`'s `#43` guard items:
-no `v0.1.0` adapter installs a
-delegated target, so no live placement decision is reachable. (#91)
+shared rules. Retained design for a later release; see the #91 narrowing in
+`docs/spec/okf-agent-skills-v0.1.0-completion.md`. (#91)
 _Avoid_: Permission setting, policy override
 
 **Delegation receipt**:
@@ -678,13 +676,9 @@ _Avoid_: Recovery evidence, validation verdict, required checks, post-write
 validation checks
 
 **Post-write validation checks**:
-The twelve-check boundary `validation.postWrite` runs against the primary
-saved concept immediately after a bounded write publishes it, including the
-six defense-in-depth copies of the shared pre-write gates. It is narrower
-than post-operation checks: it validates the primary concept only, not the
-later index and log derivative writes a composite operation also performs.
-Its outer exception handler is error containment around this boundary, not
-a thirteenth check.
+The boundary `validation.postWrite` runs against the primary saved concept
+immediately after a bounded write publishes it. It is narrower than
+post-operation checks because it validates the primary concept only.
 _Avoid_: Post-operation checks, validation verdict, pre-write gate
 
 **Settlement**:
@@ -749,20 +743,16 @@ _Avoid_: Harness adapter, skill wrapper script, guard skill
 **Session override**:
 The highest-precedence layer in the settings chain — `adapter defaults <
 user/global settings < project/worktree settings < current-session override`
-— that expires at session end. The full precedence chain is retained design
-for a later release, in the same form as `docs/spec/okf-agent-skills-v0.1.0.md`'s
-`#43` guard items: `v0.1.0` validates `brief.settings` and then discards it,
-and resolves no precedence chain. (#91)
+— that expires at session end. Retained design for a later release; see the
+#91 narrowing in `docs/spec/okf-agent-skills-v0.1.0-completion.md`. (#91)
 _Avoid_: Effective settings, local override, project mode
 
 **Effective settings**:
 The fully resolved settings value produced by applying the
 settings-precedence chain, including any session override. The main session
-resolves it and carries it into a delegation brief. The full precedence
-chain is retained design for a later release, in the same form as
-`docs/spec/okf-agent-skills-v0.1.0.md`'s `#43` guard items: `v0.1.0`
-resolves no precedence chain, so nothing resolves this value or carries
-it into a brief. (#91)
+resolves it and carries it into a delegation brief. Retained design for a
+later release; see the #91 narrowing in
+`docs/spec/okf-agent-skills-v0.1.0-completion.md`. (#91)
 _Avoid_: Session override, execution preference
 
 **Supported entry seam**:

@@ -18,8 +18,12 @@ function invalid(reason) {
   return { code: 'INVALID', origin: 'suite', severity: 'error', blocks: true, detail: { gate: 'data validity', reason } };
 }
 
-function relative(value) {
-  return typeof value === 'string' && value !== '' && !path.isAbsolute(value) && !value.split(/[\\/]/).includes('..');
+// null when the value is a usable relative path, otherwise the reason it is not.
+function relativePathReason(value) {
+  if (typeof value !== 'string' || value === '') return 'missing_path';
+  if (path.isAbsolute(value)) return 'absolute_path';
+  if (value.split(/[\\/]/).includes('..')) return 'parent_segment';
+  return null;
 }
 
 function unknown(value, allowed) {
@@ -38,7 +42,8 @@ function validate(raw) {
   for (const repo of raw.repositories) {
     if (!repo || typeof repo !== 'object' || Array.isArray(repo) || unknown(repo, repositoryKeys)) return invalid('unknown_key');
     if (typeof repo.name !== 'string' || repo.name === '' || names.has(repo.name)) return invalid('duplicate_repository_name');
-    if (!relative(repo.path) || paths.has(repo.path)) return invalid(paths.has(repo.path) ? 'duplicate_repository_path' : (repo.path && path.isAbsolute(repo.path) ? 'absolute_path' : 'parent_segment'));
+    const pathReason = paths.has(repo.path) ? 'duplicate_repository_path' : relativePathReason(repo.path);
+    if (pathReason) return invalid(pathReason);
     const remote = typeof repo.remote === 'string' && repo.remote !== '';
     const local = repo.local === true;
     if (remote === local) return invalid('malformed_identity');
@@ -52,7 +57,8 @@ function validate(raw) {
   for (const bundle of raw.bundles) {
     if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle) || unknown(bundle, bundleKeys)) return invalid('unknown_key');
     if (typeof bundle.alias !== 'string' || bundle.alias === '' || aliases.has(bundle.alias)) return invalid('duplicate_bundle_alias');
-    if (!relative(bundle.root)) return invalid(bundle.root && path.isAbsolute(bundle.root) ? 'absolute_path' : 'parent_segment');
+    const rootReason = relativePathReason(bundle.root);
+    if (rootReason) return invalid(rootReason);
     if (typeof bundle.required !== 'boolean' || !['source', 'generated', 'vendored'].includes(bundle.mode)) return invalid('invalid_field_combination');
     if (bundle.owner !== null && (typeof bundle.owner !== 'string' || !names.has(bundle.owner))) return invalid('invalid_field_combination');
     aliases.add(bundle.alias);

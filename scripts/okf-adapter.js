@@ -1,5 +1,6 @@
 const services = require('./lib/services');
 const adapters = require('./lib/adapters');
+const wrapper = require('./wrapper');
 
 function emit(payload) {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -18,8 +19,7 @@ function main(argv) {
     outcome = adapters[action](harness, targetDir, services);
   } catch (error) {
     emit({ ok: false, code: 'ADAPTER_CLI_FAILURE' });
-    const text = error && typeof error.message === 'string' ? error.message : String(error || '');
-    process.stderr.write(`${text.replace(/\s+/g, ' ').trim().slice(0, 200) || 'internal failure'}\n`);
+    process.stderr.write(`${wrapper.diagnostic(error, 'internal failure')}\n`);
     process.exitCode = 70;
     return;
   }

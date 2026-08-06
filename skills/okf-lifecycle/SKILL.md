@@ -9,7 +9,7 @@ description: Maintains OKF lifecycle synchronization and explicit reconciliation
 
 ## Narrow sync vs. explicit reconciliation
 
-Ordinary work triggers **incremental synchronization**: the agent selects narrow, evidence-backed maintenance for the directly affected concepts, their declared review dependencies, and mechanical derivatives, with no manual gate. This is the only synchronization allowed to run unprompted by the human. It is still the agent that sends this request through the wrapper, never an adapter or a hook — see "The wrapper request" below.
+Ordinary work triggers **incremental synchronization**: the agent selects narrow, evidence-backed maintenance for the directly affected concepts, their declared review dependencies, and mechanical derivatives, with no manual gate. This is the only synchronization allowed to run unprompted by the human.
 
 Everything wider is **explicit reconciliation**, and a caller must ask for it by name. `okf-lifecycle` MUST NOT run a broad operation from incremental synchronization alone. A caller that asks for reconciliation by name gets one of exactly two scopes:
 
@@ -48,7 +48,7 @@ For `sync`, `okf-lifecycle` constructs:
 
 Every wrapper call ends in exactly one of three conditions:
 
-1. **Valid response.** Exit code 0, one JSON line on stdout. A refusal is a valid response, not a failure — an `abstained` result carrying an `INVALID_SCOPE` finding when the scope cannot be resolved is a completed answer.
+1. **Valid response.** Exit code 0, one JSON line on stdout. A refusal is a valid response, not a failure — an `abstained` result with no findings, or a `blocked` result carrying `data.code: "INVALID_SCOPE"` when the scope cannot be resolved, is a completed answer.
 2. **Invalid wrapper input.** The request never parsed: malformed JSON, a wrong `skill` value, a missing `operation`, a missing required `payload` key, or a missing `invocation` on `sync`. Nothing on stdout, a short diagnostic on stderr, exit code 64.
 3. **Internal failure.** The request parsed and the runtime threw. One complete response (`result: "failed/incomplete"`, `data.code: "RUNTIME_FAILURE"`) still lands on stdout, a `Runtime failure: ...` diagnostic goes to stderr, exit code 70.
 
@@ -56,11 +56,11 @@ Every wrapper call ends in exactly one of three conditions:
 
 `okf-lifecycle` owns one atomic effect: **Standalone broad rebuild**, a user-invoked action, never an automatic one.
 
-It does not own the derived-maintenance effects that an ordinary `sync` triggers along the way — regenerating a directly affected index, appending a directly affected log entry, repairing a directly affected mechanical link. Those three belong to `okf-write`, inherited from the parent operation's outcome, even though `okf-lifecycle` is the skill a caller invokes to run `sync`.
+It does not own the derived-maintenance effects that an ordinary `sync` triggers along the way. Regenerating a directly affected index and appending a directly affected log entry belong to `okf-write` and inherit the parent operation's outcome. Repairing a directly affected mechanical link also belongs to `okf-write`, but it is not a v0.1.0 operation and returns `UNSUPPORTED_INPUT`.
 
 ## Procedure
 
 1. Read the requested operation. `init`, `migrate`, and `compact` are not v0.1.0 operations: if the operation is not `sync`, stop and return the runtime's unknown-operation result. Done when that result is the only thing emitted for the request; not done if any payload has been built or any concept touched for a non-`sync` name.
-2. Classify the trigger as incremental (ordinary work, agent-selected) or explicit reconciliation (requested by name). Both send `invocation: "explicit"`; this step never produces `invocation: "automatic"`, which names an adapter- or hook-emitted request and always blocks a `sync` mutation. Done when the trigger class is fixed before any payload is built; not done if the class is still undecided or was inferred after the scope was chosen.
+2. Classify the trigger as incremental (ordinary work, agent-selected) or explicit reconciliation (requested by name). Both trigger classes send `invocation: "explicit"`. Done when the trigger class is fixed before any payload is built; not done if the class is still undecided or was inferred after the scope was chosen.
 3. Build the wrapper request for the scope that trigger class authorizes: narrow for incremental synchronization, wider only for explicit reconciliation. Done when the request matches the shape above and its scope matches the trigger class from step 2; not done if the scope is wider than the trigger authorizes.
 4. Run the `okf-lifecycle` wrapper and name the exit condition the call ended in. Done when the response is reported as a valid response (refusal included), invalid wrapper input, or an internal failure; not done while a refusal is being reported as a crash or a crash as a refusal.

@@ -110,10 +110,11 @@ decision to keep the eval slice out of the release gate.
 
 ### Finding 3 — the provider can drop a run
 
-Two trials ended with `Stream ended without finish_reason` from the
-provider. The runner now reports this as `blocked`, not `fail`, because it
-happens outside the case's own logic. A `fail` must mean the OKF skills did
-something wrong.
+Two trials of `okf-lifecycle-positive-activation` on
+`opencode-go/deepseek-v4-pro` ended with `Stream ended without finish_reason`
+from the provider, and the case passed on retry. The runner now reports this
+as `blocked`, not `fail`, because it happens outside the case's own logic. A
+`fail` must mean the OKF skills did something wrong.
 
 The runtime's own error message says only that the run failed. The
 provider's words are in `meta.reason`. The runner now reports both, or the

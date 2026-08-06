@@ -47,22 +47,30 @@ function run(value) {
   const result = cp.spawnSync(process.execPath, [path.join(scripts, `${value.skill}.js`)], {
     input: JSON.stringify(value), encoding: 'utf8',
   });
-  return { status: result.status, stderr: result.stderr, response: result.stdout ? JSON.parse(result.stdout) : null };
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  return JSON.parse(result.stdout);
 }
 
 function digest(root) {
   const hash = crypto.createHash('sha256');
-  for (const entry of fs.readdirSync(root).sort()) {
-    const file = path.join(root, entry);
-    if (fs.statSync(file).isFile()) hash.update(entry).update(fs.readFileSync(file));
+  function visit(directory, relative = '') {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const file = path.join(directory, entry.name);
+      const name = path.join(relative, entry.name);
+      hash.update(name).update(entry.isDirectory() ? 'directory' : 'file');
+      if (entry.isDirectory()) visit(file, name);
+      else hash.update(fs.readFileSync(file));
+    }
   }
+  visit(root);
   return hash.digest('hex');
 }
 
 test('writer applies a bounded evidence-backed revision and reports its atomic outcome', (t) => {
   const root = bundle(t);
   concept(root);
-  const response = run(request(root, 'okf-write', 'revise')).response;
+  const response = run(request(root, 'okf-write', 'revise'));
   assert.equal(response.result, 'applied');
   assert.equal(response.data.authorization, 'notice');
   assert.deepEqual(response.data.evidence, ['evidence.md']);
@@ -79,7 +87,7 @@ test('writer rechecks the saved bundle through its filesystem service', (t) => {
     ['upstream', (root) => fs.writeFileSync(path.join(root, 'source.md'), '---\ntitle: Source\n---\n# Source\n'), 'failed/incomplete', 'DEPENDS_ON_BLOCKED_CONCEPT'],
   ];
 
-  for (const [, change, result, code] of cases) {
+  for (const [label, change, result, code] of cases) {
     const root = bundle(t);
     concept(root);
     fs.writeFileSync(path.join(root, 'source.md'), '---\ntype: Note\n---\n# Source\n');
@@ -92,8 +100,8 @@ test('writer rechecks the saved bundle through its filesystem service', (t) => {
         change(root);
       },
     });
-    assert.equal(response.result, result);
-    assert.ok(response.findings.some((finding) => finding.code === code));
+    assert.equal(response.result, result, label);
+    assert.ok(response.findings.some((finding) => finding.code === code), label);
   }
 });
 
@@ -105,7 +113,7 @@ test('direct scope is inferred and requested derivatives append to a frontmatter
     effects: ['concept-revise', 'index-maintenance', 'log-append'],
   });
   delete value.scope;
-  const response = run(value).response;
+  const response = run(value);
   assert.deepEqual(response.scope, { concepts: ['note.md'] });
   assert.deepEqual(response.data.effects.map((item) => item.inherited), [false, true, true]);
   assert.match(fs.readFileSync(path.join(root, 'index.md'), 'utf8'), /- \[note.md\]\(note.md\)/);
@@ -116,7 +124,7 @@ test('writer refuses unsupported composites before writing', (t) => {
   const root = bundle(t);
   concept(root);
   const before = digest(root);
-  const response = run(request(root, 'okf-write', 'revise', { effects: ['concept-revise', 'delete'] })).response;
+  const response = run(request(root, 'okf-write', 'revise', { effects: ['concept-revise', 'delete'] }));
   assert.equal(response.result, 'blocked');
   assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
   assert.ok(response.findings.some((item) => item.code === 'UNSUPPORTED_INPUT' && item.blocks));
@@ -127,10 +135,10 @@ test('lifecycle plans a narrow sync through the writer and automatic requests do
   const root = bundle(t);
   concept(root);
   const sync = request(root, 'okf-lifecycle', 'sync');
-  const response = run(sync).response;
+  const response = run(sync);
   assert.equal(response.result, 'applied');
   const before = digest(root);
-  const automatic = run({ ...sync, invocation: 'automatic' }).response;
+  const automatic = run({ ...sync, invocation: 'automatic' });
   assert.equal(automatic.result, 'blocked');
   assert.equal(automatic.data.code, 'AUTOMATIC_MUTATION_BLOCKED');
   assert.equal(digest(root), before);
@@ -140,37 +148,38 @@ test('bounded primary effects create, format, relate, and machine-verify through
   const root = bundle(t);
   const create = request(root, 'okf-write', 'create', { concept: 'new.md', set: { type: 'Note' } });
   create.scope = { concepts: ['new.md'] };
-  assert.equal(run(create).response.result, 'applied');
+  assert.equal(run(create).result, 'applied');
   assert.match(fs.readFileSync(path.join(root, 'new.md'), 'utf8'), /status: draft/);
 
   concept(root);
   fs.writeFileSync(path.join(root, 'source.md'), '---\ntype: Note\n---\n# Source\n');
   fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Note\n');
-  assert.equal(run(request(root, 'okf-write', 'format', { set: {}, evidence: undefined })).response.result, 'applied');
-  assert.equal(run(request(root, 'okf-write', 'relationship', { evidence: ['source.md'], set: { sources: [{ resource: 'source.md' }] } })).response.result, 'applied');
+  assert.equal(run(request(root, 'okf-write', 'format', { set: {}, evidence: undefined })).result, 'applied');
+  assert.equal(run(request(root, 'okf-write', 'relationship', { evidence: ['source.md'], set: { sources: [{ resource: 'source.md' }] } })).result, 'applied');
   assert.equal(run(request(root, 'okf-write', 'machine-verify', {
     set: { verified: [{ kind: 'machine', by: 'check', coverage: 'complete-current-concept' }] },
-  })).response.result, 'applied');
+  })).result, 'applied');
 });
 
 test('no-op, abstained, and failed bounded outcomes do not hide their state', (t) => {
   const root = bundle(t);
   concept(root);
   const revise = request(root, 'okf-write', 'revise');
-  assert.equal(run(revise).response.result, 'applied');
-  assert.equal(run(revise).response.result, 'no-op');
+  assert.equal(run(revise).result, 'applied');
+  assert.equal(run(revise).result, 'no-op');
 
   const abstain = request(root, 'okf-lifecycle', 'sync');
   delete abstain.payload.set;
-  const abstained = run(abstain).response;
+  const abstained = run(abstain);
   assert.equal(abstained.result, 'abstained');
   assert.equal(abstained.data.authorization, 'allowed');
-  const noScope = request(root, 'okf-lifecycle', 'sync'); delete noScope.scope;
-  assert.equal(run(noScope).response.data.code, 'INVALID_SCOPE');
+  const noScope = request(root, 'okf-lifecycle', 'sync');
+  delete noScope.scope;
+  assert.equal(run(noScope).data.code, 'INVALID_SCOPE');
 
   const failed = request(root, 'okf-write', 'create', { concept: 'missing/note.md', set: { type: 'Note' } });
   failed.scope = { concepts: ['missing/note.md'] };
-  assert.equal(run(failed).response.result, 'failed/incomplete');
+  assert.equal(run(failed).result, 'failed/incomplete');
 });
 
 test('mode, scope, ownership, evidence, and semantic gates block only the request', (t) => {
@@ -181,34 +190,43 @@ test('mode, scope, ownership, evidence, and semantic gates block only the reques
     ['invalid mode', () => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "other"\n---\n# Bundle\n'), 'PROJECT_MODE_INVALID'],
     ['conflicting mode', () => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\nproject_mode: "code-backed"\n---\n# Bundle\n'), 'PROJECT_MODE_INVALID'],
   ];
-  for (const [, setup, code] of cases) {
+  for (const [label, setup, code] of cases) {
     setup();
-    const response = run(request(root, 'okf-write', 'revise')).response;
-    assert.equal(response.result, 'blocked');
-    assert.equal(response.data.code, code);
-    assert.equal(fs.readFileSync(path.join(root, 'note.md'), 'utf8').includes('After'), false);
+    const response = run(request(root, 'okf-write', 'revise'));
+    assert.equal(response.result, 'blocked', label);
+    assert.equal(response.data.code, code, label);
+    assert.equal(fs.readFileSync(path.join(root, 'note.md'), 'utf8').includes('After'), false, label);
     fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   }
-  assert.equal(run(request(root, 'okf-write', 'revise', { evidence: [] })).response.data.code, 'EVIDENCE_REQUIRED');
-  const invalidScope = request(root, 'okf-write', 'revise'); invalidScope.scope = { concepts: ['other.md'] };
-  assert.equal(run(invalidScope).response.data.code, 'INVALID_SCOPE');
-  assert.equal(run(request(root, 'okf-write', 'revise', { set: { huge: 1e21 } })).response.result, 'blocked');
+  assert.equal(run(request(root, 'okf-write', 'revise', { evidence: [] })).data.code, 'EVIDENCE_REQUIRED');
+  const invalidScope = request(root, 'okf-write', 'revise');
+  invalidScope.scope = { concepts: ['other.md'] };
+  assert.equal(run(invalidScope).data.code, 'INVALID_SCOPE');
+  assert.equal(run(request(root, 'okf-write', 'revise', { set: { huge: 1e21 } })).result, 'blocked');
 
   const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-53-outside-')));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fs.writeFileSync(path.join(outside, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   const ownership = request(root, 'okf-write', 'revise', { bundle: outside });
-  assert.equal(run(ownership).response.data.code, 'WRITE_OWNERSHIP_UNKNOWN');
+  assert.equal(run(ownership).data.code, 'WRITE_OWNERSHIP_UNKNOWN');
 });
 
 test('unknown operations differ from unsupported bounded effects and no state files are created', (t) => {
   const root = bundle(t, 'code-backed');
   concept(root);
-  const unknown = run(request(root, 'okf-write', 'archive')).response;
+  const unknown = run(request(root, 'okf-write', 'archive'));
   assert.equal(unknown.data.code, 'UNKNOWN_OPERATION');
-  const recoverable = run(request(root, 'okf-write', 'revise', { code_recoverable: true })).response;
+  const recoverable = run(request(root, 'okf-write', 'revise', { code_recoverable: true }));
   assert.equal(recoverable.data.code, 'CODE_RECOVERABLE_MATERIAL');
-  const unsupported = run(request(root, 'okf-write', 'revise', { set: { status: 'stable' } })).response;
+  const unsupported = run(request(root, 'okf-write', 'revise', { set: { status: 'stable' } }));
   assert.equal(unsupported.data.code, 'UNSUPPORTED_INPUT');
-  assert.deepEqual(fs.readdirSync(root).filter((name) => name.includes('guard') || name.includes('ledger') || name.includes('manifest')), []);
+  const stateFiles = [];
+  (function visit(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(file);
+      else if (['guard', 'ledger', 'manifest'].some((word) => entry.name.includes(word))) stateFiles.push(file);
+    }
+  })(root);
+  assert.deepEqual(stateFiles, []);
 });

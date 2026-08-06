@@ -16,14 +16,7 @@ const resultLabels = new Set(['ok', 'degraded', 'not-configured', 'unavailable']
 const matchLabels = new Set(['found', 'no match in searched scope']);
 const coverageLabels = new Set(['complete', 'non-exhaustive']);
 const findingLabels = new Set(['missing', 'unreadable', 'unobservable', 'invalid']);
-const retiredLabels = [
-  ['in', 'sufficient'].join(''),
-  ['CL', 'IPPED'].join(''),
-  ['MI', 'SS'].join(''),
-  ['UN', 'DISCOVERED'].join(''),
-  ['UN', 'SEARCHED'].join(''),
-  ['FILT', 'ERED'].join(''),
-];
+const retiredLabels = ['insufficient', 'CLIPPED', 'MISS', 'UNDISCOVERED', 'UNSEARCHED', 'FILTERED'];
 
 function repository(t, prefix = 'okf-50-') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -132,11 +125,7 @@ function pathMatches(item, relative) {
 }
 
 function readRecord(response, relative) {
-  for (const field of ['read', 'found']) {
-    const match = records(response, field).find((item) => pathMatches(item, relative));
-    if (match) return match;
-  }
-  return undefined;
+  return records(response, 'read').find((item) => pathMatches(item, relative));
 }
 
 function finding(response, code) {
@@ -146,15 +135,11 @@ function finding(response, code) {
 function assertFinding(response, code) {
   const item = finding(response, code);
   assert.ok(item, code);
-  assert.equal(item.code, code);
-  assert.ok(findingLabels.has(item.code), item.code);
   return item;
 }
 
 function provenanceOf(record) {
-  if (Object.hasOwn(record, 'provenance')) return record.provenance;
-  if (Object.hasOwn(record, 'sources')) return record.sources;
-  return undefined;
+  return record.provenance;
 }
 
 function sourceFiles() {
@@ -209,7 +194,6 @@ test('read returns exact content, a bundle-relative path, and only authored prov
   const emptyRead = readRecord({ data: empty }, 'without-sources.md');
   assert.ok(emptyRead);
   assert.equal(emptyRead.content, withoutSources.content);
-  assert.notDeepEqual(provenanceOf(emptyRead), []);
   assert.equal(provenanceOf(emptyRead), undefined);
 });
 
@@ -515,13 +499,18 @@ test('native search does not run when the admitted bundle envelope is unobservab
   const rootBundle = bundle(root);
   const concept = writeConcept(rootBundle, 'scope.md', 'type: Note', '# scope-guard-50\n');
   let navigationPhase = false;
+  let injected = false;
   let searched = false;
 
   const response = runRuntime(directRequest(root, 'search', 'scope-guard-50'), {
     realpath(file) {
-      if (navigationPhase && path.resolve(file) === path.resolve(rootBundle)) throw new Error('scope unavailable');
+      if (navigationPhase && path.resolve(file) === path.resolve(rootBundle)) {
+        injected = true;
+        throw new Error('scope unavailable');
+      }
       return defaultServices.realpath(file);
     },
+    // Navigation resolves the root again after admission checks that it is a file.
     isFile(file) {
       const value = defaultServices.isFile(file);
       if (path.resolve(file) === path.resolve(rootBundle)) navigationPhase = true;
@@ -534,6 +523,7 @@ test('native search does not run when the admitted bundle envelope is unobservab
   });
 
   assertNavigation(response);
+  assert.equal(injected, true);
   assert.equal(searched, false);
   assert.equal(response.result, 'unavailable');
   assertFinding(response, 'unobservable');
@@ -548,9 +538,7 @@ test('incomplete enumeration prevents a complete navigation coverage claim', (t)
 
   const response = runRuntime(directRequest(root, 'search', 'enumeration-50'), {
     listFiles(scopeRoot) {
-      const entries = defaultServices.listFiles(scopeRoot);
-      entries.complete = false;
-      return entries;
+      return { ...defaultServices.listFiles(scopeRoot), complete: false };
     },
     search() {
       return [concept.file];

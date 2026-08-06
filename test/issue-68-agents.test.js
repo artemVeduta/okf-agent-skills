@@ -4,12 +4,27 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { REQUIRED_BRIEF_FIELDS } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const agentsDir = path.join(repo, 'agents');
 const adaptersDir = path.join(repo, 'adapters');
 const cliWrapper = path.join(repo, 'scripts', 'okf-adapter.js');
 const delegation = require('../scripts/lib/delegation');
+const harnesses = ['claude-code', 'codex', 'opencode'];
+const expectedStatuses = [
+  'clean',
+  'failed',
+  'partially-applied',
+  'indeterminate',
+  'blocked: incomplete-brief',
+  'blocked: conflicting-rules',
+  'blocked: repository-instance-mismatch',
+  'blocked: target-conflict',
+  'blocked: stale-handoff',
+  'blocked: missing-skill',
+  'blocked: incompatible-skill',
+];
 
 // Line-wise frontmatter scan, matching the parsing style already used by
 // scripts/lib/routing.js for other shipped Markdown artifacts (no YAML dep).
@@ -44,19 +59,6 @@ function temporaryRoot(t) {
   return root;
 }
 
-// requiredFields is not exported by delegation.js; read it off the source so
-// this test fails loudly (not silently) if the array is ever renamed away
-// from a plain array-of-string-literals shape.
-function requiredBriefFields() {
-  const source = fs.readFileSync(path.join(repo, 'scripts', 'lib', 'delegation.js'), 'utf8');
-  const match = source.match(/requiredFields\s*=\s*\[([\s\S]*?)\]/);
-  assert.ok(match, 'requiredFields array not found in scripts/lib/delegation.js');
-  return [...match[1].matchAll(/'([a-zA-Z_]+)'/g)].map((m) => m[1]);
-}
-
-// The closed status vocabulary is assembled across delegation.js (brief
-// validation, runtime-result mapping) and okf-delegate.js (dispatch
-// failures). Read-only text scan, no new exports required.
 function statusVocabulary() {
   const source = [
     fs.readFileSync(path.join(repo, 'scripts', 'lib', 'delegation.js'), 'utf8'),
@@ -93,7 +95,7 @@ test('the frontmatter skill binding matches scripts/lib/delegation.ROLES for bot
 test('every adapter manifest carries no agents key; the shipped agent definitions live under agents/ directly', () => {
   assert.equal(fs.existsSync(path.join(agentsDir, 'okf-reader.md')), true);
   assert.equal(fs.existsSync(path.join(agentsDir, 'okf-writer.md')), true);
-  for (const harness of ['claude-code', 'codex', 'opencode']) {
+  for (const harness of harnesses) {
     const declared = manifest(harness);
     assert.equal(Object.hasOwn(declared, 'agents'), false, harness);
     // additive and inert: naming a file in `agents` grants no install action
@@ -102,7 +104,7 @@ test('every adapter manifest carries no agents key; the shipped agent definition
 });
 
 test('installing an adapter copies no agent definition into the harness-local target directory', (t) => {
-  for (const harness of ['claude-code', 'codex', 'opencode']) {
+  for (const harness of harnesses) {
     const root = temporaryRoot(t);
     const targetDir = path.join(root, 'target');
     const result = childProcess.spawnSync(process.execPath, [cliWrapper, 'install', harness, targetDir], { encoding: 'utf8' });
@@ -115,11 +117,9 @@ test('installing an adapter copies no agent definition into the harness-local ta
 });
 
 test('the brief field set declared in scripts/lib/delegation.js, plus the writer-required changes field, appears in both agent definitions', () => {
-  const fields = requiredBriefFields();
-  assert.ok(fields.length > 0);
   const readerText = agentText('okf-reader');
   const writerText = agentText('okf-writer');
-  for (const field of fields) {
+  for (const field of REQUIRED_BRIEF_FIELDS) {
     assert.match(readerText, new RegExp('`' + field + '`'), `reader missing ${field}`);
     assert.match(writerText, new RegExp('`' + field + '`'), `writer missing ${field}`);
   }
@@ -141,7 +141,7 @@ test('the receipt field set built by scripts/lib/delegation.js appears in the wr
 
 test('the status vocabulary in scripts/lib/delegation.js and scripts/okf-delegate.js appears in the writer definition', () => {
   const statuses = statusVocabulary();
-  assert.ok(statuses.size > 0);
+  assert.deepEqual([...statuses].sort(), expectedStatuses.slice().sort());
   const writerText = agentText('okf-writer');
   // Reasoned statuses are documented as the `blocked: <reason>` template
   // plus a parenthetical reason list, not the two halves pre-joined.

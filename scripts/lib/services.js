@@ -5,8 +5,8 @@ substitute one. Keeping the binding here stops the wrapper entry points from
 carrying separate copies of the same path-walking code.
 */
 
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 
 function targetChanged() {
   const error = new Error('target changed before publication');
@@ -68,8 +68,7 @@ function listFiles(root) {
 
   visit(path.resolve(root));
   files.sort();
-  Object.defineProperty(files, 'complete', { value: complete, enumerable: false, writable: true });
-  return files;
+  return { files, complete };
 }
 
 // Access and link probes are fallible queries whose failure is a status, never a

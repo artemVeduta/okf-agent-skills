@@ -12,7 +12,6 @@ function plan(request, context, services) {
   return {
     result: Object.hasOwn(request.payload, 'set') && isWritableTaskKind(request.task_kind) ? null : 'abstained',
     operation: services.exists(file) ? 'revise' : 'create',
-    request: { ...request, payload: { ...request.payload, concept } },
   };
 }
 

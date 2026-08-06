@@ -45,7 +45,7 @@ function refusingRoot(t, index, observed, observedType) {
   const response = run(request(root));
   const finding = response.findings.find((item) => item.code === 'ROOT_DECLARATION_NOT_EXACT');
   assert.equal(response.result, 'blocked');
-  assert.equal(finding.code, 'ROOT_DECLARATION_NOT_EXACT');
+  assert.ok(finding, 'ROOT_DECLARATION_NOT_EXACT');
   assert.equal(finding.origin, 'suite');
   assert.deepEqual(finding.detail, { observed, observed_type: observedType });
 }
@@ -76,6 +76,7 @@ test('semantic-preservation mismatch blocks only the affected write before it re
   const response = run(request(root, 'note.md', { revision: 1e21 }));
   const finding = response.findings.find((item) => item.code === 'PARSE_TREE_MISMATCH');
   assert.equal(response.result, 'blocked');
+  assert.ok(finding, 'PARSE_TREE_MISMATCH');
   assert.equal(finding.detail.construct, 'revision');
   assert.deepEqual(fs.readFileSync(file), before);
 
@@ -95,6 +96,7 @@ test('a derivative of a blocked concept is blocked before it reaches disk', (t) 
   const response = run(request(root, 'derivative.md'));
   const finding = response.findings.find((item) => item.code === 'DEPENDS_ON_BLOCKED_CONCEPT');
   assert.equal(response.result, 'blocked');
+  assert.ok(finding, 'DEPENDS_ON_BLOCKED_CONCEPT');
   assert.deepEqual(finding.detail, { path: 'derivative.md', blocked_concept: 'source.md' });
   assert.deepEqual(fs.readFileSync(derivative), before);
 });

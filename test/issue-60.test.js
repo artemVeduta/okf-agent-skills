@@ -1,13 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
-const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { RESPONSE_KEYS: responseKeys, treeHash } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-review.js');
-const responseKeys = ['protocol', 'skill', 'operation', 'result', 'scope', 'evidence_limits', 'data', 'findings', 'next_action'];
 
 function bundle(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-60-')));
@@ -31,23 +30,8 @@ function request(root, concept = 'note.md', extra = {}) {
   };
 }
 
-function snapshot(root) {
-  const hash = crypto.createHash('sha256');
-  function visit(directory, relative = '') {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const file = path.join(directory, entry.name);
-      const name = path.join(relative, entry.name);
-      hash.update(`${name}\0${entry.isDirectory() ? 'directory' : 'file'}\0`);
-      if (entry.isDirectory()) visit(file, name);
-      else hash.update(fs.readFileSync(file));
-    }
-  }
-  visit(root);
-  return hash.digest('hex');
-}
-
 function review(root, concept, extra = {}) {
-  const before = snapshot(root);
+  const before = treeHash(root);
   const result = childProcess.spawnSync(process.execPath, [wrapper], {
     input: JSON.stringify(request(root, concept, extra)),
     encoding: 'utf8',
@@ -57,7 +41,7 @@ function review(root, concept, extra = {}) {
   assert.equal(result.stderr, '');
   assert.deepEqual(Object.keys(response), responseKeys);
   assert.equal(result.stdout, `${JSON.stringify(response)}\n`);
-  assert.equal(snapshot(root), before);
+  assert.equal(treeHash(root), before);
   return response;
 }
 

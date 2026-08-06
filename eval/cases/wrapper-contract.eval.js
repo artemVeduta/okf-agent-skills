@@ -8,12 +8,7 @@ import path from 'node:path';
 
 import { classifyWrapperExit } from '../lib/wrapper-contract.js';
 
-export const id = 'okf-write-wrapper-contract';
-export const kind = 'wrapper-contract';
-export const description =
-  "okf-write's wrapper emits exactly one JSON line and exit 0 for a valid revise request against a fresh fixture bundle.";
-
-export async function run({ fixtureRoot, repoRoot }) {
+async function run({ fixtureRoot, repoRoot }) {
   const wrapper = path.join(repoRoot, 'scripts', 'okf-write.js');
   const request = {
     protocol: 'okf-wrapper/1',
@@ -40,3 +35,11 @@ export async function run({ fixtureRoot, repoRoot }) {
     throw new Error(`expected the fixture bundle write to be applied, got: ${outcome.response.result}`);
   }
 }
+
+export const CASE = {
+  id: 'okf-write-wrapper-contract',
+  kind: 'wrapper-contract',
+  description:
+    "okf-write's wrapper emits exactly one JSON line and exit 0 for a valid revise request against a fresh fixture bundle.",
+  run,
+};

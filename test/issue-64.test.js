@@ -4,11 +4,10 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { snapshot } = require('../test-support/snapshot');
+const { runWrapper, snapshot } = require('../test-support/snapshot');
 
 const lifecycleWrapper = path.join(__dirname, '..', 'scripts', 'okf-lifecycle.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
-const responseKeys = ['protocol', 'skill', 'operation', 'result', 'scope', 'evidence_limits', 'data', 'findings', 'next_action'];
 const writeLimits = { writes: 'not serialized', crash_recovery: 'not provided' };
 
 function bundle(t) {
@@ -29,15 +28,7 @@ function changedPaths(before, after) {
 }
 
 function run(wrapper, request) {
-  const result = childProcess.spawnSync(process.execPath, [wrapper], {
-    input: JSON.stringify(request), encoding: 'utf8',
-  });
-  assert.equal(result.status, 0);
-  assert.equal(result.stderr, '');
-  const response = JSON.parse(result.stdout);
-  assert.deepEqual(Object.keys(response), responseKeys);
-  assert.equal(result.stdout, `${JSON.stringify(response)}\n`);
-  return response;
+  return runWrapper(wrapper, request);
 }
 
 function syncRequest(root, concept = 'note.md', payload = {}) {

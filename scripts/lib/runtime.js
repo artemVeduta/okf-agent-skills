@@ -40,16 +40,31 @@ function suiteFinding(code, detail) {
   return { code, origin: 'suite', severity: 'error', blocks: true, detail };
 }
 
-function writeResponse(request, result, authorization, effects, evidence, validationState, findings = [], code = undefined, scope = request.scope || null, completedEffects = [], residue = []) {
+// A write result determines its own authorization and validation state, so callers
+// name the result only and cannot desynchronise the trio.
+const authorizationByResult = new Map([
+  ['blocked', 'blocked'], ['abstained', 'allowed'], ['applied', 'notice'],
+  ['no-op', 'notice'], ['failed/incomplete', 'notice'],
+]);
+const validationByResult = new Map([
+  ['blocked', 'not-run'], ['abstained', 'not-run'], ['applied', 'valid'],
+  ['no-op', 'not-needed'], ['failed/incomplete', 'failed'],
+]);
+
+function writeResponse(request, options) {
+  const {
+    result, effects = [], evidence = [], findings = [], code,
+    scope = request.scope || null, completed: completedEffects = [], residue = [],
+  } = options;
   const completed = new Set(completedEffects);
   const data = {
-    authorization,
+    authorization: authorizationByResult.get(result),
     effects,
     task_kind: request.task_kind === undefined ? null : request.task_kind,
     actual_effects: effectRecords(effects.filter(({ effect }) => completed.has(effect)).map(({ effect }) => effect), 'notice'),
     residue,
     evidence,
-    validation: validationState,
+    validation: validationByResult.get(result),
   };
   if (code !== undefined) data.code = code;
   const nextAction = result === 'applied' || result === 'no-op' ? null : 'Correct the reported gate and submit one bounded request.';
@@ -80,17 +95,13 @@ function scopeFor(request, requireScope) {
   return { scope };
 }
 
-function modeOf(bundleRoot, services) {
-  return validation.projectMode(bundleRoot, services);
-}
-
 function inside(root, file) {
   const relative = path.relative(root, file);
   return relative !== '' && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`);
 }
 
-function readEvidence(payload, bundleRoot, services) {
-  const required = ['create', 'revise', 'relationship', 'machine-verify'].includes(payload._operation);
+function readEvidence(payload, operation, bundleRoot, services) {
+  const required = ['create', 'revise', 'relationship', 'machine-verify'].includes(operation);
   if (!required) return { evidence: [] };
   if (!Array.isArray(payload.evidence) || payload.evidence.length === 0 || payload.evidence.some((item) => typeof item !== 'string' || item === '')) return { invalid: true, evidence: [] };
   const evidence = [];
@@ -136,7 +147,6 @@ function appendDerivative(effect, operation, bundleRoot, concept, services) {
   const body = parsed ? parsed.body : current;
   if (body.split('\n').some((entry) => entry.replace(/\r$/, '') === line)) return { written: false };
   const rendered = `${current}${current === '' || current.endsWith('\n') ? '' : '\n'}${line}\n`;
-  if (parsed) validation.parseYAML(validation.parseFrontmatter(rendered).frontmatter);
   services.publishFile(file, rendered, current);
   if (parsed) validation.parseYAML(validation.parseFrontmatter(services.readFile(file)).frontmatter);
   return { written: true };
@@ -144,32 +154,39 @@ function appendDerivative(effect, operation, bundleRoot, concept, services) {
 
 function executeBounded(request, services, operation, requireScope = false) {
   const effectsResult = boundedEffects(operation, request.payload);
-  const provisionalEffects = effectsResult.effects.length ? effectsResult.effects : [primaryEffects.get(operation)].filter(Boolean);
+  const provisionalEffects = effectsResult.effects.length ? effectsResult.effects : [primaryEffects.get(operation)];
+  // Every gate below reports the same effects, scope and evidence; only the code,
+  // the findings and the result differ. These two closures own the repetition.
+  let scope = request.scope || null;
+  let evidence = [];
+  const refuse = (code, detail, findings = [suiteFinding(code, detail)]) => writeResponse(request, {
+    result: 'blocked', effects: effectRecords(provisionalEffects, 'blocked'), evidence, findings, code, scope,
+  });
+  const settle = (result, findings, extra = {}) => writeResponse(request, {
+    result, effects: effectRecords(provisionalEffects, 'notice'), evidence, findings, scope,
+    completed: extra.completed, residue: extra.residue,
+  });
+
   if (effectsResult.invalid || unsupportedPayload(request.payload, operation)) {
-    const finding = suiteFinding('UNSUPPORTED_INPUT', { gate: 'effects', operation });
-    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'UNSUPPORTED_INPUT');
+    return refuse('UNSUPPORTED_INPUT', { gate: 'effects', operation });
   }
   if (!lifecycle.isWritableTaskKind(request.task_kind)) {
-    const finding = suiteFinding('TASK_KIND_NOT_WRITE_ELIGIBLE', {
+    return refuse('TASK_KIND_NOT_WRITE_ELIGIBLE', {
       gate: 'task kind',
       task_kind: request.task_kind === undefined ? null : request.task_kind,
     });
-    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'TASK_KIND_NOT_WRITE_ELIGIBLE');
   }
   const scoped = scopeFor(request, requireScope);
-  if (scoped.invalid) {
-    const finding = suiteFinding('INVALID_SCOPE', { gate: 'scope' });
-    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'INVALID_SCOPE', scoped.scope);
-  }
+  scope = scoped.scope;
+  if (scoped.invalid) return refuse('INVALID_SCOPE', { gate: 'scope' });
   const payload = request.payload;
   const bundleRoot = path.resolve(payload.cwd, payload.bundle);
   const activeRoot = services.gitRootOf(path.resolve(payload.cwd));
   const targetRoot = services.gitRootOf(bundleRoot);
   if (!activeRoot || !targetRoot) {
-    const finding = suiteFinding('WRITE_OWNERSHIP_UNKNOWN', { gate: 'ownership', reason: 'unknown_or_non_local' });
-    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'WRITE_OWNERSHIP_UNKNOWN', scoped.scope);
+    return refuse('WRITE_OWNERSHIP_UNKNOWN', { gate: 'ownership', reason: 'unknown_or_non_local' });
   }
-  if (activeRoot !== targetRoot) return targetOutsideWorktreeBlocked({ ...request, scope: scoped.scope });
+  if (activeRoot !== targetRoot) return targetOutsideWorktreeBlocked({ ...request, scope: scoped.scope }, provisionalEffects);
 
   const admitted = admission.admit({ ...request, scope: scoped.scope, payload: {
     ...payload,
@@ -182,23 +199,16 @@ function executeBounded(request, services, operation, requireScope = false) {
     }],
   } }, services);
   const candidate = admitted.data.candidates && admitted.data.candidates.find((item) => item.state === 'active' && item.bundle_root === bundleRoot);
-  if (!candidate) {
-    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', admitted.findings, 'BUNDLE_NOT_ADMITTED', scoped.scope);
-  }
-  const mode = modeOf(bundleRoot, services);
-  if (!mode) {
-    const finding = suiteFinding('PROJECT_MODE_INVALID', { gate: 'project mode' });
-    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'PROJECT_MODE_INVALID', scoped.scope);
-  }
+  if (!candidate) return refuse('BUNDLE_NOT_ADMITTED', null, admitted.findings);
+  const mode = validation.projectMode(bundleRoot, services);
+  if (!mode) return refuse('PROJECT_MODE_INVALID', { gate: 'project mode' });
   if (mode === 'code-backed' && payload.code_recoverable === true) {
-    const finding = suiteFinding('CODE_RECOVERABLE_MATERIAL', { gate: 'project mode' });
-    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), [], 'not-run', [finding], 'CODE_RECOVERABLE_MATERIAL', scoped.scope);
+    return refuse('CODE_RECOVERABLE_MATERIAL', { gate: 'project mode' });
   }
-  const observed = readEvidence({ ...payload, _operation: operation }, bundleRoot, services);
+  const observed = readEvidence(payload, operation, bundleRoot, services);
+  evidence = observed.evidence;
   if (observed.invalid || observed.unavailable) {
-    const code = observed.unavailable ? 'EVIDENCE_UNAVAILABLE' : 'EVIDENCE_REQUIRED';
-    const finding = suiteFinding(code, { gate: 'evidence' });
-    return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), observed.evidence, 'not-run', [finding], code, scoped.scope);
+    return refuse(observed.unavailable ? 'EVIDENCE_UNAVAILABLE' : 'EVIDENCE_REQUIRED', { gate: 'evidence' });
   }
 
   let outcome;
@@ -207,11 +217,11 @@ function executeBounded(request, services, operation, requireScope = false) {
     outcome = operation === 'create' ? validation.evaluateCreate(writerRequest, services) : validation.evaluate(writerRequest, services);
   } catch (error) {
     const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: error.message || 'write failed' });
-    return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', [finding], undefined, scoped.scope);
+    return settle('failed/incomplete', [finding]);
   }
-  if (outcome.result === 'blocked') return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), observed.evidence, 'not-run', outcome.findings, undefined, scoped.scope);
-  if (outcome.result === 'failed/incomplete') return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', outcome.findings, undefined, scoped.scope);
-  if (!outcome.data.written) return writeResponse(request, 'no-op', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'not-needed', outcome.findings, undefined, scoped.scope);
+  if (outcome.result === 'blocked') return refuse(undefined, null, outcome.findings);
+  if (outcome.result === 'failed/incomplete') return settle('failed/incomplete', outcome.findings);
+  if (!outcome.data.written) return settle('no-op', outcome.findings);
   const completedEffects = new Set();
   try {
     services.publishFile(outcome.data.file, outcome.data.rendered, outcome.data.expected);
@@ -219,13 +229,15 @@ function executeBounded(request, services, operation, requireScope = false) {
   } catch (error) {
     if (error && error.code === 'TARGET_CHANGED') {
       const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: payload.concept, reason: error.message });
-      return writeResponse(request, 'blocked', 'blocked', effectRecords(provisionalEffects, 'blocked'), observed.evidence, 'not-run', [...outcome.findings, finding], 'TARGET_CHANGED', scoped.scope);
+      return refuse('TARGET_CHANGED', null, [...outcome.findings, finding]);
     }
     const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: error.message || 'write failed' });
-    return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', [...outcome.findings, finding], undefined, scoped.scope, completedEffects);
+    return settle('failed/incomplete', [...outcome.findings, finding], { completed: completedEffects });
   }
   const checked = validation.postWrite(bundleRoot, payload.concept, services, outcome.data.tree);
-  if (!checked.valid) return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', [...outcome.findings, ...checked.findings], undefined, scoped.scope, completedEffects);
+  if (!checked.valid) {
+    return settle('failed/incomplete', [...outcome.findings, ...checked.findings], { completed: completedEffects });
+  }
   for (const effect of provisionalEffects.filter((item) => item === 'index-maintenance' || item === 'log-append')) {
     try {
       if (appendDerivative(effect, operation, bundleRoot, payload.concept, services).written) {
@@ -234,10 +246,12 @@ function executeBounded(request, services, operation, requireScope = false) {
     } catch (error) {
       const reason = error.message || 'derivative write failed';
       const finding = suiteFinding('DERIVATIVE_WRITE_FAILED', { gate: 'derivative', effect, reason });
-      return writeResponse(request, 'failed/incomplete', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'failed', [...outcome.findings, ...checked.findings, finding], undefined, scoped.scope, completedEffects, [{ effect, reason }]);
+      return settle('failed/incomplete', [...outcome.findings, ...checked.findings, finding], {
+        completed: completedEffects, residue: [{ effect, reason }],
+      });
     }
   }
-  return writeResponse(request, 'applied', 'notice', effectRecords(provisionalEffects, 'notice'), observed.evidence, 'valid', [...outcome.findings, ...checked.findings], undefined, scoped.scope, completedEffects);
+  return settle('applied', [...outcome.findings, ...checked.findings], { completed: completedEffects });
 }
 
 // Both routing operations admit first, then route the admitted data. redact() runs
@@ -282,7 +296,7 @@ function admitAndNavigate(request, services, router) {
 
 function unknownOperation(request) {
   if (request.skill === 'okf-write' || request.skill === 'okf-lifecycle' || request.skill === 'okf') {
-    return writeResponse(request, 'blocked', 'blocked', [], [], 'not-run', [], 'UNKNOWN_OPERATION');
+    return writeResponse(request, { result: 'blocked', code: 'UNKNOWN_OPERATION' });
   }
   return respond(request, 'blocked', { code: 'UNKNOWN_OPERATION' }, []);
 }
@@ -296,14 +310,22 @@ function automaticMutation(skill, request) {
 }
 
 function automaticMutationBlocked(request) {
-  const effect = primaryEffects.get(request.operation) || 'concept-revise';
-  return writeResponse(request, 'blocked', 'blocked', effectRecords([effect], 'blocked'), [], 'not-run', [{
+  // Nothing is planned yet at this gate, so the effect is named from the operation.
+  // A sync would revise or create; it is reported as a revise. An operation with no
+  // primary effect reports none rather than borrowing one.
+  const effect = primaryEffects.get(request.operation) ?? (request.operation === 'sync' ? 'concept-revise' : null);
+  return writeResponse(request, {
+    result: 'blocked',
+    effects: effect === null ? [] : effectRecords([effect], 'blocked'),
+    findings: [{
+      code: 'AUTOMATIC_MUTATION_BLOCKED',
+      origin: 'suite',
+      severity: 'error',
+      blocks: true,
+      detail: { gate: 'invocation', reason: 'automatic_mutation' },
+    }],
     code: 'AUTOMATIC_MUTATION_BLOCKED',
-    origin: 'suite',
-    severity: 'error',
-    blocks: true,
-    detail: { gate: 'invocation', reason: 'automatic_mutation' },
-  }], 'AUTOMATIC_MUTATION_BLOCKED');
+  });
 }
 
 function validateRead(request, services) {
@@ -346,15 +368,19 @@ function enumerateRead(request, services) {
   return admitAndNavigate(admittedRequest, services, routing.enumerate);
 }
 
-function targetOutsideWorktreeBlocked(request) {
-  const effect = primaryEffects.get(request.operation) || 'concept-revise';
-  return writeResponse(request, 'blocked', 'blocked', effectRecords([effect], 'blocked'), [], 'not-run', [{
+function targetOutsideWorktreeBlocked(request, effects) {
+  return writeResponse(request, {
+    result: 'blocked',
+    effects: effectRecords(effects, 'blocked'),
+    findings: [{
+      code: 'WRITE_TARGET_OUTSIDE_WORKTREE',
+      origin: 'suite',
+      severity: 'error',
+      blocks: true,
+      detail: { gate: 'write routing', reason: 'outside_active_worktree' },
+    }],
     code: 'WRITE_TARGET_OUTSIDE_WORKTREE',
-    origin: 'suite',
-    severity: 'error',
-    blocks: true,
-    detail: { gate: 'write routing', reason: 'outside_active_worktree' },
-  }], 'WRITE_TARGET_OUTSIDE_WORKTREE', request.scope || null);
+  });
 }
 
 function orientRespond(request, services, marker) {
@@ -409,11 +435,21 @@ function runActive(skill, request, services) {
       const scoped = scopeFor(request, true);
       if (scoped.invalid) {
         const finding = suiteFinding('INVALID_SCOPE', { gate: 'scope' });
-        return writeResponse(request, 'blocked', 'blocked', effectRecords([primaryEffects.get(planned.operation)], 'blocked'), [], 'not-run', [finding], 'INVALID_SCOPE', scoped.scope);
+        return writeResponse(request, {
+          result: 'blocked',
+          effects: effectRecords([primaryEffects.get(planned.operation)], 'blocked'),
+          findings: [finding],
+          code: 'INVALID_SCOPE',
+          scope: scoped.scope,
+        });
       }
-      return writeResponse(request, 'abstained', 'allowed', effectRecords([primaryEffects.get(planned.operation)], 'allowed'), [], 'not-run', [], undefined, scoped.scope);
+      return writeResponse(request, {
+        result: 'abstained',
+        effects: effectRecords([primaryEffects.get(planned.operation)], 'allowed'),
+        scope: scoped.scope,
+      });
     }
-    return executeBounded(planned.request, services, planned.operation, true);
+    return executeBounded(request, services, planned.operation, true);
   }
   if (!primaryEffects.has(request.operation)) return unknownOperation(request);
   return executeBounded(request, services, request.operation);
@@ -445,13 +481,18 @@ function run(skill, request, services) {
     }
     if (isWriteOperation(skill, request)) {
       const effect = primaryEffects.get(request.operation);
-      return writeResponse(request, 'blocked', 'blocked', effectRecords([effect], 'blocked'), [], 'not-run', [{
+      return writeResponse(request, {
+        result: 'blocked',
+        effects: effectRecords([effect], 'blocked'),
+        findings: [{
+          code: 'ACTIVATION_MARKER_INVALID',
+          origin: 'suite',
+          severity: 'error',
+          blocks: true,
+          detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
+        }],
         code: 'ACTIVATION_MARKER_INVALID',
-        origin: 'suite',
-        severity: 'error',
-        blocks: true,
-        detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
-      }], 'ACTIVATION_MARKER_INVALID');
+      });
     }
     return respond(request, 'blocked', { code: 'ACTIVATION_MARKER_INVALID' }, [{
       code: 'ACTIVATION_MARKER_INVALID',

@@ -12,30 +12,26 @@ function inside(target, root) {
   return target === root || target.startsWith(root === path.parse(root).root ? root : root + path.sep);
 }
 
-function detailFor(candidate, extra) {
-  const detail = { gate: 'REACH', ...extra };
+// The one gate-finding constructor. A path the user did not name stays out of the
+// response, so the redaction rule lives here and nowhere else.
+function gateFinding(code, gate, candidate, extra, blocks = true) {
+  const detail = { gate, ...extra };
   if (candidate.named_by_user === true) detail.path = candidate.path;
-  return detail;
+  return {
+    code,
+    origin: 'suite',
+    severity: blocks ? 'error' : 'warning',
+    blocks,
+    detail,
+  };
 }
 
 function refusal(candidate, code, extra) {
-  return {
-    code,
-    origin: 'suite',
-    severity: 'error',
-    blocks: true,
-    detail: detailFor(candidate, extra),
-  };
+  return gateFinding(code, 'REACH', candidate, extra);
 }
 
 function anomaly(candidate, code, extra) {
-  return {
-    code,
-    origin: 'suite',
-    severity: 'warning',
-    blocks: false,
-    detail: detailFor(candidate, extra),
-  };
+  return gateFinding(code, 'REACH', candidate, extra, false);
 }
 
 function result(finding, anomalies = []) {
@@ -128,4 +124,4 @@ function evaluate(candidate, context, services) {
   return result(null);
 }
 
-module.exports = { evaluate, inside };
+module.exports = { evaluate, inside, gateFinding };

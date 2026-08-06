@@ -2,9 +2,6 @@
  * OpenCode plugin: injects orientation only through the awaited
  * `chat.system.transform` hook; `session.created`/`session.compacted` only
  * advance a generation counter, and the next eligible transform claims it.
- * The claim cycle and presentation policy live in the target-local
- * okf-agent-skills/scripts/lib copy, shared with every other harness. A disabled install (`.okf-adapter-disabled`)
- * is a no-op.
  *
  * Installed one level below the adapter's target directory, so every other
  * adapter-owned path resolves relative to the parent directory, not `__dirname`.

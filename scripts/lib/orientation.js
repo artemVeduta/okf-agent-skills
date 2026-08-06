@@ -150,4 +150,4 @@ function orient(request, services, marker) {
   return computeFromAdmission(request, services, key);
 }
 
-module.exports = { suiteVersion, seamTable, orient, deriveKey };
+module.exports = { suiteVersion, validHarnesses, seamTable, orient, deriveKey };

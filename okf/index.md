@@ -1,6 +1,6 @@
 ---
 okf_version: "0.2"
-project_mode: "knowledge-only"
+project_mode: "code-backed"
 ---
 
 # OKF Agent Skills

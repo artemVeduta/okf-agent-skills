@@ -39,14 +39,10 @@ function shape(candidate, concept, file) {
   return { bundle_alias: candidate.bundle_alias, bundle_root: candidate.bundle_root, concept_id: concept, path: path.relative(candidate.bundle_root, file) };
 }
 
-function activeCandidates(data) {
-  return (data.candidates || []).filter((item) => item.state === 'active');
-}
-
 // data.candidates is built in manifest order and every step between is map or filter,
 // which preserve it, so tier 4 needs no re-sorting.
 function ordered(data, payload) {
-  const all = activeCandidates(data);
+  const all = navigation.activeCandidates(data);
   const explicit = payload.explicit_bundle;
   if (explicit !== undefined) {
     const match = all.find((x) => x.bundle_alias === explicit);
@@ -63,7 +59,7 @@ function ordered(data, payload) {
 }
 
 function locate(data, payload, services) {
-  const candidates = activeCandidates(data);
+  const candidates = navigation.activeCandidates(data);
   const target = payload.target;
   const workspace = typeof target === 'string' && target.startsWith(WORKSPACE);
   let concept = target;
@@ -154,15 +150,15 @@ function routeWrite(data, payload) {
 }
 
 function read(data, payload, services) {
-  return navigation.read(data, payload, services, locate, activeCandidates);
+  return navigation.read(data, payload, services, locate(data, payload, services));
 }
 
 function search(data, payload, services) {
-  return navigation.search(data, payload, services, activeCandidates);
+  return navigation.search(data, payload, services);
 }
 
 function enumerate(data, payload, services) {
-  return navigation.enumerate(data, payload, services, activeCandidates);
+  return navigation.enumerate(data, payload, services);
 }
 
 module.exports = { resolve, routeWrite, read, search, enumerate, notConfiguredData: navigation.notConfiguredData };

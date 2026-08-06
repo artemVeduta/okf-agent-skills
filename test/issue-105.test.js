@@ -9,33 +9,23 @@
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const childProcess = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-const { snapshot } = require('../test-support/snapshot');
+const {
+  adapterManifest,
+  runAdapterCli: runCli,
+  temporaryRoot,
+} = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
-const cliWrapper = path.join(repo, 'scripts', 'okf-adapter.js');
 const adaptersDir = path.join(repo, 'adapters');
 
-function temporaryRoot(t) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-105-')));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
-}
-
 function manifest() {
-  return JSON.parse(fs.readFileSync(path.join(adaptersDir, 'opencode', 'manifest.json'), 'utf8'));
+  return adapterManifest('opencode');
 }
 
 function config() {
   return JSON.parse(fs.readFileSync(path.join(adaptersDir, 'opencode', 'config.json'), 'utf8'));
-}
-
-function runCli(args) {
-  const result = childProcess.spawnSync(process.execPath, [cliWrapper, ...args], { encoding: 'utf8' });
-  return { status: result.status, stderr: result.stderr, response: JSON.parse(result.stdout) };
 }
 
 test('OpenCode manifest installs the plugin below its native plugins/ directory under an OKF-specific filename, and installs no opencode.json/opencode.jsonc/config.json', () => {
@@ -111,11 +101,14 @@ test('uninstalling the OpenCode adapter removes the plugins/ directory it create
   const root = temporaryRoot(t);
   fs.writeFileSync(path.join(root, 'opencode.json'), '{"unrelated": true}\n');
   const targetDir = root;
-  const before = snapshot(root).filter(([name]) => name === 'opencode.json');
 
-  runCli(['install', 'opencode', targetDir]);
-  runCli(['uninstall', 'opencode', targetDir]);
+  const installed = runCli(['install', 'opencode', targetDir]);
+  assert.equal(installed.response.ok, true);
+  const pluginEntry = manifest().installs.find((entry) => entry.source === 'plugin.js');
+  assert.equal(fs.existsSync(path.join(root, pluginEntry.target)), true);
+  const removed = runCli(['uninstall', 'opencode', targetDir]);
+  assert.equal(removed.response.ok, true);
 
   assert.deepEqual(fs.readdirSync(root), ['opencode.json']);
-  assert.deepEqual(snapshot(root).filter(([name]) => name === 'opencode.json'), before);
+  assert.equal(fs.readFileSync(path.join(root, 'opencode.json'), 'utf8'), '{"unrelated": true}\n');
 });

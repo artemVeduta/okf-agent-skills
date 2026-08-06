@@ -14,7 +14,8 @@ undecided. Invented here, pending a decision:
   - upstream findings propagate one level only; cycles are therefore not walked
 */
 
-const path = require('path');
+const path = require('node:path');
+const { inside } = require('./reach');
 
 const NON_HUMAN_ACTORS = ['agent:', 'tool:'];
 
@@ -369,10 +370,7 @@ function projectMode(bundleRoot, services) {
   }
 }
 
-// Step 2: the concept must resolve inside the bundle root.
-function inside(target, root) {
-  return target === root || target.startsWith(root + path.sep);
-}
+// Step 2: the concept must resolve inside the bundle root. `inside` comes from reach.js.
 
 function readConcept(file, rel, services) {
   if (!services.exists(file)) {
@@ -450,7 +448,8 @@ function resolvesToFile(file, bundleRoot, services) {
 
 function checkLinks(tree, rel, bundleRoot, services, findings) {
   for (const resource of sourceLinks(tree)) {
-    const file = sourceResourcePath(bundleRoot, resource);
+    const file = internalResourcePath(bundleRoot, resource);
+    if (!file) continue;
     if (!resolvesToFile(file, bundleRoot, services)) {
       findings.push(warn('UNRESOLVED_INTERNAL_LINK', 'okf', { path: rel, resource }));
     }
@@ -461,8 +460,8 @@ function checkLinks(tree, rel, bundleRoot, services, findings) {
 // that do not block are surfaced unchanged so a SHOULD violation stays visible.
 function checkUpstreams(tree, rel, bundleRoot, services, findings) {
   for (const resource of sourceLinks(tree)) {
-    const file = sourceResourcePath(bundleRoot, resource);
-    if (!resolvesToFile(file, bundleRoot, services)) continue;
+    const file = internalResourcePath(bundleRoot, resource);
+    if (!file || !resolvesToFile(file, bundleRoot, services)) continue;
     const upstream = readConcept(file, resource, services);
     const upstreamFindings = [];
     if (upstream.finding) {
@@ -492,13 +491,12 @@ function roundTripMismatch(tree, serialized) {
 }
 
 function evaluate(request, services) {
-  const svc = { serializeFrontmatter, ...services };
   const bundleRoot = path.resolve(request.payload.bundle);
   const rel = request.payload.concept;
   const findings = [];
   const done = (result, data) => ({ result, data, findings: sortFindings(findings) });
 
-  const root = checkRoot(bundleRoot, svc);
+  const root = checkRoot(bundleRoot, services);
   if (root) {
     findings.push(root);
     return done('blocked', {});
@@ -510,7 +508,7 @@ function evaluate(request, services) {
     return done('blocked', { path: rel });
   }
 
-  const current = readConcept(conceptPath, rel, svc);
+  const current = readConcept(conceptPath, rel, services);
   if (current.finding) {
     findings.push(current.finding);
     return done('blocked', { path: rel });
@@ -522,10 +520,10 @@ function evaluate(request, services) {
     findings.push(blocker('WRITTEN_TRUST_TIER', 'suite', { path: rel }));
     return done('blocked', { path: rel });
   }
-  checkBundleFiles(bundleRoot, svc, findings);
+  checkBundleFiles(bundleRoot, services, findings);
   checkConcept(tree, rel, findings);
-  checkLinks(tree, rel, bundleRoot, svc, findings);
-  checkUpstreams(tree, rel, bundleRoot, svc, findings);
+  checkLinks(tree, rel, bundleRoot, services, findings);
+  checkUpstreams(tree, rel, bundleRoot, services, findings);
   if (findings.some((f) => f.blocks)) return done('blocked', { path: rel });
 
   const verificationPreservingFields = new Set(['status', 'stale_after', 'generated', 'verified', 'format']);
@@ -539,7 +537,7 @@ function evaluate(request, services) {
 
   if ('verified' in tree && !Array.isArray(tree.verified)) tree.verified = [tree.verified];
 
-  const serialized = svc.serializeFrontmatter(tree);
+  const serialized = serializeFrontmatter(tree);
   const mismatch = roundTripMismatch(tree, serialized);
   if (mismatch) {
     findings.push(blocker('PARSE_TREE_MISMATCH', 'suite', { path: rel, ...mismatch }));
@@ -553,20 +551,22 @@ function evaluate(request, services) {
 }
 
 function evaluateCreate(request, services) {
-  const svc = { serializeFrontmatter, ...services };
   const bundleRoot = path.resolve(request.payload.bundle);
   const rel = request.payload.concept;
   const findings = [];
   const done = (result, data) => ({ result, data, findings: sortFindings(findings) });
-  const root = checkRoot(bundleRoot, svc);
-  if (root) return done('blocked', (findings.push(root), { path: rel }));
+  const root = checkRoot(bundleRoot, services);
+  if (root) {
+    findings.push(root);
+    return done('blocked', { path: rel });
+  }
 
   const conceptPath = path.resolve(bundleRoot, rel);
   if (!inside(conceptPath, bundleRoot) || conceptPath === bundleRoot) {
     findings.push(blocker('CONCEPT_OUTSIDE_BUNDLE', 'suite', { path: rel }));
     return done('blocked', { path: rel });
   }
-  if (svc.exists(conceptPath)) {
+  if (services.exists(conceptPath)) {
     findings.push(blocker('CONCEPT_ALREADY_EXISTS', 'suite', { path: rel }));
     return done('blocked', { path: rel });
   }
@@ -576,11 +576,11 @@ function evaluateCreate(request, services) {
     findings.push(blocker('WRITTEN_TRUST_TIER', 'suite', { path: rel }));
     return done('blocked', { path: rel });
   }
-  checkBundleFiles(bundleRoot, svc, findings);
+  checkBundleFiles(bundleRoot, services, findings);
   checkConcept(tree, rel, findings);
   if (findings.some((finding) => finding.blocks)) return done('blocked', { path: rel });
 
-  const serialized = svc.serializeFrontmatter(tree);
+  const serialized = serializeFrontmatter(tree);
   const mismatch = roundTripMismatch(tree, serialized);
   if (mismatch) {
     findings.push(blocker('PARSE_TREE_MISMATCH', 'suite', { path: rel, ...mismatch }));
@@ -606,7 +606,10 @@ function postWrite(bundleRoot, rel, services, expectedTree) {
       findings.push(blocker('PROJECT_MODE_INVALID', 'suite', { gate: 'project mode' }));
     }
     const current = readConcept(file, rel, services);
-    if (current.finding) return { valid: false, findings: [current.finding] };
+    if (current.finding) {
+      findings.push(current.finding);
+      return { valid: false, findings: sortFindings(findings) };
+    }
     if (expectedTree !== undefined) {
       const comparison = parseTreeEqual(expectedTree, current.tree);
       if (!comparison.equal) findings.push(blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: rel, construct: comparison.path, reason: 'saved tree mismatch' }));
@@ -659,7 +662,8 @@ function listedPath(bundleRoot, value) {
 }
 
 function readEntries(bundleRoot, services) {
-  return (services.listFiles(bundleRoot) || [])
+  const { files } = services.listFiles(bundleRoot);
+  return files
     .map((file) => listedPath(bundleRoot, file))
     .filter(Boolean)
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
@@ -696,11 +700,6 @@ function internalResourcePath(bundleRoot, resource) {
   if (target === '') return null;
   const relative = target.startsWith('/') ? `.${target}` : target;
   return path.resolve(bundleRoot, relative);
-}
-
-function sourceResourcePath(bundleRoot, resource) {
-  const target = resource.split(/[?#]/, 1)[0];
-  return target === '' ? null : path.resolve(bundleRoot, target);
 }
 
 function citationsHeading(body) {
@@ -783,9 +782,7 @@ function validateRead(bundleRoot, services, options = {}) {
       conceptFindings.push(blocker('TYPE_MISSING', 'okf', { path: entry.path }));
     }
 
-    for (const resource of sourceLinks(tree)) {
-      const target = internalResourcePath(root, resource);
-      if (!target) continue;
+    const recordLink = (resource, target) => {
       const verdict = linkVerdict(root, target, services);
       linkVerdicts.push({ path: entry.path, resource, verdict });
       if (verdict === 'unexpectedly-broken') {
@@ -794,22 +791,19 @@ function validateRead(bundleRoot, services, options = {}) {
           resource,
         }));
       }
+    };
+
+    for (const resource of sourceLinks(tree)) {
+      const target = internalResourcePath(root, resource);
+      if (target) recordLink(resource, target);
     }
 
     for (const resource of markdownLinks(parsed.body)) {
       const targetPath = bodyLinkPath(resource);
       if (!targetPath) continue;
-      const target = targetPath.startsWith('/')
+      recordLink(resource, targetPath.startsWith('/')
         ? path.resolve(root, `.${targetPath}`)
-        : path.resolve(path.dirname(entry.file), targetPath);
-      const verdict = linkVerdict(root, target, services);
-      linkVerdicts.push({ path: entry.path, resource, verdict });
-      if (verdict === 'unexpectedly-broken') {
-        conceptFindings.push(warn('UNRESOLVED_INTERNAL_LINK', 'okf', {
-          path: entry.path,
-          resource,
-        }));
-      }
+        : path.resolve(path.dirname(entry.file), targetPath));
     }
 
     if (typeof tree.stale_after === 'string' && tree.stale_after <= today) {

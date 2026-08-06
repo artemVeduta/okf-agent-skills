@@ -2760,7 +2760,7 @@ post-operation validation bound to the approved plan passes
 - `scripts/lib/` MUST contain pure-function shared modules. (#5)
 - `scripts/lib/` MUST NOT contain skills. (#5)
 - Shared runtime modules MUST own shared admission, validation, and lifecycle behavior. The manual-operation guard is retained design for a later guarded release. (#4, #35, #43)
-- The `v0.1.0` shared module set MUST be exactly `protocol.js`, `runtime.js`, `admission.js`, `validation.js`, and `lifecycle.js`. `scripts/lib/guard.js` MUST NOT be part of this set. (#42, #43, #41)
+- The `v0.1.0` shared modules with a fixed public interface MUST be `protocol.js`, `runtime.js`, `admission.js`, `validation.js`, and `lifecycle.js`; other modules under `scripts/lib/` are internal to them. `scripts/lib/guard.js` MUST NOT ship. (#42, #43, #41)
 - Harness adapters MUST NOT duplicate or reimplement shared runtime semantics. (#4, #35)
 - A harness adapter MUST NOT contain independent authority or retrieval semantics. Guard semantics are retained design for a later guarded release. (#35, #43)
 - The previously planned shared retrieval runtime MUST NOT be implemented; LLM-guided native navigation replaces it. (#5, #36) [precedence: #36 over #5]
@@ -3373,17 +3373,17 @@ The table uses `A` for allowed, `N` for notice, `P` for occurrence-bound preview
 | Small evidence-backed claim update | `okf-write` | Evidence, mode, ownership, and semantic-preservation validation | Not assigned | N | N | N | N | N | N |
 | Small non-claim metadata or formatting update | `okf-write` | Semantic-preservation validation | Not assigned | N | N | N | N | N | N |
 | Add qualifying machine verification | `okf-write` | Verification-evidence validation | Not assigned | N | N | N | N | N | N |
-| Add machine verification without complete qualifying evidence | `okf-write` | Verification-evidence validation and fail-closed guarded write checks | Not assigned | B | B | B | B | B | B |
+| Add machine verification without complete qualifying evidence | `okf-write` | Verification-evidence validation and fail-closed write checks | Not assigned | B | B | B | B | B | B |
 | Record exact human verification | `okf-review` | Review-evidence and verifier-identity validation, then guarded write execution | User-invoked | P | P | P | P | P | P |
 | Infer or fabricate human verification | `okf-review` | Verification validation and refusal reporting | Not assigned | B | B | B | B | B | B |
-| Standalone removal of verification | `okf-review` | Verification-event validation and guarded write checks | User-invoked | A | P | P | A | P | P |
+| Standalone removal of verification | `okf-review` | Verification-event validation and write checks | User-invoked | A | P | P | A | P | P |
 | Derive or display current staleness | `okf-review` | Review-dependency observation and staleness evaluation | Not assigned | A | A | A | A | A | A |
 | Set `stale_after` from explicit evidence | `okf-review` | Evidence validation and write checks | Not assigned | N | N | N | N | N | N |
 | Choose or change `stale_after` by judgment | `okf-review` | Review policy, preview, approval, and guarded write checks | User-invoked | P | P | P | P | P | P |
 | `draft -> stable` | `okf-write` | Status validation, preview, approval, and guarded write checks | User-invoked | P | P | P | P | P | P |
 | `stable -> deprecated` | `okf-write` | Status validation, preview, approval, and guarded write checks | User-invoked | P | P | P | P | P | P |
 | `deprecated -> stable` | `okf-write` | Status validation, preview, approval, and guarded write checks | User-invoked | P | P | P | P | P | P |
-| Write an unsupported status value | `okf-write` | OKF validation and fail-closed guarded write checks | Not assigned | B | B | B | B | B | B |
+| Write an unsupported status value | `okf-write` | OKF validation and fail-closed write checks | Not assigned | B | B | B | B | B | B |
 | Add or remove one semantic relationship | `okf-write` | Relationship validation and write checks | Not assigned | N | N | N | N | N | N |
 | Move or rename | `okf-write` | Identity, link, recovery, operation-manifest, journal, and guarded write checks | User-invoked | P+R | P+R | P+R | P+R | P+R | P+R |
 | Broad inbound-link or graph rewrite | `okf-write` | Link, identity, recovery, operation-manifest, journal, and guarded write checks | User-invoked | P+R | P+R | P+R | P+R | P+R | P+R |
@@ -3399,36 +3399,41 @@ The table uses `A` for allowed, `N` for notice, `P` for occurrence-bound preview
 
 #### Atomic-effect ownership (D7)
 
-| Atomic effect | Owning skill | Runtime module | Invocation class |
-|---|---|---|---|
-| Read, validate, or read-only analysis | `okf-read` | `scripts/lib/runtime.js` | Not assigned |
-| Create a small evidence-backed concept | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
-| Small evidence-backed claim update | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
-| Small non-claim metadata or formatting update | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
-| Add qualifying machine verification | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
-| Add machine verification without complete qualifying evidence | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
-| Record exact human verification | `okf-review` | `scripts/lib/runtime.js` | User-invoked |
-| Infer or fabricate human verification | `okf-review` | `scripts/lib/runtime.js` | Not assigned |
-| Standalone removal of verification | `okf-review` | `scripts/lib/runtime.js` | User-invoked |
-| Derive or display current staleness | `okf-review` | `scripts/lib/runtime.js` | Not assigned |
-| Set `stale_after` from explicit evidence | `okf-review` | `scripts/lib/runtime.js` | Not assigned |
-| Choose or change `stale_after` by judgment | `okf-review` | `scripts/lib/runtime.js` | User-invoked |
-| `draft -> stable` | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
-| `stable -> deprecated` | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
-| `deprecated -> stable` | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
-| Write an unsupported status value | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
-| Add or remove one semantic relationship | `okf-write` | `scripts/lib/runtime.js` | Not assigned |
-| Move or rename | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
-| Broad inbound-link or graph rewrite | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
-| Create merge or split outputs | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
-| Delete a demonstrably redundant concept | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
-| Purge unique durable knowledge | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
-| Introduce redirects or aliases before their semantics are defined | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
-| Edit a sanctioned Attested Computation | `okf-write` | `scripts/lib/runtime.js` | User-invoked |
-| Regenerate a directly affected index | `okf-write` | `scripts/lib/runtime.js` | Inherited from parent |
-| Append a directly affected log entry | `okf-write` | `scripts/lib/runtime.js` | Inherited from parent |
-| Repair a directly affected mechanical link | `okf-write` | `scripts/lib/runtime.js` | Inherited from parent |
-| Standalone broad rebuild | `okf-lifecycle` | `scripts/lib/runtime.js` | User-invoked |
+The runtime module is the same for every effect and is therefore stated once here rather than
+repeated as a column: every atomic effect enters `scripts/lib/runtime.js`, which delegates
+internally — routing and navigation for reads, validation for the write gates, and lifecycle for
+synchronization and rebuild planning.
+
+| Atomic effect | Owning skill | Invocation class |
+|---|---|---|
+| Read, validate, or read-only analysis | `okf-read` | Not assigned |
+| Create a small evidence-backed concept | `okf-write` | Not assigned |
+| Small evidence-backed claim update | `okf-write` | Not assigned |
+| Small non-claim metadata or formatting update | `okf-write` | Not assigned |
+| Add qualifying machine verification | `okf-write` | Not assigned |
+| Add machine verification without complete qualifying evidence | `okf-write` | Not assigned |
+| Record exact human verification | `okf-review` | User-invoked |
+| Infer or fabricate human verification | `okf-review` | Not assigned |
+| Standalone removal of verification | `okf-review` | User-invoked |
+| Derive or display current staleness | `okf-review` | Not assigned |
+| Set `stale_after` from explicit evidence | `okf-review` | Not assigned |
+| Choose or change `stale_after` by judgment | `okf-review` | User-invoked |
+| `draft -> stable` | `okf-write` | User-invoked |
+| `stable -> deprecated` | `okf-write` | User-invoked |
+| `deprecated -> stable` | `okf-write` | User-invoked |
+| Write an unsupported status value | `okf-write` | Not assigned |
+| Add or remove one semantic relationship | `okf-write` | Not assigned |
+| Move or rename | `okf-write` | User-invoked |
+| Broad inbound-link or graph rewrite | `okf-write` | User-invoked |
+| Create merge or split outputs | `okf-write` | User-invoked |
+| Delete a demonstrably redundant concept | `okf-write` | User-invoked |
+| Purge unique durable knowledge | `okf-write` | User-invoked |
+| Introduce redirects or aliases before their semantics are defined | `okf-write` | User-invoked |
+| Edit a sanctioned Attested Computation | `okf-write` | User-invoked |
+| Regenerate a directly affected index | `okf-write` | Inherited from parent |
+| Append a directly affected log entry | `okf-write` | Inherited from parent |
+| Repair a directly affected mechanical link | `okf-write` | Inherited from parent |
+| Standalone broad rebuild | `okf-lifecycle` | User-invoked |
 
 #### Post-write validation checks (D8)
 
@@ -3648,7 +3653,7 @@ Tickets inside one wave MAY run in parallel. (#41)
 | Enumerated post-operation checks and per-check pass criteria | Closed (D8) | Every claim that an operation succeeded; the `ValidationVerdict` and `PostOpChecks` results | #7 names the check families — OKF conformance, suite checks, identity, link, provenance, trust, and post-operation validation bound to the approved plan — but enumerates no individual check and states no per-check pass condition; #30 carried these across as explicitly opaque | **Adopted (D8):** the post-write validation check table enumerates the checks in `scripts/lib/validation.js` and their observable pass and fail conditions. |
 | Crash-point reconciliation table | Deferred (#43) | Recovery from every interrupted operation | #30 supplies the record ordering (`INTENT{undo}` → mutate → `OUTCOME`, sealed manifest before the first mutation, spend and epoch advance between the last `OUTCOME` and `SETTLED`) and #31 supplies the ledger `in-flight`/`failed`/unknown outcomes, but no ticket maps every crash point to a next action; #7 classifies missing, torn, corrupt, truncated, and unknown-schema data as `indeterminate` without stating the reconciliation step | Publish one table mapping each crash point — including a missing manifest, a torn record, a dangling `INTENT`, a partial inverse, and ambiguous filesystem state — to its next action |
 | Result label for a reconciled identical-byte concurrent foreign write | Deferred (#43) | Whether an operation may settle clean after a foreign session produced identical bytes | #30 records that reconciliation cannot distinguish authorship and reads bytes equal to the expected hash as done, and lists this as an accepted cost rather than a reported outcome; #7 records foreign mutation only on observed drift; #37 defines `partially-applied` and `indeterminate` for other cross-repository outcomes | State whether this case settles `clean` or is recorded as an ambiguity that makes the terminal `dirty` |
-| New-bundle write-gate bootstrap exception | Open | `okf init`; migration into a repository with no bundle; adoption of a bundle root that does not yet exist | #21 gates mutation on a pre-existing bundle-root `index.md` whose parsed `okf_version` is exactly `"0.2"` and defines an adoption operation only for a bundle root that already exists; #19 creates new bundles through migration; #35 allows guarded initialization; none states the predicate under which the first write to a non-existent bundle root is permitted | State the exact condition under which creating a bundle root is permitted without a pre-existing `okf_version: "0.2"` declaration, and the atomicity requirement for that first write |
+| New-bundle write-gate bootstrap exception | Deferred (#9) | `okf init`; migration into a repository with no bundle; adoption of a bundle root that does not yet exist | #21 gates mutation on a pre-existing bundle-root `index.md` whose parsed `okf_version` is exactly `"0.2"` and defines an adoption operation only for a bundle root that already exists; #19 creates new bundles through migration; #35 allows guarded initialization; none states the predicate under which the first write to a non-existent bundle root is permitted | State the exact condition under which creating a bundle root is permitted without a pre-existing `okf_version: "0.2"` declaration, and the atomicity requirement for that first write |
 | Guard ledger schema version identifier | Deferred (#43) | Fail-closed handling of unreadable or newer ledger state | #31 requires a schema-versioned ledger and fails closed on an unsupported version, but names no version value and no accepted-version set | Name the ledger schema version value `v0.1.0` writes and the set of versions it accepts |
 | Guard lock filename and locking mechanism | Deferred (#43) | Concurrent-session coordination; the exclusive execution lock | #31 says the lock lives beside the ledger and that failure to lock fails closed, but names neither the lock artifact nor the operating-system mechanism | Name the lock artifact and the mechanism that acquires and releases it |
 | `<bundle-key>` encoding | Deferred (#43) | The guard ledger directory name; whether two bundles can collide on one key | #31 says `<bundle-key>` derives from the canonical bundle identity rather than a display name; #22 defines bundle identity as owner identity plus bundle-root path; no ticket defines the encoding from that identity to a filesystem-safe key | Define the encoding from bundle identity to `<bundle-key>`, including its collision property |
@@ -3658,18 +3663,25 @@ Tickets inside one wave MAY run in parallel. (#41)
 | Wrapper stdout schema | Closed (#42) | Adapter parsing of every result; semantic parity across harnesses | #5 says adapters read stdout; #6, #36, #38, and #39 fix result vocabularies but no ticket fixes the serialization the adapter parses | **Adopted (#42):** exactly one newline-terminated JSON object on `stdout`, carrying `protocol`, `skill`, `operation`, `result`, `scope`, `evidence_limits`, `data`, `findings`, and `next_action`. Stdout carries no log text. |
 | Wrapper exit-code contract | Closed (#42) | Adapter distinction between a reported refusal and a runtime failure | No ticket assigns meaning to a wrapper exit code; #5 mentions only stdout | **Adopted (#42):** `0` one valid response was emitted, including `blocked`, `abstained`, and `failed` results; `64` invalid wrapper input; `70` internal or serialization failure, which still emits one complete response. |
 | Router dispatch protocol | Closed (#42) | Every routed operation; behavior on an unknown sub-command | #5 says the router `SKILL.md` dispatches to sub-skills; no ticket states the dispatch grammar, the argument shape, or the result when no sub-skill matches | **Adopted (#42):** the router selects an owner only from the fixed `operation` field against a sealed operation table, and returns the defined unknown-operation result when no entry matches. Per #43 and the #41 decision record, `guard.prepare`, `guard.confirm`, and `guard.execute` are not entries of the `v0.1.0` table. |
-| Shared module public interfaces | Closed (#42) | Every skill and adapter that calls admission, validation, lifecycle, or guard behavior | #5 makes the shared modules library-only pure functions and assigns them admission, validation, lifecycle, and guard behavior; #36 defines portable roles for enumerate, search, read, and scope enforcement but states that exact tool names are not shared policy; no ticket fixes a module boundary or a callable signature | **Adopted (#42):** `protocol.js`, `runtime.js`, `admission.js`, `validation.js`, `lifecycle.js`. Per #43 and the #41 decision record, `scripts/lib/guard.js` is **not** part of the `v0.1.0` module set. |
-| Adapter package location and per-adapter install command | Open | Installation and upgrade of the three native adapters | #5 fixes the base install command and says the three plugins are installed globally; #35 says three thin adapters are separately installable from the same tag; #4 records the base install syntax only; no ticket gives a per-adapter package location or command | State, for each of Claude Code, Codex, and OpenCode, where its adapter lives in the release and the command that installs it |
-| Complete atomic-effect ownership table | Closed (D7) | Assigning every effect to a skill, a runtime module, and an invocation class | #11 enumerates the atomic effects and their authorization outcomes; #5 assigns broad operation groups to four skills; #38 assigns bounded writes to `okf-writer`; no ticket maps every atomic effect to an owning skill, runtime module, and invocation class | **Adopted (D7):** the atomic-effect ownership table assigns each atomic effect one owning skill, runtime module, and invocation class. |
+| Shared module public interfaces | Closed (#42) | Every skill and adapter that calls admission, validation, lifecycle, or guard behavior | #5 makes the shared modules library-only pure functions and assigns them admission, validation, lifecycle, and guard behavior; #36 defines portable roles for enumerate, search, read, and scope enforcement but states that exact tool names are not shared policy; no ticket fixes a module boundary or a callable signature | **Adopted (#42):** the modules with a fixed public interface are `protocol.js`, `runtime.js`, `admission.js`, `validation.js`, `lifecycle.js`; other modules under `scripts/lib/` are internal to them. Per #43 and the #41 decision record, `scripts/lib/guard.js` does **not** ship. |
+| Adapter package location and per-adapter install command | Closed (D6) | Installation and upgrade of the three native adapters | #5 fixes the base install command and says the three plugins are installed globally; #35 says three thin adapters are separately installable from the same tag; #4 records the base install syntax only; no ticket gives a per-adapter package location or command | **Adopted (D6):** each native adapter ships at `adapters/<harness>/` in the same tag for `claude-code`, `codex`, and `opencode`; all three install through the one adapter entry script, which takes `install \| disable \| uninstall`, a harness name, and a target directory the user supplies. |
+| Complete atomic-effect ownership table | Closed (D7) | Assigning every effect to a skill, a runtime module, and an invocation class | #11 enumerates the atomic effects and their authorization outcomes; #5 assigns broad operation groups to four skills; #38 assigns bounded writes to `okf-writer`; no ticket maps every atomic effect to an owning skill, runtime module, and invocation class | **Adopted (D7):** the atomic-effect ownership table assigns each atomic effect one owning skill and one invocation class; the runtime module is `scripts/lib/runtime.js` for every effect and is stated once above the table instead of as a constant column. |
 | Owning skill for incremental synchronization | Closed (#42) | Where automatic narrow maintenance executes | #6 defines incremental synchronization as automatic narrow maintenance; #5 assigns `sync` to the manual-gated `okf-lifecycle` skill without separating the modes; no ticket names the skill or module that performs the incremental mode | **Adopted (#42):** `okf-lifecycle` with `scripts/lib/lifecycle.js` orchestrates incremental synchronization; every mutation goes through `okf-write`. |
 | Implementation sequence | Closed (#41) | The order in which the skills, shared runtime, guard state machine, and adapters reach completion | #1 records the sequence as not yet specified and assigns it to the specification and implementation tickets; no closed ticket supplies it | **Adopted (#41):** wave 1 — #45, #46, #48; wave 2 — #47, #49, #52; wave 3 — #50, #53; wave 4 — #51, #54, #60, #66; wave 5 — #55, #62, #64, #67, #68. Derived from the blocking graph; tickets inside a wave may run in parallel. |
-| Coexistence with the existing third-party OKF skill | Open | Release positioning and installation conflicts | #1 records that whether to replace, extend, or coexist with `fabricioctelles/okf-open-knowledge-format` is not yet specified; no closed ticket supplies it | Choose replace, extend, or coexist, or record an explicit deferral |
-| Support-ceiling fixture corpora and strata | Open | Any calibrated claim about the declared support ceiling | #36 requires fixture evidence before a calibrated support-ceiling claim and lists the fixture subjects, but names no corpora, no scale strata, and no acceptance condition; #1 records the fixture evidence as not yet specified | Name the fixture corpora and strata, and the observation that makes the ceiling calibrated |
+| Coexistence with the existing third-party OKF skill | Closed (D9) | Release positioning and installation conflicts | #1 records that whether to replace, extend, or coexist with `fabricioctelles/okf-open-knowledge-format` is not yet specified; no closed ticket supplies it | **Adopted (D9):** closed by explicit deferral. `v0.1.0` makes no claim about `fabricioctelles/okf-open-knowledge-format`; positioning is revisited only if a real install conflict is observed. |
+| Support-ceiling fixture corpora and strata | Deferred (D10) | Any calibrated claim about the declared support ceiling | #36 requires fixture evidence before a calibrated support-ceiling claim and lists the fixture subjects, but names no corpora, no scale strata, and no acceptance condition; #1 records the fixture evidence as not yet specified | Name the fixture corpora and strata, and the observation that makes the ceiling calibrated |
 
-#### Terms used normatively that `CONTEXT.md` does not define
+#### Terms formerly undefined, now in `CONTEXT.md` (#9)
 
-- Each term below MUST receive one authoritative definition before an implementation uses it normatively (#26).
-- A term below MUST NOT be given a synonym for a concept `CONTEXT.md` already defines (#26).
+The terms below were the gap list this specification opened against `CONTEXT.md`. Every one of them
+now has an authoritative `CONTEXT.md` entry, so the list is a discharge record, not a blocking gap.
+`target-owner consent` is intentionally not a separate entry: the `Foreign-write authority` entry
+names the same grant and lists `target-owner consent` under `_Avoid_`.
+
+The two rules stand for any *future* normative term:
+
+- A term this specification uses normatively MUST receive one authoritative definition in `CONTEXT.md` before an implementation uses it normatively (#26).
+- Such a term MUST NOT be given a synonym for a concept `CONTEXT.md` already defines (#26).
 
 Authority and consent: `WRITE_AUTHORITY`, `WRITE_NOT_AUTHORIZED`, authority generation, grant generation, target-owner consent, target project-mode configuration, target native adapter, allowed effects, target collision, transformed output, bootstrap exception (#37, #21).
 

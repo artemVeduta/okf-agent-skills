@@ -4,6 +4,7 @@ const cp = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { REQUIRED_BRIEF_FIELDS } = require('../test-support/snapshot');
 
 const scripts = path.join(__dirname, '..', 'scripts');
 const delegation = require(path.join(scripts, 'lib', 'delegation'));
@@ -59,8 +60,7 @@ function run(wrapper, value) {
   const result = cp.spawnSync(process.execPath, [wrapper], {
     input: JSON.stringify(value), encoding: 'utf8',
   });
-  let response = null;
-  try { response = JSON.parse(result.stdout); } catch {}
+  const response = JSON.parse(result.stdout);
   return { status: result.status, stderr: result.stderr, stdout: result.stdout, response };
 }
 
@@ -69,11 +69,7 @@ function bytes(file) {
 }
 
 test('validateBrief blocks a brief missing any required field as incomplete-brief', () => {
-  for (const field of [
-    'role', 'task_kind', 'operation_class', 'cwd', 'bundle', 'paths',
-    'allowed_effects', 'forbidden_effects', 'evidence', 'required_checks',
-    'settings', 'expected_result',
-  ]) {
+  for (const field of REQUIRED_BRIEF_FIELDS) {
     const value = brief('/repo');
     delete value[field];
     const result = delegation.validateBrief(value);

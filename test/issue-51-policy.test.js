@@ -1,10 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
-const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { treeHash } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const wrapper = path.join(repo, 'scripts', 'okf-read.js');
@@ -39,26 +39,6 @@ function run(root, operation, payload) {
   assert.equal(processResult.status, 0);
   assert.equal(processResult.stderr, '');
   return JSON.parse(processResult.stdout);
-}
-
-function treeHash(root) {
-  const hash = crypto.createHash('sha256');
-  function visit(directory, relative = '') {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const file = path.join(directory, entry.name);
-      const name = path.join(relative, entry.name);
-      hash.update(`${name}\0`);
-      if (entry.isDirectory()) {
-        hash.update('directory\0');
-        visit(file, name);
-      } else if (entry.isFile()) {
-        hash.update('file\0');
-        hash.update(fs.readFileSync(file));
-      }
-    }
-  }
-  visit(root);
-  return hash.digest('hex');
 }
 
 function readRecord(response, relative) {
@@ -99,7 +79,7 @@ test('validate retains a deprecated concept and never repairs its index', (t) =>
 
 test('read returns a successor notice as ordinary Markdown without a relationship', (t) => {
   const root = bundle(t);
-  const index = Buffer.from('---\nokf_version: "0.2"\n---\n# Bundle\n\n- [Old note](old.md)\n');
+  const index = '---\nokf_version: "0.2"\n---\n# Bundle\n\n- [Old note](old.md)\n';
   write(root, 'index.md', index);
   const content = '---\ntype: Note\nstatus: deprecated\n---\n# Old note\n\nThis note is deprecated. See [the replacement](current.md).\n';
   write(root, 'old.md', content);
@@ -115,13 +95,12 @@ test('read returns a successor notice as ordinary Markdown without a relationshi
   assert.equal(record.body, '# Old note\n\nThis note is deprecated. See [the replacement](current.md).\n');
   assert.equal(Object.hasOwn(record, 'relationship'), false);
   assert.equal(Object.hasOwn(record, 'successor'), false);
-  assert.deepEqual(fs.readFileSync(path.join(root, 'index.md')), index);
+  assert.equal(fs.readFileSync(path.join(root, 'index.md'), 'utf8'), index);
   assert.equal(treeHash(root), before);
 });
 
 test('shipped navigation and archive code has no concept supersession machinery', () => {
-  const forbidden = ['superseded_by', 'deprecation_reason', 'retain_until', 'concept_alias', 'conceptAlias', 'follow'];
-  assert.equal(hasForbiddenMechanic('const followSuccessor = true;', 'follow'), true);
+  const forbidden = ['superseded_by', 'deprecation_reason', 'retain_until', 'concept_alias', 'conceptAlias', 'followSuccessor', 'follow_successor'];
 
   for (const file of sourceFiles()) {
     const source = fs.readFileSync(file, 'utf8');

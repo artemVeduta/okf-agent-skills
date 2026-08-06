@@ -45,7 +45,9 @@ function run(value) {
   const result = cp.spawnSync(process.execPath, [path.join(scripts, 'okf-write.js')], {
     input: JSON.stringify(value), encoding: 'utf8',
   });
-  return { status: result.status, stderr: result.stderr, response: JSON.parse(result.stdout) };
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  return JSON.parse(result.stdout);
 }
 
 function bytes(file) {
@@ -55,20 +57,18 @@ function bytes(file) {
 test('writer applies a valid bounded revision and reports planned and actual effects', (t) => {
   const root = bundle(t);
   concept(root);
-  const result = run(request(root));
-  assert.equal(result.status, 0);
-  assert.equal(result.stderr, '');
-  assert.equal(result.response.result, 'applied');
-  assert.equal(result.response.data.task_kind, 'fix');
-  assert.deepEqual(result.response.data.actual_effects.map((item) => item.effect), ['concept-revise']);
-  assert.deepEqual(result.response.data.residue, []);
+  const response = run(request(root));
+  assert.equal(response.result, 'applied');
+  assert.equal(response.data.task_kind, 'fix');
+  assert.deepEqual(response.data.actual_effects.map((item) => item.effect), ['concept-revise']);
+  assert.deepEqual(response.data.residue, []);
 });
 
 test('writer creates a draft without verification from readable evidence', (t) => {
   const root = bundle(t);
   const value = request(root, 'create', { concept: 'new.md', set: { type: 'Note' } });
   value.scope = { concepts: ['new.md'] };
-  const response = run(value).response;
+  const response = run(value);
   assert.equal(response.result, 'applied');
   const saved = fs.readFileSync(path.join(root, 'new.md'), 'utf8');
   assert.match(saved, /status: draft/);
@@ -81,7 +81,7 @@ test('writer accepts each allowed task kind', (t) => {
     concept(root);
     const value = request(root);
     value.task_kind = taskKind;
-    assert.equal(run(value).response.result, 'applied', taskKind);
+    assert.equal(run(value).result, 'applied', taskKind);
   }
 });
 
@@ -89,7 +89,7 @@ test('writer invalidates verification on a material claim revision and preserves
   const root = bundle(t);
   const body = '# Exact body\r\n\r\nUnchanged.\r\n';
   concept(root, `---\ntype: Note\ntitle: Before\nunknown:\n  nested: kept\nverified:\n  - kind: machine\n    by: check\n    coverage: complete-current-concept\n---\n${body}`);
-  const response = run(request(root)).response;
+  const response = run(request(root));
   const saved = fs.readFileSync(path.join(root, 'note.md'), 'utf8');
   assert.equal(response.result, 'applied');
   assert.ok(response.findings.some((finding) => finding.code === 'INLINE_VERIFICATION_INVALIDATED'));
@@ -101,10 +101,10 @@ test('writer invalidates verification on a material claim revision and preserves
 test('writer reports a semantic no-op without publication', (t) => {
   const root = bundle(t);
   concept(root);
-  const first = run(request(root)).response;
+  const first = run(request(root));
   assert.equal(first.result, 'applied');
   const before = bytes(path.join(root, 'note.md'));
-  const response = run(request(root)).response;
+  const response = run(request(root));
   assert.equal(response.result, 'no-op');
   assert.deepEqual(response.data.actual_effects, []);
   assert.deepEqual(bytes(path.join(root, 'note.md')), before);
@@ -119,7 +119,7 @@ test('writer blocks every task kind outside the bounded write contract without c
     const value = request(root);
     if (taskKind === undefined) delete value.task_kind;
     else value.task_kind = taskKind;
-    const response = run(value).response;
+    const response = run(value);
     const finding = response.findings.find((item) => item.code === 'TASK_KIND_NOT_WRITE_ELIGIBLE');
     assert.equal(response.result, 'blocked', String(taskKind));
     assert.equal(finding.detail.task_kind, taskKind === undefined ? null : taskKind);
@@ -136,14 +136,14 @@ test('writer blocks root, evidence, mode, and scope gates before publication', (
     ['evidence', () => {}, 'EVIDENCE_REQUIRED', { evidence: [] }],
     ['scope', () => {}, 'INVALID_SCOPE', {}, { concepts: ['other.md'] }],
   ];
-  for (const [, setup, code, extra, scope] of cases) {
+  for (const [label, setup, code, extra, scope] of cases) {
     fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n');
     setup();
     const value = request(root, 'revise', extra);
     if (scope) value.scope = scope;
-    const response = run(value).response;
-    assert.ok(response.findings.some((finding) => finding.code === code));
-    assert.equal(response.data.actual_effects.length, 0);
+    const response = run(value);
+    assert.ok(response.findings.some((finding) => finding.code === code), label);
+    assert.equal(response.data.actual_effects.length, 0, label);
   }
 });
 
@@ -153,7 +153,7 @@ test('writer refuses unimplemented mechanical link maintenance', (t) => {
   const before = bytes(path.join(root, 'note.md'));
   const response = run(request(root, 'revise', {
     effects: ['concept-revise', 'mechanical-link-maintenance'],
-  })).response;
+  }));
   assert.equal(response.result, 'blocked');
   assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
   assert.deepEqual(response.data.actual_effects, []);
@@ -203,13 +203,13 @@ test('writer reports actual derivatives in requested effect order through the pr
   const value = request(root, 'revise', {
     effects: ['log-append', 'concept-revise', 'index-maintenance'],
   });
-  const response = run(value).response;
+  const response = run(value);
   assert.equal(response.result, 'applied');
   assert.match(fs.readFileSync(path.join(root, 'index.md'), 'utf8'), /- \[note.md\]\(note.md\)/);
   assert.match(fs.readFileSync(path.join(root, 'log.md'), 'utf8'), /- revise: \[note.md\]\(note.md\)/);
   assert.deepEqual(response.data.actual_effects.map((item) => item.effect), ['concept-revise', 'log-append', 'index-maintenance']);
   assert.deepEqual(response.data.actual_effects.map((item) => item.inherited), [false, true, true]);
-  const repeat = run(value).response;
+  const repeat = run(value);
   assert.equal(repeat.result, 'no-op');
   assert.equal((fs.readFileSync(path.join(root, 'log.md'), 'utf8').match(/- revise: \[note.md\]\(note.md\)/g) || []).length, 1);
 });

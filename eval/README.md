@@ -45,7 +45,9 @@ temporary bundle repository per case and copies `skills/<name>` from this
 checkout into `<fixture>/.agents/skills/<name>`, for each of the five
 skills. This mounts the release candidate's own skills, without letting a
 live model turn write through to the real `skills/` directory — `local()`
-has no isolation of its own (see "Setup choice" below), so the fixture must
+has no isolation of its own (see
+[`docs/research/flue-skill-evaluation.md`](../docs/research/flue-skill-evaluation.md)),
+so the fixture must
 supply it.
 
 Each fixture also carries a minimal conforming bundle: an `index.md` with
@@ -140,12 +142,6 @@ trials, with no change to the skill or the prompt. Do not read one trial as
 a pass or fail claim about trigger quality. See
 [`docs/flue-eval-results.md`](../docs/flue-eval-results.md) for the recorded
 runs, the per-case trial counts, and what they prove.
-
-Add one optional argument to run a subset of the cases by id:
-
-```sh
-npm run eval -- okf-write        # only cases whose id contains "okf-write"
-```
 
 ## What a case result looks like
 

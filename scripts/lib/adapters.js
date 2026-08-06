@@ -4,14 +4,16 @@
  * `install` created, and only receipt paths that resolve inside target.
  *
  * Also the one at-most-once orientation claim cycle every harness adapter
- * shares: derive the occurrence key, pre-claim it 'unavailable' before
- * dispatch (so a crash mid-dispatch is reported, never replayed), dispatch
- * through the sibling okf-read wrapper as a child process (the wrapper is
- * the one contract seam), then finalize the claim from the real result. Presentation is decided
- * here too, so every adapter agrees by construction: inject only on
- * 'clean', everything else is a diagnostic, never injected. A replay
- * reports the ORIGINAL reason, not the runtime's generic claimed-attempt
- * gloss, which the adapter has no way to recover on its own.
+ * shares. Dispatch is a child-process run of the sibling okf-read wrapper,
+ * the one contract seam. The invariants a reader cannot get from the code:
+ *   - the occurrence is pre-claimed 'unavailable' before dispatch, so a
+ *     dispatch that crashes is reported once and never replayed;
+ *   - every ledger mutation is a compare-and-swap, so two concurrent hooks
+ *     cannot both claim one occurrence;
+ *   - only a 'clean' result is injected into the session, everything else is
+ *     a diagnostic;
+ *   - a replay reports the ORIGINAL reason, not the runtime's generic
+ *     claimed-attempt gloss, which the adapter cannot recover on its own.
  */
 
 const path = require('node:path');
@@ -19,14 +21,15 @@ const childProcess = require('node:child_process');
 const orientation = require('./orientation');
 
 const occurrencesName = '.okf-occurrences.json';
-const harnesses = new Set(['claude-code', 'codex', 'opencode']);
+const harnesses = orientation.validHarnesses;
 const receiptName = '.okf-adapter.json';
 const disabledMarker = '.okf-adapter-disabled';
 const placeholderTarget = '__OKF_TARGET_DIR__';
+const claimsLimit = 256;
 const suiteRoot = path.join(__dirname, '..', '..');
 const adaptersRoot = path.join(suiteRoot, 'adapters');
 const scriptsRoot = path.join(suiteRoot, 'scripts');
-const readWrapper = path.join(__dirname, '..', 'okf-read.js');
+const readWrapper = path.join(scriptsRoot, 'okf-read.js');
 
 function substitute(text, targetDir) {
   return text.split(placeholderTarget).join(targetDir);
@@ -35,14 +38,21 @@ function substitute(text, targetDir) {
 // The installed adapter runs from its own target, so the whole canonical
 // scripts tree is copied in: after installation the tag checkout is not a
 // runtime dependency of anything the harness executes.
-function copyScriptsTree(destination, resolvedTarget, services, installedFiles) {
-  for (const file of services.listFiles(scriptsRoot)) {
+// The listing carries its own completeness: a symlink or an unreadable
+// directory truncates the walk, and a truncated copy would fail closed at
+// every session start instead of failing the install, so it is not copied.
+function copyScriptsTree(destination, resolvedTarget, services, recordFile) {
+  const { files, complete } = services.listFiles(scriptsRoot);
+  if (!complete) return false;
+  for (const file of files) {
     const relative = path.join(destination, path.relative(scriptsRoot, file));
     const targetFile = path.join(resolvedTarget, relative);
+    const content = services.readFile(file);
+    recordFile(relative);
     services.mkdir(path.dirname(targetFile));
-    services.writeFile(targetFile, services.readFile(file));
-    installedFiles.push(relative);
+    services.writeFile(targetFile, content);
   }
+  return true;
 }
 
 function readReceipt(targetDir, services) {
@@ -56,18 +66,33 @@ function install(harness, targetDir, services) {
   const resolvedTarget = path.resolve(targetDir);
   services.mkdir(resolvedTarget);
 
+  // The receipt is the only record of what install created, so it is written on
+  // the failure paths too: uninstall can then remove exactly the residue rather
+  // than leaving a partial target that answers NOT_INSTALLED.
   const installedFiles = [];
+  const writeReceipt = () => services.writeFile(
+    path.join(resolvedTarget, receiptName),
+    JSON.stringify({ harness, suite_version: manifest.suite_version, installed_files: installedFiles, disabled: false }),
+  );
+  const recordFile = (relative) => {
+    installedFiles.push(relative);
+    writeReceipt();
+  };
+
+  writeReceipt();
   for (const entry of manifest.installs) {
     const targetFile = path.join(resolvedTarget, entry.target);
-    services.mkdir(path.dirname(targetFile));
     const content = substitute(services.readFile(path.join(sourceRoot, entry.source)), resolvedTarget);
+    recordFile(entry.target);
+    services.mkdir(path.dirname(targetFile));
     services.writeFile(targetFile, content);
-    installedFiles.push(entry.target);
   }
-  copyScriptsTree(manifest.scripts_tree, resolvedTarget, services, installedFiles);
+  const complete = copyScriptsTree(manifest.scripts_tree, resolvedTarget, services, recordFile);
+  if (!complete) {
+    uninstall(harness, resolvedTarget, services);
+    return { ok: false, code: 'INCOMPLETE_SOURCE_TREE' };
+  }
 
-  const receipt = { harness, suite_version: manifest.suite_version, installed_files: installedFiles, disabled: false };
-  services.writeFile(path.join(resolvedTarget, receiptName), JSON.stringify(receipt));
   return {
     ok: true, harness, target: resolvedTarget, installed_files: installedFiles,
     ...(manifest.next_action ? { next_action: manifest.next_action } : {}),
@@ -111,12 +136,77 @@ function uninstall(harness, targetDir, services) {
   return { ok: true, harness, target: resolvedTarget };
 }
 
-function readClaims(file, services) {
-  try { return JSON.parse(services.readFile(file)); } catch { return {}; }
+// The raw bytes travel with the parsed claims because they are the
+// compare-and-swap token for the next mutation.
+function readLedger(file, services) {
+  let text = null;
+  try { text = services.readFile(file); } catch { text = null; }
+  let claims = {};
+  if (text !== null) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) claims = parsed;
+    } catch { claims = {}; }
+  }
+  return { text, claims };
 }
 
-function writeClaims(file, claims, services) {
-  services.writeFile(file, JSON.stringify(claims));
+// Insertion order is eviction order. Only occurrences that can still recur have
+// to be answerable, and deriveKey embeds the context id, so an entry from a
+// finished session can never match again.
+function bounded(claims) {
+  const keys = Object.keys(claims);
+  if (keys.length <= claimsLimit) return claims;
+  const kept = {};
+  for (const key of keys.slice(keys.length - claimsLimit)) kept[key] = claims[key];
+  return kept;
+}
+
+// publishFile is the suite's compare-and-swap write: `expected` of null means
+// the ledger must still be absent.
+function publishClaims(file, expected, claims, services) {
+  const kept = bounded(claims);
+  const text = JSON.stringify(kept);
+  services.publishFile(file, text, expected);
+  return { text, claims: kept };
+}
+
+function finalizeClaim(file, initial, key, record, services) {
+  let ledger = initial;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const claims = { ...ledger.claims };
+    if (record) claims[key] = record;
+    else delete claims[key];
+    try {
+      publishClaims(file, ledger.text, claims, services);
+      return;
+    } catch (error) {
+      if (!error || error.code !== 'TARGET_CHANGED') return;
+      ledger = readLedger(file, services);
+    }
+  }
+}
+
+// Claiming an occurrence must not be a lost update: a concurrent hook that won
+// the ledger owns the occurrence, and this one becomes a replay of that record.
+function preClaim(file, key, services) {
+  let ledger = readLedger(file, services);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const prior = ledger.claims[key];
+    if (prior !== undefined) return { ledger, prior, firstAttempt: false };
+    try {
+      const published = publishClaims(file, ledger.text, { ...ledger.claims, [key]: { outcome: 'unavailable', reason: null } }, services);
+      return { ledger: published, prior: undefined, firstAttempt: true };
+    } catch (error) {
+      if (!error || error.code !== 'TARGET_CHANGED') {
+        return { ledger, prior: { outcome: 'unavailable', reason: null }, firstAttempt: false };
+      }
+      ledger = readLedger(file, services);
+    }
+  }
+  // Contention this persistent is treated as somebody else's claim rather than
+  // risking a second presentation of the same occurrence.
+  return { ledger, prior: ledger.claims[key] || { outcome: 'unavailable', reason: null }, firstAttempt: false };
 }
 
 // The runtime's own `claimed` contract is the three-value enum
@@ -145,33 +235,42 @@ function present(response, reason) {
 function claimAndDispatch(payload, ledgerDir, services) {
   const key = orientation.deriveKey(payload, services);
   const file = key ? path.join(ledgerDir, occurrencesName) : null;
-  const claims = file ? readClaims(file, services) : {};
-  const prior = key ? claims[key] : undefined;
-  const firstAttempt = prior === undefined;
-  if (file && firstAttempt) {
-    claims[key] = { outcome: 'unavailable', reason: null };
-    writeClaims(file, claims, services);
-  }
+  const { ledger, prior, firstAttempt } = file
+    ? preClaim(file, key, services)
+    : { ledger: { text: null, claims: {} }, prior: undefined, firstAttempt: true };
 
   const request = {
     protocol: 'okf-wrapper/1', skill: 'okf-read', operation: 'orient', invocation: 'automatic',
     payload: { ...payload, claimed: firstAttempt ? [] : [{ occurrence_key: key, outcome: prior.outcome }] },
   };
-  // A non-zero exit, empty stdout, or unparseable stdout is indistinguishable
-  // from no response at all: the claim is released and nothing is presented.
-  let response;
+  let dispatched = null;
+  let response = null;
   try {
-    const dispatched = childProcess.spawnSync(process.execPath, [readWrapper], { input: JSON.stringify(request), encoding: 'utf8' });
-    response = dispatched.status === 0 ? JSON.parse(dispatched.stdout) : null;
+    dispatched = childProcess.spawnSync(process.execPath, [readWrapper], { input: JSON.stringify(request), encoding: 'utf8' });
+    const parsed = JSON.parse(dispatched.stdout);
+    if (parsed !== null && typeof parsed === 'object' && parsed.protocol === 'okf-wrapper/1') response = parsed;
   } catch { response = null; }
 
-  if (file && firstAttempt) {
-    if (response) claims[key] = { outcome: claimOutcome(response.result), reason: reasonOf(response) };
-    else delete claims[key];
-    writeClaims(file, claims, services);
+  // Exit 0 with nothing parseable on stdout is the deliberate silent seam: no
+  // attempt happened, so the claim is released. A non-zero exit is a real
+  // failed attempt, whose pre-claim stays so the occurrence is never replayed.
+  let record;
+  let presented;
+  if (response) {
+    record = { outcome: claimOutcome(response.result), reason: reasonOf(response) };
+    presented = present(response, firstAttempt ? reasonOf(response) : prior.reason);
+  } else if (dispatched && !dispatched.error && dispatched.status === 0) {
+    record = null;
+    presented = null;
+  } else {
+    presented = present({ result: 'unavailable' }, 'dispatch_failed');
   }
 
-  return present(response, firstAttempt ? reasonOf(response) : prior.reason);
+  if (file && firstAttempt && record !== undefined) {
+    finalizeClaim(file, ledger, key, record, services);
+  }
+
+  return presented;
 }
 
 module.exports = { install, disable, uninstall, harnesses, claimAndDispatch };

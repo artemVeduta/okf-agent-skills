@@ -207,8 +207,8 @@ test('rejects absent and empty required frontmatter fields', (t) => {
     ['absent description', '---\nname: okf-read\n---\n', 'FRONTMATTER_DESCRIPTION_REQUIRED'],
     ['empty description', '---\nname: okf-read\ndescription: ""\n---\n', 'FRONTMATTER_DESCRIPTION_REQUIRED'],
   ];
-  for (const [, source, error] of cases) {
-    assert.ok(validateSkill(writeSkill(t, 'okf-read', source)).includes(error));
+  for (const [label, source, error] of cases) {
+    assert.ok(validateSkill(writeSkill(t, 'okf-read', source)).includes(error), label);
   }
 });
 
@@ -222,7 +222,7 @@ test('rejects each static description violation', (t) => {
     ['third-person wording', validSkill().replace('Reads admitted', 'Read admitted'), 'DESCRIPTION_NOT_THIRD_PERSON'],
     ['multiple trigger branches', validSkill().replace('when another skill must invoke it', 'when a user requests inspection and when another skill must invoke it'), 'DESCRIPTION_TRIGGER_BRANCH_COUNT'],
   ];
-  for (const [, source, error] of cases) assert.ok(validateSkill(writeSkill(t, 'okf-read', source)).includes(error));
+  for (const [label, source, error] of cases) assert.ok(validateSkill(writeSkill(t, 'okf-read', source)).includes(error), label);
 });
 
 test('requires reach clauses only for the four leaf skills', (t) => {

@@ -1,12 +1,10 @@
 // A PRESENCE failure short-circuits TRUST and ACCESS; the caller enforces this. Those gates are outside this slice.
 
 const path = require('node:path');
-const { inside } = require('./reach');
+const { inside, gateFinding } = require('./reach');
 
 function finding(code, candidate) {
-  const detail = { gate: 'PRESENCE' };
-  if (candidate.named_by_user === true) detail.path = candidate.path;
-  return { code, origin: 'suite', severity: 'error', blocks: true, detail };
+  return gateFinding(code, 'PRESENCE', candidate);
 }
 
 function evaluate(candidate, services, options = {}) {
@@ -47,7 +45,7 @@ function evaluate(candidate, services, options = {}) {
   */
   const bundleIndex = path.join(bundlePath, 'index.md');
   const bundleMissing = options.allowMissingIndex === true
-    ? typeof services.isFile === 'function' && services.isFile(bundlePath)
+    ? services.isFile(bundlePath)
     : !services.exists(bundleIndex);
   if (bundleMissing) {
     return { passed: false, finding: finding('BUNDLE_MISSING', candidate) };

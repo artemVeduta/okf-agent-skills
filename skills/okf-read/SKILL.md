@@ -28,7 +28,7 @@ Safe inspection of an admitted OKF bundle. `okf-read` never writes, never transi
 
 - `enumerate` — `payload` an object; no further key is required.
 - `validate` — `payload.cwd`, plus at least one of `payload.bundle` or `payload.candidates`.
-- `resolve` — `payload.target`.
+- `resolve` — `payload.cwd` and `payload.target`.
 - `read` — `payload.cwd` and `payload.target`.
 - `search` — `payload.cwd` and `payload.query`.
 - `orient` — `payload.cwd`, `payload.harness`, `payload.context_id`, and `payload.logical_cause`.
@@ -57,4 +57,4 @@ The Procedure below covers a direct call. When another skill delegates read work
 
 1. Build the wrapper request with `protocol`, `skill`, `operation`, and exactly the payload keys that operation requires. Done when the object matches the shape above; not done if a required key is missing.
 2. Run the wrapper and classify the outcome as one of the three exit conditions before reporting it. Done when the report names a valid response (refusal or not), invalid wrapper input, or an internal failure; not done while a refusal is being reported as a crash.
-3. For a `resolve` or `read` outcome, walk the three levels above — bundle-root index, then the directory index for the concept's location, then the concept body — choosing each entry by reading the index content in front of you. Done when the concept's content is in hand; not done if no bundle root resolves, no index entry matches, or the path does not exist under the bundle root, each of which is reported as a `resolve` or `read` result rather than a thrown error.
+3. For a `resolve` or `read` outcome, walk the fixed three-level path from Navigation path. Done when the concept's content is in hand; not done if no bundle root resolves, no index entry matches, or the path does not exist under the bundle root, each of which is reported as a `resolve` or `read` result rather than a thrown error.

@@ -12,7 +12,17 @@ const manifest = require('./manifest');
 const trust = require('./trust');
 
 function invalid() {
-  return { result: 'blocked', data: { candidates: [] }, findings: [{ code: 'INVALID', origin: 'suite', severity: 'error', blocks: true, detail: { gate: 'data validity' } }] };
+  return {
+    result: 'blocked',
+    data: { candidates: [] },
+    findings: [{
+      code: 'INVALID',
+      origin: 'suite',
+      severity: 'error',
+      blocks: true,
+      detail: { gate: 'data validity' },
+    }],
+  };
 }
 
 function validPayload(payload) {
@@ -29,12 +39,6 @@ function validPayload(payload) {
     typeof entry.path === 'string' &&
     (entry.bundle === undefined || typeof entry.bundle === 'string')
   ));
-}
-
-function gateFinding(code, gate, candidate) {
-  const detail = { gate };
-  if (candidate.named_by_user === true) detail.path = candidate.path;
-  return { code, origin: 'suite', severity: 'error', blocks: true, detail };
 }
 
 function makeCandidate(entry, base) {
@@ -90,8 +94,8 @@ function evaluate(entries, context, services, allowMissingIndex) {
     const implicit = context.gitRoot !== null && owningRoot === context.gitRoot;
     const trusted = implicit || trust.trusted(candidate.path, services);
     const findings = [...reached.anomalies];
-    if (!trusted) findings.push(gateFinding('UNTRUSTED', 'TRUST', candidate));
-    if (!accessible) findings.push(gateFinding('ACCESS_DENIED', 'ACCESS', candidate));
+    if (!trusted) findings.push(reach.gateFinding('UNTRUSTED', 'TRUST', candidate));
+    if (!accessible) findings.push(reach.gateFinding('ACCESS_DENIED', 'ACCESS', candidate));
     return record(!trusted ? 'TRUST' : (!accessible ? 'ACCESS' : null), findings);
   });
 }
@@ -103,7 +107,17 @@ function bundleEntries(workspace, root) {
   return workspace.bundles.map((bundle) => {
     const owner = bundle.owner === null ? null : repositories.get(bundle.owner);
     const ownerRoot = owner ? path.resolve(root, owner.path) : root;
-    return { path: ownerRoot, bundle: owner ? path.relative(ownerRoot, path.resolve(ownerRoot, bundle.root)) : bundle.root, bundle_alias: bundle.alias, owner: owner ? ownerRoot : null, mode: bundle.mode, required: bundle.required, declared: true, requires_repository: Boolean(owner) };
+    return {
+      path: ownerRoot,
+      // path.relative collapses a no-owner '.' to '', so the branches are not equivalent.
+      bundle: owner ? path.relative(ownerRoot, path.resolve(ownerRoot, bundle.root)) : bundle.root,
+      bundle_alias: bundle.alias,
+      owner: owner ? ownerRoot : null,
+      mode: bundle.mode,
+      required: bundle.required,
+      declared: true,
+      requires_repository: Boolean(owner),
+    };
   });
 }
 

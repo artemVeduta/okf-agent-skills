@@ -1,13 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
 const cp = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { assertEnvelope, treeHash } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-read.js');
-const responseKeys = ['protocol', 'skill', 'operation', 'result', 'scope', 'evidence_limits', 'data', 'findings', 'next_action'];
 const fallbackPhrase = 'v0.1 consumed using v0.2 fallback';
 
 function rootFor(t, prefix = 'okf-49-') {
@@ -49,39 +48,6 @@ function run(root, bundle = root) {
   };
 }
 
-function treeHash(root) {
-  const hash = crypto.createHash('sha256');
-  function visit(directory, relative = '') {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const full = path.join(directory, entry.name);
-      const name = path.join(relative, entry.name);
-      hash.update(`${name}\0`);
-      if (entry.isDirectory()) {
-        hash.update('directory\0');
-        visit(full, name);
-      } else if (entry.isFile()) {
-        hash.update('file\0');
-        hash.update(fs.readFileSync(full));
-      } else if (entry.isSymbolicLink()) {
-        hash.update('link\0');
-        hash.update(fs.readlinkSync(full));
-      } else {
-        hash.update('other\0');
-      }
-    }
-  }
-  visit(root);
-  return hash.digest('hex');
-}
-
-function assertEnvelope(result) {
-  assert.equal(result.status, 0);
-  assert.equal(result.stderr, '');
-  assert.ok(result.response);
-  assert.deepEqual(Object.keys(result.response), responseKeys);
-  assert.equal(result.stdout, `${JSON.stringify(result.response)}\n`);
-}
-
 function assertFindingShape(finding) {
   assert.equal(typeof finding.code, 'string');
   assert.ok(finding.code.length > 0);
@@ -100,13 +66,14 @@ function assertFindings(response) {
 
 function assertReport(result, conformant, fallback = false) {
   const rawReport = result.response.data.report;
-  assert.ok(typeof rawReport === 'string' || Array.isArray(rawReport));
-  const report = Array.isArray(rawReport) ? rawReport.join('\n') : rawReport;
+  assert.ok(Array.isArray(rawReport));
+  const report = rawReport.join('\n');
   const value = conformant ? 'yes' : 'no';
   assert.match(report, new RegExp(`^OKF v0\\.2 bundle-conformant: ${value}$`, 'm'));
   assert.equal(report.includes(fallbackPhrase), fallback);
   const withoutConformanceLine = result.stdout.replace(/OKF v0\.2 bundle-conformant: (?:yes|no)/g, '');
-  assert.doesNotMatch(withoutConformanceLine, /(?<![-\w])(?:conformant|compliant|succeeded)(?!\w)/i);
+  // No conformance or compliance claim can appear outside the one approved line.
+  assert.doesNotMatch(withoutConformanceLine, /\b(?:conformant|compliant|succeeded)\b/i);
 }
 
 function validateUnchanged(root, bundle = root) {

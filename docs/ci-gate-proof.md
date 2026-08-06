@@ -133,6 +133,10 @@ Output:
      docs/ci-gate-proof.md | 140 ++++++++++++++++++++++++++++++++++++++++++++++++++
      1 file changed, 140 insertions(+)
 
+The `ci-proof/issue-107` branch carries the original 140-line copy of this
+file. The copy on the release branch was extended after that, so the diffstat
+is evidence about that branch, not about this file as it now stands.
+
 This proves the branch adds no release-behavior change. The branch tip adds
 this evidence file only.
 

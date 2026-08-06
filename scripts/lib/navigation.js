@@ -1,5 +1,6 @@
 const path = require('node:path');
 const validation = require('./validation');
+const { inside } = require('./reach');
 
 const NAVIGATION_CHANNEL_EXACT = 'exact path';
 const NAVIGATION_CHANNEL_SEARCH = 'native search';
@@ -24,14 +25,6 @@ function notConfiguredData(operation) {
   return navigationData('no match in searched scope', { bundles: [], channel });
 }
 
-function contained(target, root) {
-  return target === root || target.startsWith(root === path.parse(root).root ? root : root + path.sep);
-}
-
-function safeExists(file, services) {
-  try { return typeof services.exists === 'function' && services.exists(file); } catch { return false; }
-}
-
 function readValue(value) {
   if (Buffer.isBuffer(value)) return value.toString('utf8');
   return typeof value === 'string' ? value : null;
@@ -41,8 +34,8 @@ function readObservation(file, services) {
   let value;
   try {
     value = services.readFile(file);
-  } catch (error) {
-    return { ok: false, error };
+  } catch {
+    return { ok: false };
   }
 
   if (typeof value === 'string' || Buffer.isBuffer(value)) {
@@ -52,11 +45,11 @@ function readObservation(file, services) {
   if (value !== null && typeof value === 'object' && Object.hasOwn(value, 'content')) {
     const content = readValue(value.content);
     return content === null
-      ? { ok: false, error: new Error('read service returned no text') }
+      ? { ok: false }
       : { ok: true, content, complete: value.complete === true };
   }
 
-  return { ok: false, error: new Error('read service returned no text') };
+  return { ok: false };
 }
 
 function guardPath(candidate, file, services, envelopeRoot) {
@@ -66,7 +59,7 @@ function guardPath(candidate, file, services, envelopeRoot) {
     const root = envelopeRoot || services.realpath(path.resolve(candidate.bundle_root));
     const real = services.realpath(absolute);
     if (typeof root !== 'string' || typeof real !== 'string') return { state: 'unobservable' };
-    if (!contained(real, root)) {
+    if (!inside(real, root)) {
       return {
         state: 'invalid',
         detail: {
@@ -77,7 +70,7 @@ function guardPath(candidate, file, services, envelopeRoot) {
       };
     }
     const relative = path.relative(root, real).split(path.sep).join('/');
-    return { state: 'ok', root, real, relative };
+    return { state: 'ok', relative };
   } catch {
     return { state: 'unobservable' };
   }
@@ -133,7 +126,7 @@ function parseNavigationRecord(candidate, guard, observation, findings) {
 function inspectIndex(candidate, services, findings) {
   const index = path.join(candidate.bundle_root, 'index.md');
   const relative = 'index.md';
-  if (!safeExists(index, services)) {
+  if (!services.exists(index)) {
     addFinding(findings, navigationFinding('unreadable', {
       gate: 'navigation', path: relative, reason: 'missing_index', bundle_alias: candidate.bundle_alias,
     }, 'error', false));
@@ -143,7 +136,7 @@ function inspectIndex(candidate, services, findings) {
   const guard = guardPath(candidate, index, services);
   if (guard.state === 'invalid') {
     addFinding(findings, navigationFinding('invalid', guard.detail, 'error', true));
-    return { complete: false, invalid: true };
+    return { complete: false };
   }
   if (guard.state !== 'ok') {
     addFinding(findings, navigationFinding('unobservable', {
@@ -181,29 +174,33 @@ function listEntries(candidate, services, findings) {
     return null;
   }
 
-  let root = path.resolve(candidate.bundle_root);
-  try {
-    if (typeof services.realpath === 'function') root = services.realpath(root);
-  } catch {}
-
-  let entries;
-  try {
-    entries = services.listFiles(root);
-  } catch {
-    entries = null;
-  }
-  if (!Array.isArray(entries)) {
+  const envelope = scopeEnvelope(candidate, services);
+  if (envelope.state !== 'ok') {
     addFinding(findings, navigationFinding('unobservable', {
       gate: 'navigation', reason: 'enumeration_unobservable', bundle_alias: candidate.bundle_alias,
     }, 'error', false));
     return null;
   }
-  if (entries.complete === false) {
+  const root = envelope.root;
+
+  let listing;
+  try {
+    listing = services.listFiles(root);
+  } catch {
+    listing = null;
+  }
+  if (!listing || !Array.isArray(listing.files) || typeof listing.complete !== 'boolean') {
+    addFinding(findings, navigationFinding('unobservable', {
+      gate: 'navigation', reason: 'enumeration_unobservable', bundle_alias: candidate.bundle_alias,
+    }, 'error', false));
+    return null;
+  }
+  if (!listing.complete) {
     addFinding(findings, navigationFinding('unobservable', {
       gate: 'navigation', reason: 'enumeration_incomplete', bundle_alias: candidate.bundle_alias,
     }, 'error', false));
   }
-  return { root, entries };
+  return { root, entries: listing.files, complete: listing.complete };
 }
 
 function supportEvidence(candidates, services, findings, readMissingBodies) {
@@ -218,8 +215,8 @@ function supportEvidence(candidates, services, findings, readMissingBodies) {
       observable = false;
       continue;
     }
-    const { root, entries } = listing;
-    if (entries.complete === false) observable = false;
+    const { root, entries, complete } = listing;
+    if (!complete) observable = false;
     for (const entry of entries) {
       const file = listedFile(root, entry);
       if (!file) {
@@ -268,37 +265,48 @@ function supportEvidence(candidates, services, findings, readMissingBodies) {
     }
   }
 
-  return {
-    complete: observable && files <= MAX_SOURCE_FILES && bytes <= MAX_SOURCE_BYTES && depth <= MAX_DIRECTORY_DEPTH,
-    observable,
-    files,
-    bytes,
-    depth,
-  };
+  return { complete: observable && files <= MAX_SOURCE_FILES && bytes <= MAX_SOURCE_BYTES && depth <= MAX_DIRECTORY_DEPTH };
 }
 
-function admissionSupport(data, support, getActiveCandidates) {
-  return data.coverage === 'non-exhaustive' || getActiveCandidates(data).length === 0
+function activeCandidates(data) {
+  return (data.candidates || []).filter((item) => item.state === 'active');
+}
+
+function admissionSupport(data, support) {
+  return data.coverage === 'non-exhaustive' || activeCandidates(data).length === 0
     ? { ...support, complete: false }
     : support;
 }
 
-function routeScope(data, route, getActiveCandidates) {
-  if (route && Array.isArray(route.eligible)) return route.eligible;
-  return getActiveCandidates(data);
-}
-
-function resultState(findings, support, indexes, hasRead, unavailable = false) {
+function resultState({ findings, support, indexes, hasRead, unavailable = false, archiveUnevaluated = false }) {
   if (unavailable && !hasRead) return 'unavailable';
+  if (archiveUnevaluated) return 'degraded';
   if (!support.complete || indexes.some((index) => !index.complete) || findings.some((item) => (
     item.code === 'invalid' || item.code === 'unobservable' || (item.code === 'unreadable' && item.severity === 'error')
   ))) return 'degraded';
   return 'ok';
 }
 
-function read(data, payload, services, locate, getActiveCandidates) {
-  const route = locate(data, payload, services);
-  const scopeCandidates = routeScope(data, route, getActiveCandidates);
+function guardMatch(candidate, file, services, findings, envelopeRoot) {
+  const guard = guardPath(candidate, file, services, envelopeRoot);
+  if (guard.state === 'invalid') {
+    addFinding(findings, navigationFinding('invalid', guard.detail, 'error', true));
+    return null;
+  }
+  if (guard.state !== 'ok') {
+    addFinding(findings, navigationFinding('unobservable', {
+      gate: 'navigation',
+      path: path.relative(candidate.bundle_root, file).split(path.sep).join('/'),
+      reason: 'scope_unobservable',
+      bundle_alias: candidate.bundle_alias,
+    }, 'error', false));
+    return null;
+  }
+  return guard;
+}
+
+function read(data, payload, services, route) {
+  const scopeCandidates = route.eligible;
   const scope = navigationScope(scopeCandidates, NAVIGATION_CHANNEL_EXACT);
   const findings = [];
   const found = [];
@@ -306,14 +314,18 @@ function read(data, payload, services, locate, getActiveCandidates) {
   const indexes = scopeCandidates.map((candidate) => inspectIndex(candidate, services, findings));
 
   if (route.findings.length) {
-    const support = admissionSupport(data, supportEvidence(scopeCandidates, services, findings, false), getActiveCandidates);
+    const support = admissionSupport(data, supportEvidence(scopeCandidates, services, findings, false));
     const missingFinding = route.findings.find((item) => item.code === 'missing');
     addFinding(findings, navigationFinding('missing', {
       gate: 'navigation', reason: missingFinding ? missingFinding.detail.reason : 'concept_not_found',
     }, 'error', false));
-    const state = scopeCandidates.length === 0
-      ? 'unavailable'
-      : resultState(findings, support, indexes, false);
+    const state = resultState({
+      findings,
+      support,
+      indexes,
+      hasRead: false,
+      unavailable: scopeCandidates.length === 0,
+    });
     return {
       result: state,
       data: navigationData('no match in searched scope', scope, found, readRecords, state === 'ok' ? 'complete' : 'non-exhaustive'),
@@ -321,23 +333,14 @@ function read(data, payload, services, locate, getActiveCandidates) {
     };
   }
 
-  const support = admissionSupport(data, supportEvidence(scopeCandidates, services, findings, true), getActiveCandidates);
+  const support = admissionSupport(data, supportEvidence(scopeCandidates, services, findings, true));
   const selectedItem = route.unique[0];
-  const selectedGuard = guardPath(selectedItem.candidate, selectedItem.file, services);
-  if (selectedGuard.state === 'invalid') {
-    addFinding(findings, navigationFinding('invalid', selectedGuard.detail, 'error', true));
+  const selectedGuard = services.exists(selectedItem.file)
+    ? guardMatch(selectedItem.candidate, selectedItem.file, services, findings)
+    : null;
+  if (!selectedGuard) {
     return {
-      result: 'unavailable',
-      data: navigationData('found', scope, found, readRecords, 'non-exhaustive'),
-      findings,
-    };
-  }
-  if (selectedGuard.state !== 'ok') {
-    addFinding(findings, navigationFinding('unobservable', {
-      gate: 'navigation', path: path.relative(selectedItem.candidate.bundle_root, selectedItem.file).split(path.sep).join('/'), reason: 'scope_unobservable',
-    }, 'error', false));
-    return {
-      result: 'unavailable',
+      result: resultState({ findings, support, indexes, hasRead: false, unavailable: true }),
       data: navigationData('found', scope, found, readRecords, 'non-exhaustive'),
       findings,
     };
@@ -345,18 +348,9 @@ function read(data, payload, services, locate, getActiveCandidates) {
   const safeMatches = [{ ...selectedItem, guard: selectedGuard }];
   found.push(reference(selectedItem.candidate, selectedGuard.relative));
   for (const item of route.unique.slice(1)) {
-    if (!safeExists(item.file, services)) continue;
-    const guard = guardPath(item.candidate, item.file, services);
-    if (guard.state === 'invalid') {
-      addFinding(findings, navigationFinding('invalid', guard.detail, 'error', true));
-      continue;
-    }
-    if (guard.state !== 'ok') {
-      addFinding(findings, navigationFinding('unobservable', {
-        gate: 'navigation', path: path.relative(item.candidate.bundle_root, item.file).split(path.sep).join('/'), reason: 'scope_unobservable',
-      }, 'error', false));
-      continue;
-    }
+    if (!services.exists(item.file)) continue;
+    const guard = guardMatch(item.candidate, item.file, services, findings);
+    if (!guard) continue;
     safeMatches.push({ ...item, guard });
     found.push(reference(item.candidate, guard.relative));
   }
@@ -368,7 +362,7 @@ function read(data, payload, services, locate, getActiveCandidates) {
       gate: 'navigation', path: selected.guard.relative, reason: 'concept_read_failure',
     }, 'error', false));
     return {
-      result: 'unavailable',
+      result: resultState({ findings, support, indexes, hasRead: false, unavailable: true }),
       data: navigationData('found', scope, found, readRecords, 'non-exhaustive'),
       findings,
     };
@@ -386,7 +380,7 @@ function read(data, payload, services, locate, getActiveCandidates) {
     }, 'warning', false));
   }
 
-  const state = resultState(findings, support, indexes, true);
+  const state = resultState({ findings, support, indexes, hasRead: true });
   return {
     result: state,
     data: navigationData('found', scope, found, readRecords, state === 'ok' ? 'complete' : 'non-exhaustive'),
@@ -411,8 +405,8 @@ function nativeSearchResults(value) {
   };
 }
 
-function search(data, payload, services, getActiveCandidates) {
-  const candidates = getActiveCandidates(data);
+function search(data, payload, services) {
+  const candidates = activeCandidates(data);
   const scope = navigationScope(candidates, NAVIGATION_CHANNEL_SEARCH);
   const findings = [];
   const found = [];
@@ -423,6 +417,21 @@ function search(data, payload, services, getActiveCandidates) {
   let searchUnavailable = false;
   let searched = 0;
   let archiveUnevaluated = false;
+
+  if (candidates.length === 0) {
+    const state = resultState({
+      findings,
+      support: { complete: false },
+      indexes,
+      hasRead: false,
+      unavailable: true,
+    });
+    return {
+      result: state,
+      data: navigationData('no match in searched scope', scope, found, readRecords, 'non-exhaustive'),
+      findings,
+    };
+  }
 
   for (const candidate of candidates) {
     const envelope = scopeEnvelope(candidate, services);
@@ -436,14 +445,6 @@ function search(data, payload, services, getActiveCandidates) {
     if (seenRoots.has(envelope.root)) continue;
     seenRoots.add(envelope.root);
     searchCandidates.push({ candidate, root: envelope.root });
-  }
-
-  if (candidates.length === 0) {
-    return {
-      result: 'unavailable',
-      data: navigationData('no match in searched scope', scope, found, readRecords, 'non-exhaustive'),
-      findings,
-    };
   }
 
   for (const { candidate, root } of searchCandidates) {
@@ -480,23 +481,14 @@ function search(data, payload, services, getActiveCandidates) {
       const value = nativePath(item);
       if (typeof value !== 'string' || value === '') continue;
       const file = path.isAbsolute(value) ? path.resolve(value) : path.resolve(candidate.bundle_root, value);
-      const guard = guardPath(candidate, file, services, root);
-      if (guard.state === 'invalid') {
-        addFinding(findings, navigationFinding('invalid', guard.detail, 'error', true));
-        continue;
-      }
-      if (guard.state !== 'ok') {
-        addFinding(findings, navigationFinding('unobservable', {
-          gate: 'navigation', path: value, reason: 'scope_unobservable', bundle_alias: candidate.bundle_alias,
-        }, 'error', false));
-        continue;
-      }
+      const guard = guardMatch(candidate, file, services, findings, root);
+      if (!guard) continue;
       const basename = path.posix.basename(guard.relative);
       if (!guard.relative.endsWith('.md') || basename === 'index.md' || basename === 'log.md') {
         archiveUnevaluated = true;
         continue;
       }
-      if (!safeExists(file, services)) {
+      if (!services.exists(file)) {
         addFinding(findings, navigationFinding('unreadable', {
           gate: 'navigation', path: value, reason: 'native_path_unreadable', bundle_alias: candidate.bundle_alias,
         }, 'error', false));
@@ -528,13 +520,16 @@ function search(data, payload, services, getActiveCandidates) {
     }
   }
 
-  const support = admissionSupport(data, supportEvidence(candidates, services, findings, true), getActiveCandidates);
+  const support = admissionSupport(data, supportEvidence(candidates, services, findings, true));
   const match = found.length ? 'found' : 'no match in searched scope';
-  const state = searchUnavailable && readRecords.length === 0
-    ? 'unavailable'
-    : archiveUnevaluated
-      ? 'degraded'
-      : resultState(findings, support, indexes, readRecords.length > 0, searched === 0);
+  const state = resultState({
+    findings,
+    support,
+    indexes,
+    hasRead: readRecords.length > 0,
+    unavailable: searchUnavailable || searched === 0,
+    archiveUnevaluated,
+  });
   const extra = archiveUnevaluated ? { archive_predicate: 'unevaluated' } : {};
   return {
     result: state,
@@ -691,6 +686,7 @@ function visibleMarkdown(text) {
     let length = 1;
     while (visible[start + length] === '`') length++;
     let end = start + length;
+    let closed = false;
     while (end < visible.length) {
       if (visible[end] !== '`') {
         end++;
@@ -703,11 +699,12 @@ function visibleMarkdown(text) {
           if (masked[index] !== '\r' && masked[index] !== '\n') masked[index] = ' ';
         }
         start = end + length - 1;
+        closed = true;
         break;
       }
       end += closingLength;
     }
-    start += length - 1;
+    if (!closed) start += length - 1;
   }
   return masked.join('');
 }
@@ -748,17 +745,16 @@ function markdownLinks(text, start, add) {
   }
 }
 
-function enumerate(data, payload, services, getActiveCandidates) {
-  const candidates = getActiveCandidates(data);
+function enumerate(data, payload, services) {
+  const candidates = activeCandidates(data);
   const findings = [];
   const reasons = [];
   const links = [];
-  let current;
   const addReason = (reason) => { if (!reasons.includes(reason)) reasons.push(reason); };
-  const add = (carrier, value, offset, base) => {
+  const addLink = (current, carrier, value, offset, base) => {
     const workspace = workspaceReference(value);
-    const reference = workspace ? `okf-workspace://${workspace.alias}/${workspace.concept}` : localReference(value);
-    if (!reference) return;
+    const resolved = workspace ? `okf-workspace://${workspace.alias}/${workspace.concept}` : localReference(value);
+    if (!resolved) return;
     let target = null;
     let targetRoot = current.root;
     if (workspace) {
@@ -772,23 +768,23 @@ function enumerate(data, payload, services, getActiveCandidates) {
     } else {
       const root = current.root;
       target = base === 'bundle'
-        ? path.resolve(root, reference.startsWith('/') ? `.${reference}` : reference)
-        : path.resolve(path.dirname(current.file), reference);
+        ? path.resolve(root, resolved.startsWith('/') ? `.${resolved}` : resolved)
+        : path.resolve(path.dirname(current.file), resolved);
     }
     let resolves = false;
-    try { resolves = Boolean(target && targetRoot && contained(target, targetRoot) && safeExists(target, services) && services.isFile(target)); } catch {}
+    try { resolves = Boolean(target && targetRoot && inside(target, targetRoot) && services.exists(target) && services.isFile(target)); } catch {}
     const verdict = resolves ? 'resolves' : 'unexpectedly-broken';
     const record = {
       carrier,
       source: { bundle_alias: current.candidate.bundle_alias, path: current.path, byte_offset: byteOffset(current.text, offset) },
-      reference,
+      reference: resolved,
       verdict,
     };
     links.push(record);
     if (verdict === 'unexpectedly-broken') {
       findings.push({
         code: 'UNRESOLVED_INTERNAL_LINK', origin: 'okf', severity: 'warning', blocks: false,
-        detail: { path: current.path, resource: reference },
+        detail: { path: current.path, resource: resolved },
       });
     }
   };
@@ -799,7 +795,7 @@ function enumerate(data, payload, services, getActiveCandidates) {
       addReason('enumeration_unobservable');
       continue;
     }
-    if (listing.entries.complete === false) addReason('enumeration_incomplete');
+    if (!listing.complete) addReason('enumeration_incomplete');
     for (const entry of listing.entries) {
       const file = listedFile(listing.root, entry);
       if (!file || !file.endsWith('.md')) continue;
@@ -815,7 +811,8 @@ function enumerate(data, payload, services, getActiveCandidates) {
         continue;
       }
       if (!observation.complete) addReason('eof_unobservable');
-      current = { candidate, file, root: listing.root, path: guard.relative, text: observation.content };
+      const current = { candidate, file, root: listing.root, path: guard.relative, text: observation.content };
+      const add = addLink.bind(null, current);
       let bodyStart = 0;
       try {
         const extracted = validation.parseFrontmatter(observation.content);
@@ -830,11 +827,17 @@ function enumerate(data, payload, services, getActiveCandidates) {
   }
   if (data.coverage === 'non-exhaustive') addReason('admission_incomplete');
   const inboundLinks = { complete: reasons.length === 0, incomplete_reasons: reasons, links };
+  const state = resultState({
+    findings,
+    support: { complete: inboundLinks.complete },
+    indexes: [],
+    hasRead: links.length > 0,
+  });
   return {
-    result: inboundLinks.complete ? 'ok' : 'degraded',
+    result: state,
     data: {
       scope: navigationScope(candidates, 'enumeration'),
-      coverage: inboundLinks.complete ? 'complete' : 'non-exhaustive',
+      coverage: state === 'ok' ? 'complete' : 'non-exhaustive',
       inbound_links: inboundLinks,
       archive_recommendations: [],
     },
@@ -842,4 +845,4 @@ function enumerate(data, payload, services, getActiveCandidates) {
   };
 }
 
-module.exports = { read, search, enumerate, notConfiguredData };
+module.exports = { read, search, enumerate, activeCandidates, notConfiguredData };

@@ -26,8 +26,22 @@ function briefFinding(code, detail) {
   return { code, origin: 'suite', severity: 'error', blocks: true, detail };
 }
 
-function blocked(status, code, detail) {
-  return { ok: false, status, findings: [briefFinding(code, detail)], next_action: NEXT_ACTION };
+function incompleteBrief(field) {
+  return {
+    ok: false,
+    status: 'blocked: incomplete-brief',
+    findings: [briefFinding('INCOMPLETE_BRIEF', { gate: 'brief', field })],
+    next_action: NEXT_ACTION,
+  };
+}
+
+function conflictingRules(reason) {
+  return {
+    ok: false,
+    status: 'blocked: conflicting-rules',
+    findings: [briefFinding('CONFLICTING_RULES', { gate: 'brief', reason })],
+    next_action: NEXT_ACTION,
+  };
 }
 
 function buildRequest(brief) {
@@ -53,43 +67,37 @@ function buildRequest(brief) {
 }
 
 function validateBrief(brief) {
-  if (!brief || typeof brief !== 'object') return blocked('blocked: incomplete-brief', 'INCOMPLETE_BRIEF', { gate: 'brief', field: null });
+  if (!brief || typeof brief !== 'object') return incompleteBrief(null);
   for (const field of requiredFields) {
-    if (!Object.hasOwn(brief, field)) return blocked('blocked: incomplete-brief', 'INCOMPLETE_BRIEF', { gate: 'brief', field });
-    if (field !== 'allowed_effects' && isEmpty(brief[field])) return blocked('blocked: incomplete-brief', 'INCOMPLETE_BRIEF', { gate: 'brief', field });
+    if (!Object.hasOwn(brief, field)) return incompleteBrief(field);
+    if (field !== 'allowed_effects' && isEmpty(brief[field])) return incompleteBrief(field);
   }
-  if (!Object.hasOwn(ROLES, brief.role)) {
-    return blocked('blocked: incomplete-brief', 'INCOMPLETE_BRIEF', { gate: 'brief', field: 'role' });
-  }
+  if (!Object.hasOwn(ROLES, brief.role)) return incompleteBrief('role');
   if (brief.paths.length !== 1 || typeof brief.paths[0] !== 'string' || brief.paths[0] === '') {
-    return blocked('blocked: incomplete-brief', 'INCOMPLETE_BRIEF', { gate: 'brief', field: 'paths' });
+    return incompleteBrief('paths');
   }
   const settings = brief.settings;
   if (typeof settings !== 'object' || Array.isArray(settings) ||
     !['inline', 'delegated'].includes(settings.read_execution) ||
     !['inline', 'delegated'].includes(settings.write_execution)) {
-    return blocked('blocked: incomplete-brief', 'INCOMPLETE_BRIEF', { gate: 'brief', field: 'settings' });
+    return incompleteBrief('settings');
   }
   const isWriter = brief.role === 'okf-writer';
-  if (isWriter && isEmpty(brief.allowed_effects)) {
-    return blocked('blocked: incomplete-brief', 'INCOMPLETE_BRIEF', { gate: 'brief', field: 'allowed_effects' });
-  }
-  if (isWriter !== !isEmpty(brief.changes)) {
-    return blocked('blocked: incomplete-brief', 'INCOMPLETE_BRIEF', { gate: 'brief', field: 'changes' });
-  }
+  if (isWriter && isEmpty(brief.allowed_effects)) return incompleteBrief('allowed_effects');
+  if (isWriter ? isEmpty(brief.changes) : !isEmpty(brief.changes)) return incompleteBrief('changes');
 
   if (brief.allowed_effects.some((effect) => brief.forbidden_effects.includes(effect))) {
-    return blocked('blocked: conflicting-rules', 'CONFLICTING_RULES', { gate: 'brief', reason: 'effect_conflict' });
+    return conflictingRules('effect_conflict');
   }
   const widensScope = brief.role === 'okf-reader'
     ? brief.allowed_effects.some((effect) => WRITE_EFFECTS.has(effect))
     : brief.allowed_effects.some((effect) => !WRITE_EFFECTS.has(effect));
   if (widensScope) {
-    return blocked('blocked: conflicting-rules', 'CONFLICTING_RULES', { gate: 'brief', reason: 'scope_widening' });
+    return conflictingRules('scope_widening');
   }
   const owner = runtime.routerOwners.get(brief.operation_class);
   if (brief.operation_class === 'orient' || (owner !== undefined && owner !== ROLES[brief.role].skill)) {
-    return blocked('blocked: conflicting-rules', 'CONFLICTING_RULES', { gate: 'brief', reason: 'operation_class' });
+    return conflictingRules('operation_class');
   }
 
   return { ok: true, request: buildRequest(brief) };

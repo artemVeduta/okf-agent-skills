@@ -14,32 +14,35 @@ Nothing here reopens a row marked `Settled, do not reopen`.
 
 ## Problem Statement
 
-A developer cannot use this project. The suite that gives the repository its name is not
-installable and not invocable.
+State at authoring time (2026-08-05), before #9 landed. A developer could not use this project.
+The suite that gives the repository its name was not installable and not invocable.
 
-- `skills/` does not exist. There are zero `SKILL.md` files. `npx skills add
-  'artemVeduta/okf-agent-skills#v0.1.0'` — the single documented install command — has nothing to
+- `skills/` did not exist. There were zero `SKILL.md` files. `npx skills add
+  'artemVeduta/okf-agent-skills#v0.1.0'` — the single documented install command — had nothing to
   install.
-- The runtime behind the skills is complete and green: 14 modules under `scripts/lib/`, five
+- The runtime behind the skills was complete and green: 15 modules under `scripts/lib/`, five
   per-skill wrapper scripts, three native adapters, two inert agent definitions, 19 test files,
   **220 tests passing under `node --test`** (verified 2026-08-05, exit 0).
-- The whole injected orientation payload is one pointer line. The rules for maintaining durable
+- The whole injected orientation payload was one pointer line. The rules for maintaining durable
   context were never meant to live there — they belong in the `SKILL.md` files a harness loads
   through its own discovery mechanism. Orientation points at the knowledge, skills carry the
-  rules, native navigation fetches the content. Two of the three are built.
-- The absence is invisible to the suite. `test/issue-55.test.js` line 286 reads
-  `if (!fs.existsSync(skills)) return;`, so the one test that checks the shipped inventory passes
-  **because** `skills/` is missing. A green suite is currently no evidence about the skills.
-- Six rows of the pinned spec's open-item table are still `Open`. Each MUST be closed by a
+  rules, native navigation fetches the content. Two of the three were built.
+- The absence was invisible to the suite. `test/issue-55.test.js` carried an
+  `if (!fs.existsSync(skills)) return;` early return, so the one test that checks the shipped
+  inventory passed **because** `skills/` was missing. A green suite was no evidence about the
+  skills.
+- Six rows of the pinned spec's open-item table were still `Open`. Each MUST be closed by a
   recorded decision before the behavior it blocks is implemented, and an implementation agent MUST
-  NOT invent a value for any of them.
-- There is no `.github/`, so no CI, while the release gate is *"CI MUST gate the release on the
-  full deterministic suite"*. There is no `CONTRIBUTING.md`, `SECURITY.md`, `AGENTS.md`, or
-  in-repo `CLAUDE.md`, and `README.md` is 556 bytes of research-phase placeholder.
-- `CONTEXT.md` defines 71 terms and none of the seven checked terms the pinned spec uses
+  NOT invent a value for any of them. All six are closed below by D5–D10, and the pinned spec's
+  table now carries those statuses.
+- There was no `.github/`, so no CI, while the release gate is *"CI MUST gate the release on the
+  full deterministic suite"*. There was no `CONTRIBUTING.md`, `SECURITY.md`, `AGENTS.md`, or
+  in-repo `CLAUDE.md`, and `README.md` was a research-phase placeholder.
+- `CONTEXT.md` defined 71 terms and none of the seven checked terms the pinned spec uses
   normatively (`Concept ID`, `operation store`, `atomic effect`, `WRITE_AUTHORITY`, `verified
-  EOF`, `adapter generation`, `skill binding`). The spec's own gap list at lines 3590–3603 names
-  roughly fifty such terms and requires one authoritative definition before normative use.
+  EOF`, `adapter generation`, `skill binding`). The spec's own gap list — the section
+  "Terms used normatively that `CONTEXT.md` does not define" — named roughly fifty such terms and
+  required one authoritative definition before normative use.
 
 ## Solution
 
@@ -471,12 +474,6 @@ is authored next, because it is what a completion criterion in `okf-write` point
 green about skills that do not exist. Repository setup is independent of all of it and may run in
 parallel, except that the install documentation waits on the verified per-harness target
 directories from D6.
-
-**Why the open items could be closed without a grilling session.** Four of the six were closed by
-reclassification or explicit deferral, which the rows themselves permit. The remaining two are
-tables whose content already exists in the runtime and in the sealed operation map; authoring them
-is transcription under a recorded decision, which is what the open-item rules require, and is not
-the forbidden act of observing that an implementation already chose a value.
 
 **Evidence classification is unchanged.** Accepted decisions govern OKF behavior. Current verified
 first-party harness evidence governs an adapter fact and establishes no cross-harness parity. The

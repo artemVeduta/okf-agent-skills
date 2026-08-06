@@ -122,25 +122,11 @@ merges, or removes `opencode.json`, `opencode.jsonc`, or the legacy global
 `config.json`.
 
 **A successful `install` is not a working adapter by itself.** OpenCode
-configuration is a required manual step this release does not perform: merge
-the effective `permission.skill: deny` rules for `okf`, `okf-read`,
-`okf-write`, `okf-lifecycle`, and `okf-review` — shown below — into your own
+configuration is a required manual step this release does not perform. Merge
+the `permission.skill` rules from
+[`adapters/opencode/config.json`](adapters/opencode/config.json) into your own
 `opencode.json` or `opencode.jsonc`, after any broader permission pattern,
-since OpenCode applies the last matching rule:
-
-```json
-{
-  "permission": {
-    "skill": {
-      "okf": "deny",
-      "okf-read": "deny",
-      "okf-write": "deny",
-      "okf-lifecycle": "deny",
-      "okf-review": "deny"
-    }
-  }
-}
-```
+since OpenCode applies the last matching rule.
 
 `install`'s response reports this merge as its `next_action` and never
 claims the adapter is ready. `disable` and `uninstall` touch only
@@ -196,9 +182,6 @@ mutation stays blocked either way until the marker exists.
 
 ## Limitations
 
-This release discloses the following plainly, rather than leaving them for
-a developer to discover by hitting them.
-
 **Support ceiling — provisional.** The declared ceiling is 500 source
 files, 100 MB of aggregate exact source bytes, and bundle-relative
 directory depth 6. Every appearance of this ceiling in this release,
@@ -243,10 +226,6 @@ a good test here looks like, [`AGENTS.md`](AGENTS.md) and
 [`CLAUDE.md`](CLAUDE.md) for the rules an agent working in this repository
 must not violate by reflex, and [`SECURITY.md`](SECURITY.md) to report a
 vulnerability privately.
-
-```
-node --test "test/*.test.js"
-```
 
 ## License
 

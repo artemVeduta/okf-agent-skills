@@ -1,5 +1,5 @@
-// Red-before-green seam: the eval runner's case-result shape.
-// This is a pure function. It needs no Flue runtime and no model.
+// The eval runner's case-result shape. Pure function, no Flue runtime and no
+// model.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 

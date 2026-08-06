@@ -34,8 +34,12 @@ For `okf-agent-skills`, the smallest useful design is:
 4. Let that runner emit one local JSON result per case.
 5. Add Langfuse later as an optional sink for traces, scores, comparisons, and
    manual diagnosis.
+6. Do not adopt Flue for this task; it does not run the three supported coding
+   agents.
 
 This design adds no shipped dependency and no second product contract seam.
+Use Cloud Hobby only for a short synthetic-data trial. Self-host only when the
+data policy requires it.
 
 ## Repository constraints
 
@@ -283,7 +287,7 @@ structured output, explicit sandbox modes, and `--ephemeral`. An ephemeral run
 does not persist the rollout file, while the Langfuse plugin reads that file.
 Therefore, a traced case must not use `--ephemeral` unless a different trace
 path is added.
-([Codex non-interactive mode](https://developers.openai.com/codex/non-interactive-mode))
+([Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode))
 
 **Burden for this repository:** No product code change is necessary for
 tracing. A separate runner must provide a controlled `CODEX_HOME`, temporary
@@ -461,9 +465,6 @@ policy requires it, because self-hosting has a much larger operating burden.
 | Adds shipped dependencies | No, if external | No, if external |
 | Best role | Test driver and source of pass/fail | Trace, score, compare, and diagnose |
 
-**Inference:** These are complementary. Langfuse is not a larger replacement
-for the small runner. It is an optional backend behind it.
-
 ## Comparison with Flue
 
 ### Official Flue framework
@@ -559,18 +560,9 @@ semantic quality that exact assertions cannot measure.
 ### Phase 4: Optional CI
 
 Run live evaluation on demand, on a schedule, or as a non-release pull-request
-signal. Do not make it a required `v0.1.0` check. Keep the existing 241-test
-offline suite as the release authority.
-
-## Final recommendation
-
-Adopt **a small external Node.js live-agent harness first**. Add Langfuse only
-after that harness produces useful local JSON results. Use Langfuse Cloud Hobby
-for a short synthetic-data trial, or self-host only when data policy requires
-it. Keep all Langfuse SDKs, plugins, credentials, datasets, and model calls out
-of the shipped runtime and the deterministic release gate. Do not adopt Flue
-for this task now; it adds an agent runtime but does not remove the need to
-drive and check Claude Code, Codex, and OpenCode.
+signal. Do not make it a required `v0.1.0` check. Keep the offline
+`node --test "test/*.test.js"` suite as the release authority, with the pass
+count equal to the test count and zero failures.
 
 ## Primary sources
 
@@ -601,7 +593,7 @@ The Langfuse server `main` commit observed during research was
 ### Coding-agent CLIs
 
 1. [Claude Code programmatic mode](https://code.claude.com/docs/en/headless)
-2. [Codex non-interactive mode](https://developers.openai.com/codex/non-interactive-mode)
+2. [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode) (the former `developers.openai.com` URL redirects here)
 3. [OpenCode CLI](https://opencode.ai/docs/cli/)
 
 ### Flue

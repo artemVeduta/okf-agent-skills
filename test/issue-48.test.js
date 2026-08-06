@@ -1,14 +1,30 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
 const cp = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { RESPONSE_KEYS: responseKeys, assertEnvelope, treeHash } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const scripts = path.join(repo, 'scripts');
-const responseKeys = ['protocol', 'skill', 'operation', 'result', 'scope', 'evidence_limits', 'data', 'findings', 'next_action'];
+const ACTIVATION_BLOCKED_DATA = {
+  authorization: 'blocked',
+  effects: [{ effect: 'concept-revise', authorization: 'blocked', inherited: false }],
+  task_kind: 'fix',
+  actual_effects: [],
+  residue: [],
+  evidence: [],
+  validation: 'not-run',
+  code: 'ACTIVATION_MARKER_INVALID',
+};
+const ACTIVATION_INVALID_FINDING = {
+  code: 'ACTIVATION_MARKER_INVALID',
+  origin: 'suite',
+  severity: 'error',
+  blocks: true,
+  detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
+};
 
 function temporaryRoot(t, prefix = 'okf-48-') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -80,15 +96,6 @@ function assertDiagnostic(stderr) {
   assert.equal(stderr.includes('\n    at '), false);
 }
 
-function assertEnvelope(result) {
-  assert.equal(result.status, 0);
-  assert.equal(result.stderr, '');
-  assert.ok(result.response);
-  assert.deepEqual(Object.keys(result.response), responseKeys);
-  assert.equal(result.stdout.endsWith('\n'), true);
-  assert.equal(result.stdout.split('\n').length, 2);
-}
-
 function unknownRequest(root, skill = 'okf-read', operation = 'not-shipped') {
   return request(skill, operation, { cwd: root });
 }
@@ -100,41 +107,11 @@ function assertNotConfigured(result) {
   assert.equal(result.response.result, 'not-configured');
 }
 
-function treeHash(root) {
-  const hash = crypto.createHash('sha256');
-
-  function visit(directory, prefix = '') {
-    const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of entries) {
-      const full = path.join(directory, entry.name);
-      const relative = path.join(prefix, entry.name);
-      hash.update(`${relative}\0`);
-      if (entry.isSymbolicLink()) {
-        hash.update('link\0');
-        hash.update(fs.readlinkSync(full));
-      } else if (entry.isDirectory()) {
-        hash.update('directory\0');
-        visit(full, relative);
-      } else if (entry.isFile()) {
-        hash.update('file\0');
-        hash.update(fs.readFileSync(full));
-      } else {
-        hash.update('other\0');
-      }
-    }
-  }
-
-  visit(root);
-  return hash.digest('hex');
-}
-
-function writeManifest(root) {
-  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
-    schema_version: 1,
-    workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
-    repositories: [{ name: 'app', path: '.', local: true }],
-    bundles: [{ alias: 'generated', owner: 'app', root: 'generated', required: false, mode: 'generated' }],
-  }));
+function scriptFiles(directory = scripts) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const file = path.join(directory, entry.name);
+    return entry.isDirectory() ? scriptFiles(file) : [file];
+  });
 }
 
 test('ships exactly five process wrappers without skill or guard modules', () => {
@@ -144,10 +121,9 @@ test('ships exactly five process wrappers without skill or guard modules', () =>
     .sort();
   assert.deepEqual(topLevelWrappers, wrappers.slice().sort());
   for (const file of wrappers) assert.equal(fs.statSync(path.join(scripts, file)).isFile(), true, file);
-  assert.deepEqual(fs.readdirSync(path.join(scripts, 'lib')).sort(), [
-    'adapters.js', 'admission.js', 'delegation.js', 'lifecycle.js', 'manifest.js', 'navigation.js', 'orientation.js', 'presence.js', 'protocol.js', 'reach.js',
-    'routing.js', 'runtime.js', 'services.js', 'trust.js', 'validation.js',
-  ]);
+  const libraryFiles = scriptFiles(path.join(scripts, 'lib')).map((file) => path.basename(file));
+  assert.equal(libraryFiles.includes('guard.js'), false);
+  assert.equal(libraryFiles.some((file) => /^okf-/.test(file)), false);
 });
 
 test('invalid wrapper input exits 64 without stdout or a stack trace', () => {
@@ -286,24 +262,6 @@ test('an invalid activation marker takes precedence over automatic mutation bloc
   fs.writeFileSync(path.join(root, '.okf-active'), 'invalid');
   const target = path.join(root, 'concept.md');
   const beforeTarget = fs.readFileSync(target);
-  const expectedData = {
-    authorization: 'blocked',
-    effects: [{ effect: 'concept-revise', authorization: 'blocked', inherited: false }],
-    task_kind: 'fix',
-    actual_effects: [],
-    residue: [],
-    evidence: [],
-    validation: 'not-run',
-    code: 'ACTIVATION_MARKER_INVALID',
-  };
-  const expectedFinding = [{
-    code: 'ACTIVATION_MARKER_INVALID',
-    origin: 'suite',
-    severity: 'error',
-    blocks: true,
-    detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
-  }];
-
   for (const [skill, value] of [
     ['okf-write', reviseRequest(root, 'automatic')],
     ['okf', { ...reviseRequest(root, 'automatic'), skill: 'okf' }],
@@ -311,8 +269,8 @@ test('an invalid activation marker takes precedence over automatic mutation bloc
     const result = runWrapper(skill, value);
     assertEnvelope(result);
     assert.equal(result.response.result, 'blocked', skill);
-    assert.deepEqual(result.response.data, expectedData, skill);
-    assert.deepEqual(result.response.findings, expectedFinding, skill);
+    assert.deepEqual(result.response.data, ACTIVATION_BLOCKED_DATA, skill);
+    assert.deepEqual(result.response.findings, [ACTIVATION_INVALID_FINDING], skill);
     assert.deepEqual(fs.readFileSync(target), beforeTarget, skill);
   }
 });
@@ -370,15 +328,7 @@ test('guard operations are valid UNKNOWN_OPERATION refusals and no guard module 
     assert.deepEqual(result.response.findings, [], operation);
   }
 
-  const guardFiles = [];
-  function visit(directory) {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const full = path.join(directory, entry.name);
-      if (entry.isDirectory()) visit(full);
-      else if (entry.name === 'guard.js') guardFiles.push(full);
-    }
-  }
-  visit(scripts);
+  const guardFiles = scriptFiles().filter((file) => path.basename(file) === 'guard.js');
   assert.deepEqual(guardFiles, []);
   assert.equal(treeHash(root), before);
 });
@@ -443,24 +393,6 @@ test('non-empty, directory, and symlink markers block with the exact activation 
       fs.symlinkSync(target, marker);
     }],
   ];
-  const expected = {
-    code: 'ACTIVATION_MARKER_INVALID',
-    origin: 'suite',
-    severity: 'error',
-    blocks: true,
-    detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
-  };
-  const expectedData = {
-    authorization: 'blocked',
-    effects: [{ effect: 'concept-revise', authorization: 'blocked', inherited: false }],
-    task_kind: 'fix',
-    actual_effects: [],
-    residue: [],
-    evidence: [],
-    validation: 'not-run',
-    code: 'ACTIVATION_MARKER_INVALID',
-  };
-
   for (const [name, setup] of cases) {
     const root = repository(t, `okf-48-invalid-marker-${name}-`, false);
     bundle(root);
@@ -475,8 +407,8 @@ test('non-empty, directory, and symlink markers block with the exact activation 
     assert.ok(result.response, name);
     assert.deepEqual(Object.keys(result.response), responseKeys, name);
     assert.equal(result.response.result, 'blocked', name);
-    assert.deepEqual(result.response.data, expectedData, name);
-    assert.deepEqual(result.response.findings, [expected], name);
+    assert.deepEqual(result.response.data, ACTIVATION_BLOCKED_DATA, name);
+    assert.deepEqual(result.response.findings, [ACTIVATION_INVALID_FINDING], name);
     assert.equal(fs.readFileSync(target).equals(beforeTarget), true, name);
     assert.equal(treeHash(root), beforeTree, name);
   }
