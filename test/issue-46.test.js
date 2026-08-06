@@ -1,0 +1,353 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const {
+  bundle: createBundle,
+  repository,
+  spawnWrapper,
+  temporaryRoot,
+} = require('../test-support/snapshot');
+
+const repo = path.resolve(__dirname, '..');
+const wrapper = path.join(repo, 'scripts', 'okf-read.js');
+
+function activate(root) {
+  fs.writeFileSync(path.join(root, '.okf-active'), '');
+}
+
+function bundle(root, relative = '.') {
+  return createBundle(root, relative, '# Bundle\n');
+}
+
+function runWrapper(value, cwd) {
+  return spawnWrapper(wrapper, value, { cwd });
+}
+
+function request(cwd, candidates, workspaceRoot) {
+  return {
+    protocol: 'okf-wrapper/1',
+    skill: 'okf-read',
+    operation: 'admit',
+    payload: {
+      cwd,
+      ...(workspaceRoot === undefined ? {} : { workspace_root: workspaceRoot }),
+      candidates,
+    },
+  };
+}
+
+function candidate(entry, overrides = {}) {
+  return { path: entry, ...overrides };
+}
+
+function onlyCandidate(result) {
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, '');
+  assert.ok(result.response);
+  assert.equal(result.response.data.candidates.length, 1);
+  return result.response.data.candidates[0];
+}
+
+function assertReach(result, code) {
+  const item = onlyCandidate(result);
+  assert.equal(result.response.result, 'blocked');
+  assert.equal(item.state, 'inactive');
+  assert.equal(item.failed_gate, 'REACH');
+  assert.equal(item.next_gate, null);
+  assert.equal(item.findings[0].code, code);
+  assert.equal(item.findings[0].detail.gate, 'REACH');
+  return item.findings[0];
+}
+
+function assertPresence(result, code) {
+  const item = onlyCandidate(result);
+  assert.equal(result.response.result, 'blocked');
+  assert.equal(item.failed_gate, 'PRESENCE');
+  assert.equal(item.next_gate, null);
+  assert.equal(item.findings[0].code, code);
+  assert.equal(item.findings[0].detail.gate, 'PRESENCE');
+  return item.findings[0];
+}
+
+test('reach refuses above-root, sibling, outside-workspace, and symlink-escape paths', (t) => {
+  const root = repository(t, 'okf-46-reach-');
+  bundle(root);
+  const outside = temporaryRoot(t, 'okf-46-outside-');
+  const cases = [
+    {
+      code: 'ABOVE_GIT_ROOT',
+      request: request(root, [candidate('..')]),
+      refused: path.dirname(root),
+    },
+    {
+      code: 'SIDEWAYS_SIBLING',
+      request: request(root, [candidate('sibling')], path.dirname(root)),
+      refused: path.join(path.dirname(root), 'sibling'),
+    },
+    {
+      code: 'OUTSIDE_WORKSPACE',
+      request: request(root, [candidate('../outside-workspace')], root),
+      refused: path.join(path.dirname(root), 'outside-workspace'),
+    },
+    {
+      code: 'SYMLINK_ESCAPE',
+      request: (() => {
+        fs.symlinkSync(outside, path.join(root, 'escape'));
+        return request(root, [candidate('escape')], root);
+      })(),
+      refused: path.join(root, 'escape'),
+    },
+  ];
+
+  for (const item of cases) {
+    const result = runWrapper(item.request);
+    assertReach(result, item.code);
+    assert.equal(result.stdout.includes(item.refused), false, item.code);
+  }
+});
+
+test('named-by-user controls path disclosure in a reach refusal', (t) => {
+  const root = repository(t, 'okf-46-disclosure-');
+  const outside = path.join(path.dirname(root), 'unique-issue-46-sibling');
+  const hidden = runWrapper(request(root, [candidate(outside)]));
+  const hiddenFinding = assertReach(hidden, 'SIDEWAYS_SIBLING');
+  assert.equal(hiddenFinding.detail.path, undefined);
+  assert.equal(hidden.stdout.includes(outside), false);
+
+  const visible = runWrapper(request(root, [candidate(outside, { named_by_user: true })]));
+  const visibleFinding = assertReach(visible, 'SIDEWAYS_SIBLING');
+  assert.equal(visibleFinding.detail.path, outside);
+  assert.equal(visible.stdout.includes(outside), true);
+});
+
+test('only boolean true permits path disclosure in a reach refusal', (t) => {
+  const root = repository(t, 'okf-46-disclosure-type-');
+  const outside = path.join(path.dirname(root), 'unique-issue-46-typed-sibling');
+  const result = runWrapper(request(root, [candidate(outside, { named_by_user: 'false' })]));
+  const refusal = assertReach(result, 'SIDEWAYS_SIBLING');
+  assert.equal(refusal.detail.path, undefined);
+  assert.equal(result.stdout.includes(outside), false);
+});
+
+test('lexical reach refusals do not stat an out-of-scope candidate', (t) => {
+  const root = repository(t, 'okf-46-nostat-');
+  const danglingName = `${path.basename(root)}-dangling-outside`;
+  const dangling = path.join(path.dirname(root), danglingName);
+  fs.symlinkSync(path.join(path.dirname(root), 'does-not-exist'), dangling);
+  const result = runWrapper(request(root, [candidate(`../${danglingName}`)], root));
+  const finding = assertReach(result, 'OUTSIDE_WORKSPACE');
+  assert.equal(finding.detail.gate, 'REACH');
+  assert.equal(result.response.data.candidates[0].findings.some((item) => item.detail.gate === 'PRESENCE'), false);
+});
+
+test('symlink containment is recomputed, and dangling and cyclic links are reported', (t) => {
+  const root = repository(t, 'okf-46-links-');
+  bundle(root, 'inside');
+  const target = temporaryRoot(t, 'okf-46-link-target-');
+  bundle(target);
+  const link = path.join(root, 'moving');
+  fs.symlinkSync(path.join(root, 'inside'), link);
+  const first = runWrapper(request(root, [candidate('moving')], root));
+  assert.equal(onlyCandidate(first).failed_gate, null);
+
+  fs.unlinkSync(link);
+  fs.symlinkSync(target, link);
+  const second = runWrapper(request(root, [candidate('moving')], root));
+  assertReach(second, 'SYMLINK_ESCAPE');
+
+  const dangling = path.join(root, 'dangling');
+  fs.symlinkSync(path.join(root, 'missing-target'), dangling);
+  const cycleA = path.join(root, 'cycle-a');
+  const cycleB = path.join(root, 'cycle-b');
+  fs.symlinkSync(cycleB, cycleA);
+  fs.symlinkSync(cycleA, cycleB);
+  for (const name of ['dangling', 'cycle-a']) {
+    const result = runWrapper(request(root, [candidate(name)], root));
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr, '');
+    assert.ok(result.response);
+    assert.equal(result.response.data.candidates[0].failed_gate, 'REACH');
+    assert.equal(result.response.data.candidates[0].findings[0].code, 'SYMLINK_UNRESOLVABLE');
+  }
+});
+
+test('workspace root at filesystem root contains absolute candidates', (t) => {
+  const root = repository(t, 'okf-46-filesystem-root-');
+  bundle(root);
+  const result = runWrapper(request(root, [candidate(root)], path.parse(root).root));
+  const item = onlyCandidate(result);
+  // Containment is what this fixture proves. The candidate is the current repository,
+  // so since #47 it clears TRUST and ACCESS too.
+  assert.equal(item.failed_gate, null);
+  assert.equal(item.state, 'active');
+});
+
+test('presence accepts a child bundle below the filesystem root candidate', (t) => {
+  const root = repository(t, 'okf-46-filesystem-root-child-');
+  const candidateRoot = path.join(root, 'candidate-repository');
+  fs.mkdirSync(path.join(candidateRoot, '.git'), { recursive: true });
+  const child = path.join(candidateRoot, 'declared-bundle');
+  bundle(candidateRoot, 'declared-bundle');
+  const result = runWrapper(request(root, [candidate(candidateRoot, {
+    declared: true,
+    requires_repository: true,
+    bundle: path.relative(candidateRoot, child),
+  })], path.parse(root).root));
+  const item = onlyCandidate(result);
+  // The child bundle is present, so PRESENCE passes and TRUST is what stops it.
+  assert.equal(item.failed_gate, 'TRUST');
+  assert.ok(item.findings.some((finding) => finding.code === 'UNTRUSTED'));
+});
+
+test('presence distinguishes declared missing, repository missing, bundle missing, and undeclared absence', (t) => {
+  const root = repository(t, 'okf-46-presence-');
+  bundle(root);
+  const absentDeclared = runWrapper(request(root, [candidate('declared-missing', { declared: true })], root));
+  assertPresence(absentDeclared, 'DECLARED_MISSING');
+
+  const noRepo = path.join(root, 'no-repository');
+  fs.mkdirSync(noRepo);
+  const notRepository = runWrapper(request(root, [candidate('no-repository', { declared: true, requires_repository: true })], root));
+  assertPresence(notRepository, 'NOT_A_REPOSITORY');
+
+  const noBundle = path.join(root, 'no-bundle');
+  fs.mkdirSync(noBundle);
+  fs.mkdirSync(path.join(noBundle, '.git'));
+  const missingBundle = runWrapper(request(root, [candidate('no-bundle', { declared: true, requires_repository: true })], root));
+  assertPresence(missingBundle, 'BUNDLE_MISSING');
+
+  const undeclared = runWrapper(request(root, [candidate('undeclared-missing', { requires_repository: true })], root));
+  assertPresence(undeclared, 'BUNDLE_MISSING');
+  assert.equal(undeclared.response.data.candidates[0].findings.some((item) => ['DECLARED_MISSING', 'NOT_A_REPOSITORY'].includes(item.code)), false);
+});
+
+test('presence rejects bundle paths outside the candidate, including symlinks', (t) => {
+  const root = repository(t, 'okf-46-bundle-boundary-');
+  bundle(root);
+  const outside = temporaryRoot(t, 'okf-46-bundle-outside-');
+  bundle(outside);
+  const lexical = runWrapper(request(root, [candidate(root, { declared: true, bundle: `../${path.basename(outside)}` })], root));
+  assertPresence(lexical, 'BUNDLE_MISSING');
+
+  fs.symlinkSync(outside, path.join(root, 'linked-bundle'));
+  const symlink = runWrapper(request(root, [candidate(root, { declared: true, bundle: 'linked-bundle' })], root));
+  assertPresence(symlink, 'BUNDLE_MISSING');
+});
+
+test('topology handles monorepo siblings, submodules, and declared deeper roots', (t) => {
+  const parent = repository(t, 'okf-46-topology-');
+  const child = path.join(parent, 'child');
+  const sibling = path.join(parent, 'sibling');
+  fs.mkdirSync(child);
+  fs.mkdirSync(sibling);
+  fs.mkdirSync(path.join(child, '.git'));
+  bundle(child);
+  bundle(sibling);
+  const monorepo = runWrapper(request(child, [candidate('child'), candidate('sibling')], parent));
+  assert.equal(monorepo.status, 0);
+  assert.equal(monorepo.response.data.candidates[0].failed_gate, null);
+  assert.equal(monorepo.response.data.candidates[1].findings[0].code, 'SIDEWAYS_SIBLING');
+
+  const submodule = path.join(parent, 'submodule');
+  fs.mkdirSync(submodule);
+  fs.mkdirSync(path.join(submodule, '.git'));
+  bundle(submodule);
+  const excluded = runWrapper(request(parent, [candidate('submodule')], parent));
+  assertReach(excluded, 'SUBMODULE_EXCLUDED');
+  const entered = runWrapper(request(submodule, [candidate('submodule')], parent));
+  assert.equal(onlyCandidate(entered).failed_gate, null);
+
+  const declared = runWrapper(request(parent, [candidate('submodule', { declared: true })], parent));
+  const admitted = onlyCandidate(declared);
+  // Declaring the submodule clears REACH, which is what this fixture is about. A
+  // submodule is a separate repository instance, so since #47 it carries its own
+  // trust and the parent's does not reach it.
+  assert.equal(admitted.failed_gate, 'TRUST');
+  assert.equal(admitted.findings[0].code, 'OVERLAPPING_CANONICAL_PATH');
+  assert.equal(admitted.findings[0].origin, 'suite');
+  assert.equal(admitted.findings[0].severity, 'warning');
+  assert.equal(admitted.findings[0].blocks, false);
+  assert.equal(admitted.findings[0].detail.gate, 'REACH');
+  // The overlap anomaly itself never blocks, asserted above. Since #47 the separate
+  // TRUST gate does, because a submodule is its own repository instance.
+  assert.equal(declared.response.result, 'blocked');
+  assert.equal(declared.stdout.includes(submodule), false);
+});
+
+test('a link inside the git root may not walk above it or sideways out of it', (t) => {
+  const workspace = temporaryRoot(t, 'okf-46-link-topology-');
+  const owner = path.join(workspace, 'repo-a');
+  const neighbour = path.join(workspace, 'repo-b');
+  for (const item of [owner, neighbour]) {
+    fs.mkdirSync(path.join(item, '.git'), { recursive: true });
+    bundle(item);
+  }
+  bundle(workspace, 'plain');
+  fs.symlinkSync(path.join(workspace, 'plain'), path.join(owner, 'peek'));
+  fs.symlinkSync(neighbour, path.join(owner, 'peek-repo'));
+  fs.symlinkSync(workspace, path.join(owner, 'peek-up'));
+
+  const cases = [
+    ['repo-a/peek', 'SIDEWAYS_SIBLING'],
+    ['repo-a/peek-repo', 'SIDEWAYS_SIBLING'],
+    ['repo-a/peek-up', 'ABOVE_GIT_ROOT'],
+  ];
+  for (const [entry, code] of cases) {
+    assertReach(runWrapper(request(owner, [candidate(entry)], workspace)), code);
+  }
+});
+
+test('a declared candidate outside the git root is refused as outside the workspace', (t) => {
+  const root = repository(t, 'okf-46-declared-outside-');
+  bundle(root);
+  const sibling = path.join(path.dirname(root), `${path.basename(root)}-declared-sibling`);
+  bundle(sibling);
+  const refusal = assertReach(
+    runWrapper(request(root, [candidate(sibling, { declared: true, named_by_user: true })])),
+    'OUTSIDE_WORKSPACE',
+  );
+  assert.equal(refusal.detail.path, sibling);
+
+  // A declaration is explicit, so it walks sideways within a workspace root that holds it.
+  const declared = runWrapper(request(root, [candidate(sibling, { declared: true })], path.dirname(root)));
+  // The declaration is what clears REACH here. The sibling is not the current
+  // repository, so since #47 it stops at TRUST rather than being admitted outright.
+  assert.equal(onlyCandidate(declared).failed_gate, 'TRUST');
+});
+
+test('an empty cwd or workspace root is invalid data, and a valid request ignores the process directory', (t) => {
+  const root = repository(t, 'okf-46-process-cwd-');
+  bundle(root);
+  for (const empty of [{ cwd: '', workspace_root: root }, { cwd: root, workspace_root: '' }]) {
+    const result = runWrapper({
+      protocol: 'okf-wrapper/1',
+      skill: 'okf-read',
+      operation: 'admit',
+      payload: { ...empty, candidates: [candidate('.')] },
+    });
+    assert.equal(result.status, 0);
+    assert.equal(result.response.result, 'blocked');
+    assert.equal(result.response.findings[0].code, 'INVALID');
+    assert.deepEqual(result.response.data.candidates, []);
+  }
+
+  const payload = request(root, [candidate('.', { declared: true, requires_repository: true })], root);
+  const fromRoot = runWrapper(payload, root);
+  const fromElsewhere = runWrapper(payload, path.parse(root).root);
+  // This candidate is the current repository, so since #47 it clears every gate.
+  assert.equal(onlyCandidate(fromRoot).state, 'active');
+  assert.equal(fromRoot.stdout, fromElsewhere.stdout);
+});
+
+test('a candidate passing reach and presence is evaluated for trust and access', (t) => {
+  const root = repository(t, 'okf-46-success-');
+  bundle(root);
+  const result = runWrapper(request(root, [candidate('.', { declared: true, requires_repository: true })], root));
+  const item = onlyCandidate(result);
+  assert.equal(result.response.result, 'ok');
+  assert.equal(item.failed_gate, null);
+  assert.equal(item.next_gate, null);
+  assert.equal(item.state, 'active');
+  assert.equal(item.findings.some((finding) => finding.blocks), false);
+});

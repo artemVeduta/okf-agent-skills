@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "workspace_id": "7d9f5de3-1553-4fd7-a4c5-df8d12b445f5",
+  "repositories": [
+    {
+      "name": "okf-agent-skills",
+      "path": ".",
+      "local": true
+    }
+  ],
+  "bundles": [
+    {
+      "alias": "okf",
+      "owner": "okf-agent-skills",
+      "root": "okf",
+      "required": true,
+      "mode": "source"
+    }
+  ]
+}
