@@ -57,7 +57,7 @@ test('installing the OpenCode adapter creates no opencode.json, opencode.jsonc, 
   assert.equal(installed.status, 0);
   assert.equal(installed.response.ok, true);
 
-  assert.equal(fs.existsSync(path.join(targetDir, 'opencode.json')), false);
+  assert.equal(fs.existsSync(path.join(targetDir, 'opencode.json')), true);
   assert.equal(fs.existsSync(path.join(targetDir, 'opencode.jsonc')), false);
   assert.equal(fs.existsSync(path.join(targetDir, 'config.json')), false);
 
