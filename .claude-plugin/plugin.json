@@ -2,5 +2,5 @@
   "name": "okf-agent-skills",
   "version": "0.1.0",
   "description": "Marker-gated, read-only orientation for OKF-managed bundles.",
-  "author": "artemVeduta"
+  "author": { "name": "artemVeduta", "url": "https://github.com/artemVeduta/okf-agent-skills" }
 }
