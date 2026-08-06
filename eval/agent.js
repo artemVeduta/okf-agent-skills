@@ -2,13 +2,15 @@
 // to a fresh fixture repository (see lib/fixture.js) so Flue discovers the
 // five real workspace skills under `<fixture>/.agents/skills/<name>/SKILL.md`.
 //
-// The model specifier is copied verbatim from @flue/runtime's own bundled
-// docs (docs/guide/sandboxes.md:35,81). It needs ANTHROPIC_API_KEY to
-// actually run a turn.
+// The default model specifier is copied verbatim from @flue/runtime's own
+// bundled docs (docs/guide/sandboxes.md:35,81). Set OKF_EVAL_MODEL to use a
+// different provider, for example `openai/<model>`. Each provider reads its
+// own key from the environment: `anthropic` reads ANTHROPIC_API_KEY,
+// `openai` reads OPENAI_API_KEY (docs/guide/models.md:137).
 import { useInitialData, useModel, useSandbox } from '@flue/runtime';
 import { local } from '@flue/runtime/node';
 
-const MODEL = 'anthropic/claude-haiku-4-5';
+const MODEL = process.env.OKF_EVAL_MODEL || 'anthropic/claude-haiku-4-5';
 
 export function OkfEvalAgent() {
   useModel(MODEL);

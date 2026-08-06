@@ -89,9 +89,26 @@ npm run check   # deterministic checks: no Flue, no model, always runs
 npm run eval    # the six cases against a live Flue agent
 ```
 
-`npm run eval` needs `ANTHROPIC_API_KEY` in the environment for the pinned
-model. Without it, every case that needs a live model reports `status:
-"blocked"` with the exact reason, and the wrapper-contract case still
+`npm run eval` needs a model provider API key in the environment. The default
+model is `anthropic/claude-haiku-4-5`, which reads `ANTHROPIC_API_KEY`. To use
+a different provider, set `OKF_EVAL_MODEL` and the key for that provider:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+OKF_EVAL_MODEL="openai/<model>" npm run eval
+```
+
+`anthropic` reads `ANTHROPIC_API_KEY` and `openai` reads `OPENAI_API_KEY`. The
+same pattern applies to the other providers. See `docs/guide/models.md` in the
+installed `@flue/runtime` package for the full list.
+
+The key must be an API key with API billing. A chat subscription is not an API
+key. This runner uses the in-process `start()`/`init()` API, which does not read
+a `.env` file. Export the key in the shell, or start the runner with Node's
+`--env-file` option.
+
+Without a key, every case that needs a live model reports `status: "blocked"`
+with the exact reason, and the wrapper-contract case still
 reports `status: "pass"` or `status: "fail"` for real. No Flue case (the
 five activation cases) has ever been scored in this repository — every
 recorded run so far reports them `blocked`. Only the wrapper-contract case,
