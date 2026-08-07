@@ -5,6 +5,7 @@ const admission = require('./admission');
 const manifest = require('./manifest');
 const monorepo = require('./monorepo');
 const discovery = require('./discovery');
+const migration = require('./migration');
 const routing = require('./routing');
 const lifecycle = require('./lifecycle');
 const orientation = require('./orientation');
@@ -18,17 +19,19 @@ const routerOwners = new Map([
   ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
   ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
   ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
-  ['discover', 'okf-setup'],
+  ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'],
 ]);
 
 // `inspect`, `repair`, `plan`, `aggregate`, and `report` all report on or plan around
 // state that exists before or independently of the activation marker, so all five
 // bypass the shared activation gate the same way (#133/#138/#135/#136). `discover`
-// (#142) deliberately does NOT: unlike those five, it needs a bundle root to already
-// exist so it can exclude it from the scan, and it runs as a step of an already-active
-// setup session rather than something that inspects or repairs the marker itself. An
-// automatic caller gets the same silence every other operation on an inactive bundle
-// gets; only an explicit call after `init`/`repair` have run reaches it.
+// (#142) and `migration-plan` (#144) deliberately do NOT: unlike those five, each
+// needs a bundle root to already exist -- `discover` to exclude it from the scan,
+// `migration-plan` to check a candidate target path for a collision -- and each runs
+// as a step of an already-active setup session rather than something that inspects or
+// repairs the marker itself. An automatic caller gets the same silence every other
+// operation on an inactive bundle gets; only an explicit call after `init`/`repair`
+// have run reaches either one.
 const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report']);
 
 const primaryEffects = new Map([
@@ -838,6 +841,67 @@ function executeDiscover(request, services) {
   return respond(request, 'ok', { complete, sources }, findings);
 }
 
+// `discover`'s own source shape, unmodified (#142) -- `migration-plan` never
+// re-walks or re-classifies the filesystem, it only consumes this exact shape.
+const DISCOVER_CATEGORIES = new Set(['markdown', 'unsupported', 'other', 'ambiguous']);
+
+function validPlanSource(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (typeof item.path !== 'string' || item.path === '') return false;
+  if (!DISCOVER_CATEGORIES.has(item.category)) return false;
+  if (typeof item.format !== 'string' || item.format === '') return false;
+  if (typeof item.reason !== 'string' || item.reason === '') return false;
+  if (item.category === 'ambiguous') return typeof item.question === 'string' && item.question !== '';
+  return item.question === undefined;
+}
+
+// `/setup`'s migration plan derivation and batched-question round (#144). Turns
+// `discover`'s (#142) source inventory into a fully-determined migration plan: every
+// source gets an intentional disposition -- `migrate`, `skip`, `residue`, or
+// `blocked_pending_decision` -- and `data.plan.executable` is `false` whenever any
+// entry is still `blocked_pending_decision`, so an executor cannot run a
+// half-decided plan by accident. Read-only and purely derivational, like `discover`:
+// it reads each markdown source's own frontmatter (through the same reader
+// `discover` and the write path both use) and checks the bundle for a file already
+// at the candidate target path, and nothing else -- it never prompts a human;
+// rendering the batch and asking the question is `skills/okf-setup/SKILL.md`'s job.
+// Like `discover`, it needs the bundle root to already exist (to check for a target
+// collision), so it is not in `activationBypassOperations`, and it shares the same
+// "no automatic caller" family invariant through its own explicit guard below.
+function executeMigrationPlan(request, services) {
+  if (request.invocation === 'automatic') return null;
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!Array.isArray(payload.sources) || !payload.sources.every(validPlanSource)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.answers !== undefined && (!payload.answers || typeof payload.answers !== 'object' || Array.isArray(payload.answers))) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  const bundleRoot = path.resolve(payload.cwd, bundleName);
+  const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers);
+  if (outcome.invalid) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+
+  const findings = outcome.questions.map((q) => ({
+    code: 'plan_question_open',
+    origin: 'suite',
+    severity: 'warning',
+    blocks: false,
+    detail: { path: q.path, kind: q.kind },
+  }));
+  return respond(request, 'ok', {
+    plan: { entries: outcome.entries, executable: outcome.executable },
+    questions: outcome.questions,
+  }, findings);
+}
+
 // Both routing operations admit first, then route the admitted data. redact() runs
 // on the admission half only; routing results carry authorized paths already.
 function admitAndRoute(request, services, router) {
@@ -1013,6 +1077,7 @@ function runActive(skill, request, services) {
     if (request.operation === 'aggregate') return executeAggregate(request, services);
     if (request.operation === 'report') return executeReport(request, services);
     if (request.operation === 'discover') return executeDiscover(request, services);
+    if (request.operation === 'migration-plan') return executeMigrationPlan(request, services);
     return unknownOperation(request);
   }
   if (skill === 'okf-review') {

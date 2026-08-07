@@ -15,6 +15,7 @@ const requiredPayload = new Map([
   ['aggregate', ['cwd']],
   ['report', ['cwd']],
   ['discover', ['cwd']],
+  ['migration-plan', ['cwd']],
   ['resolve', ['cwd']],
   ['read', ['cwd', 'target']],
   ['search', ['cwd', 'query']],
@@ -87,6 +88,11 @@ function parseRequest(text, expectedSkill) {
   if (obj.operation === 'aggregate') {
     if (!Array.isArray(obj.payload.results) || obj.payload.results.length === 0) {
       throw new Error('Missing payload.results');
+    }
+  }
+  if (obj.operation === 'migration-plan') {
+    if (!Array.isArray(obj.payload.sources)) {
+      throw new Error('Missing payload.sources');
     }
   }
   if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');

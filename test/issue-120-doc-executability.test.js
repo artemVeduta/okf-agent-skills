@@ -43,10 +43,10 @@ function isPlaceholder(value) {
 }
 
 // `today` is documented as optional (skills/okf-review/SKILL.md), and so are
-// `project_mode`, `manifest`, `workspace_id`, and `mappings` (skills/okf-setup/SKILL.md);
-// any other placeholder this fixture can't fill is a doc/runtime mismatch, not
-// something to hide.
-const OPTIONAL_PLACEHOLDER_KEYS = new Set(['today', 'project_mode', 'manifest', 'workspace_id', 'mappings']);
+// `project_mode`, `manifest`, `workspace_id`, `mappings`, and `answers`
+// (skills/okf-setup/SKILL.md); any other placeholder this fixture can't fill is a
+// doc/runtime mismatch, not something to hide.
+const OPTIONAL_PLACEHOLDER_KEYS = new Set(['today', 'project_mode', 'manifest', 'workspace_id', 'mappings', 'answers']);
 
 function fixtureRequest(example, fixture) {
   const payload = {};
