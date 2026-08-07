@@ -5,7 +5,7 @@ description: Bootstraps an OKF bundle from an existing project, including a mono
 
 # okf-setup
 
-`okf-setup` owns five operations. `init` writes the bundle-root `index.md` that every other skill's write gate requires before it will touch a bundle; it is the one exception to the rule that a mutation needs an already-conforming root — it is what makes the root conform in the first place. `inspect` reports the current state of the three config files `/setup` cares about, and `repair` performs an already-approved fix to the two of those files that are plain filesystem actions rather than OKF writes. `plan` and `aggregate` are the monorepo pair (#135): `plan` detects deterministic package boundaries and builds the immutable brief each package sub-agent receives, and `aggregate` collects the per-package results a coordinator's sub-agents returned into one honest summary and the shared root workspace manifest that federates their bundles. None of the five accepts a delegation brief, and none runs automatically; every one is a direct, explicit invocation, and no other skill reaches any of them on a caller's behalf.
+`okf-setup` owns six operations. `init` writes the bundle-root `index.md` that every other skill's write gate requires before it will touch a bundle; it is the one exception to the rule that a mutation needs an already-conforming root — it is what makes the root conform in the first place. `inspect` reports the current state of the three config files `/setup` cares about, and `repair` performs an already-approved fix to the two of those files that are plain filesystem actions rather than OKF writes. `plan` and `aggregate` are the monorepo pair (#135): `plan` detects deterministic package boundaries and builds the immutable brief each package sub-agent receives, and `aggregate` collects the per-package results a coordinator's sub-agents returned into one honest summary and the shared root workspace manifest that federates their bundles. `report` (#136) turns the migration's own signals — what was migrated, skipped, left ambiguous, or retained as residue, plus link and provenance facts and whether a human reviewed semantic fidelity — into the structured statistics and thresholds behind the post-setup analytics report; it never reads the bundle itself and never writes anything, and rendering its structured data as the Markdown report the user sees is this file's procedure, not the runtime's. None of the six accepts a delegation brief, and none runs automatically; every one is a direct, explicit invocation, and no other skill reaches any of them on a caller's behalf.
 
 ## Wrapper requests
 
@@ -126,13 +126,61 @@ The response is `result: "ok"` with:
 - `data.failed` — the alias of every failed package, named plainly rather than left for the caller to recompute.
 - `data.manifest` — the shared root workspace manifest that federates every package's bundle: one repository entry for the workspace root, plus one more per package with its own Git repository (a submodule); one bundle entry per package, each `required: true` and `mode: "source"`, owned by its own repository (submodule) or by the workspace root at its package-relative path. Every detected package gets a bundle entry regardless of whether its worker succeeded — a package whose worker failed simply has no bundle on disk yet, which is exactly the existing `required` but not `active` case the workspace-federation health check already reports as `degraded`, not silently dropped. This manifest is not written by `aggregate`: pass it as `repair`'s `payload.manifest` to actually persist it, the one place, after every worker has finished, that the shared manifest is ever written.
 
+### `report`
+
+```json
+{
+  "protocol": "okf-wrapper/1",
+  "skill": "okf-setup",
+  "operation": "report",
+  "payload": {
+    "cwd": "<absolute path to the working tree>",
+    "sources": [
+      { "path": "docs/decisions/use-postgres.md", "disposition": "migrated", "concept": "decisions/use-postgres.md", "sources_declared": true },
+      { "path": "docs/api-reference.md", "disposition": "skipped", "reason": "code_recoverable" }
+    ],
+    "links": [
+      { "from": "decisions/use-postgres.md", "target": "glossary.md", "resolved": true }
+    ],
+    "semantic_review": { "performed": false }
+  }
+}
+```
+
+`report` is read-only: it never reads the bundle and never writes anything, in either directory or file form. It is pure classification over the migration's own signals, the same grain as `plan`/`aggregate`: the caller — the `/setup` procedure itself, once its own migration work or every dispatched package sub-agent has finished — supplies what happened, and `report` only totals and classifies it. Exactly one of two payload shapes is accepted; naming both, or naming neither, is `UNSUPPORTED_INPUT` before anything is computed.
+
+**Single-project mode** — `payload.sources` (required, an array; open points 2 and 3):
+
+- Each entry names `path` (the source document) and `disposition`, one of `migrated`, `skipped`, `ambiguous`, or `residue`.
+- `migrated` requires `concept` (the concept path it became) and forbids `reason`; an optional `sources_declared: true|false` records whether the produced concept carries structured `sources` frontmatter, the provenance-coverage signal.
+- `skipped`, `ambiguous`, and `residue` each require a non-empty `reason` and forbid `concept`/`sources_declared`. `skipped` names an intentional, safe disposition (for example #131's code-recoverable filtering); `ambiguous` names a source whose disposition is still an open question; `residue` names inert, retained-as-evidence material.
+- `payload.links`, when supplied, is an array of `{ "from": "<concept>", "target": "<concept-or-path>", "resolved": true|false }` — link integrity (open point 3). Omitted, it defaults to empty.
+- `payload.semantic_review` is required: `{ "performed": true|false }`. `false` (or omitted entirely) is not an error — it is the honest default — but it always surfaces the semantic-fidelity-not-assessed disclosure; only an explicit `true` claims a human reviewed the ambiguities, residue, and representative conversions.
+
+**Multi-package mode** — `payload.packages` (required instead of `sources`, a non-empty array composed from `aggregate`'s own per-package results): each entry names `package` and `status` (`"ok"` or `"failed"`, `aggregate`'s own vocabulary), exactly as `aggregate` named it. A `"failed"` entry carries only `reason` and, optionally, `warnings` — a failed worker produced no signals, so `sources`/`links`/`semantic_review` on it are `UNSUPPORTED_INPUT`. An `"ok"` entry carries the same `sources`/`links`/`semantic_review` fields single-project mode does, plus optional `warnings`, and forbids `reason`. A duplicate `package` name is `UNSUPPORTED_INPUT`.
+
+The response is `result: "ok"` with (open points 2, 3, 4, and 6):
+
+- `data.status` — `"complete"` only when every source has a resolved disposition (no `ambiguous` entries) and, in multi-package mode, every package's worker succeeded; `"partial"` otherwise. This is the one warning/error threshold with a boundary: the moment any `ambiguous` source exists, anywhere, the run is `"partial"` — the same "unresolved work is never silently complete" rule `aggregate` already applies to a failed package.
+- `data.summary` — `sources_total`, `concepts_created`, `sources_skipped`, `sources_ambiguous`, `sources_residue` (open point 4).
+- `data.concepts` — one entry per migrated source: `source`, `concept`, `sources_declared` (open point 3, source-to-concept mapping).
+- `data.skipped`, `data.ambiguous`, `data.residue` — one entry per source in that disposition, each `{ "source": "...", "reason": "..." }`.
+- `data.provenance` — `{ "total", "with_sources", "without_sources" }` across migrated concepts.
+- `data.links` — `{ "total", "resolved", "broken", "broken_detail": [{ "from", "target" }] }`.
+- `data.semantic_fidelity` — `{ "assessed": true|false }`, `true` only when `semantic_review.performed` was `true`; a structural report — however green — never sets this to `true` on its own (#131: semantic fidelity must never be claimed by a structural check).
+- In multi-package mode, `data.summary`/`data.provenance`/`data.links`/`data.semantic_fidelity` are the sum (and, for semantic fidelity, the logical AND) across every succeeded package, and `data.packages` carries one entry per package: a failed one repeats `aggregate`'s own `{ "package", "status", "reason", "warnings" }`, a succeeded one adds every single-project field above plus `migration_status` (`"complete"`/`"partial"` for that package alone, distinct from its worker `status`).
+
+`report`'s `findings` name the same signals structurally: a `source_skipped` or `link_broken` finding is `severity: "warning"`; a `source_ambiguous` finding is `severity: "error"`; a `semantic_fidelity_not_assessed` finding is `severity: "warning"`. None of them ever `blocks` — `report` only classifies what already happened, it never gates a write.
+
+`report`'s output location (open point 5) is deliberately nowhere on disk: it returns structured JSON on stdout, like every other wrapper response, and nothing else. It does not write into the bundle — a report living inside the bundle would itself have to conform to the OKF model, a cost this operation does not pay — and it does not write a separate file. Rendering the response as the Markdown report a user reads, and deciding whether that Markdown goes to the chat transcript or somewhere the user names, is this file's procedure (step 11), not the runtime's (open point 1: the runtime emits the structured signal set, this file specifies the prose).
+
 ## Admission
 
 `init` runs its own, narrower admission: ownership (the working tree and the bundle directory must resolve to the same Git root), REACH, TRUST, ACCESS, and the activation-marker gate. It skips `PRESENCE` — there is no bundle to find yet — and skips the evidence gate, since bootstrapping the root cites nothing. `init` is never combinable with a derived effect (`index-maintenance`, `log-append`, or any other named effect): an `effects` array that names anything besides `init` returns `UNSUPPORTED_INPUT`.
 
 `inspect` and `repair` run no REACH/TRUST/ACCESS admission and cite no evidence at all: `.okf-active` and `.okf-workspace.json` are plain filesystem actions, not OKF operations through the write gate, so neither carries the `effects` vocabulary bounded writes use. Both run even when the activation marker itself is absent or invalid — that is one of the things `inspect` reports and `repair` fixes — so neither is gated behind the marker the way every mutating operation on an active bundle is. The only preconditions are a Git repository (otherwise `not-configured`, same as every other operation) and, for `repair`, a writable Git root (otherwise a blocked result carrying a `PARENT_DIRECTORY_NOT_WRITABLE` finding).
 
-`plan` and `aggregate` run no admission and no write gate at all — like `inspect`, they only read and compute, never write, and both run whether or not a bundle root, an activation marker, or a manifest yet exist. The only precondition either has is a Git repository (otherwise `not-configured`); `aggregate` additionally requires that `plan`'s own deterministic detection still resolves to the same unambiguous package list `payload.results` names, so nothing about the workspace shape changed out from under it between the two calls.
+`plan`, `aggregate`, and `report` run no admission and no write gate at all — like `inspect`, they only read and compute, never write, and all three run whether or not a bundle root, an activation marker, or a manifest yet exist. The only precondition any of them has is a Git repository (otherwise `not-configured`); `aggregate` additionally requires that `plan`'s own deterministic detection still resolves to the same unambiguous package list `payload.results` names, so nothing about the workspace shape changed out from under it between the two calls. `report` carries no such requirement — it never reads the bundle or the workspace shape, only the signals its own payload names, so it never needs to agree with `plan`'s live detection.
 
 ## Parallel execution (#135)
 
@@ -140,11 +188,11 @@ Package sub-agents run independently and in parallel once `plan` hands out their
 
 ## Idempotent and repairing
 
-Calling any of the five operations again is never an error:
+Calling any of the six operations again is never an error:
 
 - A root that already parses with `okf_version: "0.2"` and the requested `project_mode` (or no requested `project_mode`) is a `no-op` for `init` — nothing is rewritten. A missing, malformed, or wrong-version root is overwritten; an existing Markdown body is preserved when the current root parses, an unparseable root is replaced whole, and a bundle directory that does not exist yet is created.
 - `repair` leaves an already-`ok` `.okf-active` or `.okf-workspace.json` untouched and reports `no-op` for that file; it only writes a target reported `missing` or `invalid`.
-- `plan` and `aggregate` write nothing, so calling either again is always exactly as safe as calling it the first time; `plan` reruns detection fresh rather than remembering a prior call, and `aggregate` recomputes the manifest fresh from whatever `payload.results` names this time.
+- `plan`, `aggregate`, and `report` write nothing, so calling any of them again is always exactly as safe as calling it the first time; `plan` reruns detection fresh rather than remembering a prior call, `aggregate` recomputes the manifest fresh from whatever `payload.results` names this time, and `report` recomputes its statistics fresh from whatever `payload.sources`/`payload.packages` names this time.
 
 ## Exit conditions
 
@@ -175,3 +223,14 @@ Every wrapper call ends in exactly one of three conditions:
    - Call `repair` with `targets: ["manifest"]` and `payload.manifest: <aggregate's data.manifest>` to persist it. This is the one and only manifest write for the whole monorepo run; no worker sub-agent ever writes it, and it is never written before every worker has returned. Done when a repeat `inspect` reports `manifest` as `ok`.
 9. **Treat a crashed prior setup as an ordinary starting state.** There is no checkpoint, no resume state, and no recovery journal to consult — Git already owns history and rollback for everything this procedure writes. Re-running from step 2 is always correct: whatever `inspect` already reports `ok` is left untouched by step 3's approval gate, and whatever it still reports `missing` or `invalid` is repaired exactly as it would be on a first run; a monorepo re-run calls `plan` again and re-dispatches only the packages still worth acting on.
 10. **Report within the ceiling.** An `applied` or `no-op` result is done when reported as one line: the operation and result, nothing else; not done if the full response is shown. A `blocked` or `failed/incomplete` result is done only with the full response, naming the gate code and next action; not done if trimmed to one line, softened, or reported as a crash. A monorepo run's final report is step 8's `data.status` and per-package detail, never collapsed to a single pass/fail line while any package failed.
+11. **Once migration work has actually happened, call `report` and render its response as Markdown for the user (#136).** This step only runs after this setup session did some migration — single-project migration work, or, in a monorepo, after step 8's `aggregate`/`repair` sequence completed. Build `payload.sources` (or, for a monorepo, `payload.packages`, one entry per package dispatched in step 7 using its own `status` from step 8) from exactly what that migration work reported: every selected source's actual disposition and reason, every link actually rewritten or left broken, and `semantic_review.performed: true` only when a human — not this procedure, not a model call — actually reviewed the ambiguities, residue, and representative conversions this session; otherwise leave it `false`. Never invent a disposition, a reason, or a `true` semantic-review flag to make the report look cleaner. Done when `report` answers `result: "ok"`; not done while any known disposition or link outcome was left out of the payload.
+    Render the response as Markdown, in this shape, and show it in the chat transcript only — never write it into the bundle (it would itself need to conform to the OKF model) and never write it to a separate file (open point 5):
+    - A heading naming `data.status` (`Migration complete` or `Migration partial`).
+    - A **Summary** section listing `data.summary`'s five counts.
+    - A **Concepts created** section listing `data.concepts`' source → concept pairs, noting any without `sources_declared` as missing provenance.
+    - A **Skipped** section listing `data.skipped`'s source/reason pairs, when non-empty.
+    - An **Uncertain** section listing `data.ambiguous`'s source/reason pairs as open questions still needing a decision, when non-empty — this is the "what is uncertain" signal, never smoothed into the skipped list.
+    - A **Residue** section listing `data.residue`'s source/reason pairs, when non-empty.
+    - A **Link integrity** section reporting `data.links`'s counts and listing `data.links.broken_detail`, when any link is broken.
+    - A closing **Semantic fidelity** line: when `data.semantic_fidelity.assessed` is `false`, state plainly that semantic fidelity was NOT assessed and structural checks do not establish it; only when it is `true` does this line say a human reviewed it. Never omit this line, and never let a clean `data.status: "complete"` stand in for it.
+    - In multi-package mode, repeat the per-package detail under `data.packages`, plus the failed-package list from any `"failed"` entries, before the combined totals above.

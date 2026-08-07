@@ -16,13 +16,13 @@ const routerOwners = new Map([
   ['create', 'okf-write'], ['revise', 'okf-write'], ['format', 'okf-write'], ['machine-verify', 'okf-write'],
   ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
   ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
-  ['plan', 'okf-setup'], ['aggregate', 'okf-setup'],
+  ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
 ]);
 
-// `inspect`, `repair`, `plan` and `aggregate` all report on or plan around state that
-// exists before or independently of the activation marker, so all four bypass the
-// shared activation gate the same way (#133/#138/#135).
-const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate']);
+// `inspect`, `repair`, `plan`, `aggregate`, and `report` all report on or plan around
+// state that exists before or independently of the activation marker, so all five
+// bypass the shared activation gate the same way (#133/#138/#135/#136).
+const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report']);
 
 const primaryEffects = new Map([
   ['create', 'concept-create'], ['revise', 'concept-revise'], ['format', 'format'],
@@ -578,6 +578,219 @@ function executeAggregate(request, services) {
   }, []);
 }
 
+/*
+ * `/setup`'s post-migration analytics report (#136). Read-only and purely
+ * computational, the same grain as `plan`/`aggregate`: the caller (the setup
+ * procedure, once its own migration work or its dispatched package
+ * sub-agents finish) supplies the migration's own signals — what was
+ * migrated, what was skipped or left ambiguous and why, link and provenance
+ * facts — and this function only classifies and totals them. It never reads
+ * the bundle itself and never writes anything; the six open points this
+ * closes are recorded, not invented, in `skills/okf-setup/SKILL.md`:
+ *
+ * 1. Format: this function returns structured JSON only; the SKILL.md
+ *    procedure renders it as Markdown prose and decides where to show it.
+ * 2/3/4. Signals, per-concept detail, and summary statistics are exactly
+ *    `computeSignals()`'s return shape.
+ * 5. Output location: nothing here writes to the bundle or a separate file;
+ *    the response only ever reaches stdout, as every other wrapper response
+ *    does. A report written into the bundle would itself need to conform to
+ *    the OKF model, a cost this operation does not pay.
+ * 6. Warning/error thresholds: a `skipped` source is a `warning` finding (an
+ *    intentional, safe disposition, e.g. #131's code-recoverable filtering);
+ *    an `ambiguous` source is an `error` finding and the one threshold with a
+ *    boundary — `migration_status` flips from `"complete"` to `"partial"` the
+ *    moment any `ambiguous` source exists, the same "unresolved work is never
+ *    silently complete" rule `aggregate` already applies to a failed package.
+ *    A broken link is a `warning` (#131: missing link targets are tolerated).
+ *    Semantic fidelity not assessed is always a `warning` disclosure, never
+ *    silently omitted (#131: a structural report must never imply it).
+ */
+const dispositions = new Set(['migrated', 'skipped', 'ambiguous', 'residue']);
+
+function validSourceItem(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (typeof item.path !== 'string' || item.path === '') return false;
+  if (!dispositions.has(item.disposition)) return false;
+  if (item.disposition === 'migrated') {
+    if (typeof item.concept !== 'string' || item.concept === '') return false;
+    if (item.reason !== undefined) return false;
+    if (item.sources_declared !== undefined && typeof item.sources_declared !== 'boolean') return false;
+  } else {
+    if (typeof item.reason !== 'string' || item.reason === '') return false;
+    if (item.concept !== undefined || item.sources_declared !== undefined) return false;
+  }
+  return true;
+}
+
+function validLinkItem(item) {
+  return !!item && typeof item === 'object' && !Array.isArray(item) &&
+    typeof item.from === 'string' && item.from !== '' &&
+    typeof item.target === 'string' && item.target !== '' &&
+    typeof item.resolved === 'boolean';
+}
+
+function validSemanticReview(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) && typeof value.performed === 'boolean';
+}
+
+function reportFinding(code, severity, detail) {
+  return { code, origin: 'suite', severity, blocks: false, detail };
+}
+
+// One package's (or, in single-project mode, the whole run's) signal set:
+// summary counts, source-path -> concept-path mapping, per-skip/ambiguity/
+// residue reason, provenance coverage, link integrity, and the
+// semantic-fidelity disclosure (open points 2, 3, 4, 6).
+function computeSignals(sources, links, semanticReview) {
+  const migrated = sources.filter((item) => item.disposition === 'migrated');
+  const skipped = sources.filter((item) => item.disposition === 'skipped');
+  const ambiguous = sources.filter((item) => item.disposition === 'ambiguous');
+  const residue = sources.filter((item) => item.disposition === 'residue');
+  const withSources = migrated.filter((item) => item.sources_declared === true).length;
+  const resolvedLinks = links.filter((item) => item.resolved);
+  const brokenLinks = links.filter((item) => !item.resolved);
+
+  return {
+    summary: {
+      sources_total: sources.length,
+      concepts_created: migrated.length,
+      sources_skipped: skipped.length,
+      sources_ambiguous: ambiguous.length,
+      sources_residue: residue.length,
+    },
+    concepts: migrated.map((item) => ({ source: item.path, concept: item.concept, sources_declared: item.sources_declared === true })),
+    skipped: skipped.map((item) => ({ source: item.path, reason: item.reason })),
+    ambiguous: ambiguous.map((item) => ({ source: item.path, reason: item.reason })),
+    residue: residue.map((item) => ({ source: item.path, reason: item.reason })),
+    provenance: { total: migrated.length, with_sources: withSources, without_sources: migrated.length - withSources },
+    links: {
+      total: links.length, resolved: resolvedLinks.length, broken: brokenLinks.length,
+      broken_detail: brokenLinks.map((item) => ({ from: item.from, target: item.target })),
+    },
+    semantic_fidelity: { assessed: semanticReview.performed === true },
+    migration_status: ambiguous.length === 0 ? 'complete' : 'partial',
+  };
+}
+
+function signalFindings(prefix, signals) {
+  const findings = [];
+  for (const item of signals.skipped) findings.push(reportFinding('source_skipped', 'warning', { path: `${prefix}${item.source}`, reason: item.reason }));
+  for (const item of signals.ambiguous) findings.push(reportFinding('source_ambiguous', 'error', { path: `${prefix}${item.source}`, reason: item.reason }));
+  for (const item of signals.links.broken_detail) findings.push(reportFinding('link_broken', 'warning', { from: `${prefix}${item.from}`, target: item.target }));
+  if (!signals.semantic_fidelity.assessed) findings.push(reportFinding('semantic_fidelity_not_assessed', 'warning', { scope: prefix === '' ? 'project' : prefix.slice(0, -1) }));
+  return findings;
+}
+
+// `data.status` replaces `computeSignals()`'s `migration_status` key so a
+// single-project response and a per-package entry never collide: a
+// per-package entry already carries the worker's own `status` ("ok"/"failed"
+// from `aggregate`'s vocabulary), so it keeps `migration_status` as written.
+function reportData(signals) {
+  const { migration_status, ...rest } = signals;
+  return { status: migration_status, ...rest };
+}
+
+// Combines every "ok" package's signals into one whole-workspace picture, the
+// way `aggregate` combines worker outcomes into one manifest (open point 4).
+// Semantic fidelity is assessed overall only when every "ok" package assessed
+// it — one unreviewed package withholds the claim for the whole run, the same
+// "never overstate from a partial check" rule #131 requires.
+function mergeSignals(okSignals) {
+  const summary = { sources_total: 0, concepts_created: 0, sources_skipped: 0, sources_ambiguous: 0, sources_residue: 0 };
+  const provenance = { total: 0, with_sources: 0, without_sources: 0 };
+  const links = { total: 0, resolved: 0, broken: 0 };
+  let assessed = okSignals.length > 0;
+  for (const item of okSignals) {
+    for (const key of Object.keys(summary)) summary[key] += item.summary[key];
+    for (const key of Object.keys(provenance)) provenance[key] += item.provenance[key];
+    for (const key of Object.keys(links)) links[key] += item.links[key];
+    if (!item.semantic_fidelity.assessed) assessed = false;
+  }
+  return { summary, provenance, links, semantic_fidelity: { assessed } };
+}
+
+function validPackageResult(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (typeof item.package !== 'string' || item.package === '') return false;
+  if (item.status !== 'ok' && item.status !== 'failed') return false;
+  if (item.warnings !== undefined && (!Array.isArray(item.warnings) || item.warnings.some((w) => typeof w !== 'string'))) return false;
+  if (item.status === 'failed') {
+    if (typeof item.reason !== 'string' || item.reason === '') return false;
+    return item.sources === undefined && item.links === undefined && item.semantic_review === undefined;
+  }
+  if (item.reason !== undefined) return false;
+  if (!Array.isArray(item.sources) || !item.sources.every(validSourceItem)) return false;
+  if (item.links !== undefined && (!Array.isArray(item.links) || !item.links.every(validLinkItem))) return false;
+  return validSemanticReview(item.semantic_review);
+}
+
+// `payload.sources` (single-project mode, open points 1-6 directly) or
+// `payload.packages` (multi-package mode, composed from `aggregate`'s own
+// per-package `status`/`reason`/`warnings` plus each succeeded package's own
+// signal set) — never both, never neither, matching the sealed-router
+// discipline of rejecting a combination rather than silently picking one.
+function executeReport(request, services) {
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const hasSources = Object.hasOwn(payload, 'sources');
+  const hasPackages = Object.hasOwn(payload, 'packages');
+  if (hasSources === hasPackages) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+
+  if (hasSources) {
+    if (!Array.isArray(payload.sources) || !payload.sources.every(validSourceItem)) {
+      return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+    }
+    const links = payload.links === undefined ? [] : payload.links;
+    if (!Array.isArray(links) || !links.every(validLinkItem)) {
+      return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+    }
+    if (!validSemanticReview(payload.semantic_review)) {
+      return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+    }
+    const signals = computeSignals(payload.sources, links, payload.semantic_review);
+    return respond(request, 'ok', reportData(signals), signalFindings('', signals));
+  }
+
+  if (!Array.isArray(payload.packages) || payload.packages.length === 0 || !payload.packages.every(validPackageResult)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const seen = new Set();
+  for (const item of payload.packages) {
+    if (seen.has(item.package)) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+    seen.add(item.package);
+  }
+
+  const findings = [];
+  const packages = [];
+  const okSignals = [];
+  let anyUnresolved = false;
+  for (const item of payload.packages) {
+    if (item.status === 'failed') {
+      anyUnresolved = true;
+      packages.push({ package: item.package, status: 'failed', reason: item.reason, warnings: item.warnings || [] });
+      continue;
+    }
+    const signals = computeSignals(item.sources, item.links || [], item.semantic_review);
+    if (signals.migration_status === 'partial') anyUnresolved = true;
+    okSignals.push(signals);
+    findings.push(...signalFindings(`${item.package}:`, signals));
+    packages.push({ package: item.package, status: 'ok', reason: null, warnings: item.warnings || [], ...signals });
+  }
+
+  const merged = mergeSignals(okSignals);
+  return respond(request, 'ok', {
+    status: anyUnresolved ? 'partial' : 'complete',
+    summary: merged.summary,
+    provenance: merged.provenance,
+    links: merged.links,
+    semantic_fidelity: merged.semantic_fidelity,
+    packages,
+  }, findings);
+}
+
 // Both routing operations admit first, then route the admitted data. redact() runs
 // on the admission half only; routing results carry authorized paths already.
 function admitAndRoute(request, services, router) {
@@ -751,6 +964,7 @@ function runActive(skill, request, services) {
     if (request.operation === 'repair') return executeRepair(request, services);
     if (request.operation === 'plan') return executePlan(request, services);
     if (request.operation === 'aggregate') return executeAggregate(request, services);
+    if (request.operation === 'report') return executeReport(request, services);
     return unknownOperation(request);
   }
   if (skill === 'okf-review') {
@@ -791,12 +1005,13 @@ function runActive(skill, request, services) {
 function run(skill, request, services) {
   if (!skills.has(skill)) return respond(request, 'blocked', { code: 'UNKNOWN_SKILL' }, []);
 
-  // `inspect` and `repair` report and fix the activation marker itself, and `plan`
-  // and `aggregate` plan and report around a workspace that may not have one yet, so
-  // all four run ahead of the shared activation gate below rather than being gated
-  // behind it, whether reached directly through `okf-setup` or through the `okf`
-  // router; an automatic caller still gets silence, matching every other operation's
-  // automatic behavior when OKF is not yet active here (#138/#135).
+  // `inspect` and `repair` report and fix the activation marker itself, `plan` and
+  // `aggregate` plan and report around a workspace that may not have one yet, and
+  // `report` only classifies caller-supplied migration signals, so all five run
+  // ahead of the shared activation gate below rather than being gated behind it,
+  // whether reached directly through `okf-setup` or through the `okf` router; an
+  // automatic caller still gets silence, matching every other operation's automatic
+  // behavior when OKF is not yet active here (#138/#135/#136).
   if (activationBypassOperations.has(request.operation)) {
     if (skill === 'okf-setup') {
       if (request.invocation === 'automatic') return null;

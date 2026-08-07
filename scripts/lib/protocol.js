@@ -13,6 +13,7 @@ const requiredPayload = new Map([
   ['repair', ['cwd']],
   ['plan', ['cwd']],
   ['aggregate', ['cwd']],
+  ['report', ['cwd']],
   ['resolve', ['cwd']],
   ['read', ['cwd', 'target']],
   ['search', ['cwd', 'query']],
