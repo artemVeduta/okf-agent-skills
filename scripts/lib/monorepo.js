@@ -233,4 +233,4 @@ function buildBriefs(packages, gitRoot, options) {
   return packages.map((pkg) => buildBrief(pkg, gitRoot, options));
 }
 
-module.exports = { detect, buildBriefs };
+module.exports = { detect, buildBriefs, normalizeRelative };

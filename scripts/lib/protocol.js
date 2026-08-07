@@ -16,6 +16,7 @@ const requiredPayload = new Map([
   ['report', ['cwd']],
   ['discover', ['cwd']],
   ['migration-plan', ['cwd']],
+  ['partition', ['cwd']],
   ['resolve', ['cwd']],
   ['read', ['cwd', 'target']],
   ['search', ['cwd', 'query']],

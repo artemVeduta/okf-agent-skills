@@ -6,6 +6,7 @@ const manifest = require('./manifest');
 const monorepo = require('./monorepo');
 const discovery = require('./discovery');
 const migration = require('./migration');
+const partition = require('./partition');
 const routing = require('./routing');
 const lifecycle = require('./lifecycle');
 const orientation = require('./orientation');
@@ -19,20 +20,24 @@ const routerOwners = new Map([
   ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
   ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
   ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
-  ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'],
+  ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'], ['partition', 'okf-setup'],
 ]);
 
-// `inspect`, `repair`, `plan`, `aggregate`, and `report` all report on or plan around
-// state that exists before or independently of the activation marker, so all five
-// bypass the shared activation gate the same way (#133/#138/#135/#136). `discover`
-// (#142) and `migration-plan` (#144) deliberately do NOT: unlike those five, each
-// needs a bundle root to already exist -- `discover` to exclude it from the scan,
-// `migration-plan` to check a candidate target path for a collision -- and each runs
-// as a step of an already-active setup session rather than something that inspects or
-// repairs the marker itself. An automatic caller gets the same silence every other
-// operation on an inactive bundle gets; only an explicit call after `init`/`repair`
-// have run reaches either one.
-const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report']);
+// `inspect`, `repair`, `plan`, `aggregate`, `report`, and `partition` all report on or
+// compute around state that exists before or independently of the activation marker,
+// so all six bypass the shared activation gate the same way (#133/#138/#135/#136/
+// #146). `discover` (#142) and `migration-plan` (#144) deliberately do NOT: unlike
+// those six, each needs a bundle root to already exist -- `discover` to exclude it
+// from the scan, `migration-plan` to check a candidate target path for a collision --
+// and each runs as a step of an already-active setup session rather than something
+// that inspects or repairs the marker itself. `partition` (#146) needs no bundle
+// root at all: it only groups an already-determined plan the caller supplies (or
+// validates a worker's returned shard against the brief the caller supplies), never
+// touching the bundle or the filesystem beyond resolving `cwd`'s own Git root for the
+// briefs it builds. An automatic caller gets the same silence every other operation
+// on an inactive bundle gets; only an explicit call after `init`/`repair` have run
+// reaches `discover`/`migration-plan`.
+const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report', 'partition']);
 
 const primaryEffects = new Map([
   ['create', 'concept-create'], ['revise', 'concept-revise'], ['format', 'format'],
@@ -830,7 +835,20 @@ function executeDiscover(request, services) {
   }
   const bundleRoot = path.resolve(payload.cwd, bundleName);
 
-  const { sources, complete } = discovery.discover(gitRoot, bundleRoot, services);
+  // #146: the per-package scan scope #142 deferred. `package_root`, when supplied,
+  // must be a safe `gitRoot`-relative directory -- the same path-safety rule
+  // `monorepo.js` already enforces for a package path, reused rather than
+  // reimplemented -- so a caller cannot walk outside the repository it resolved.
+  let scanRoot;
+  if (payload.package_root !== undefined) {
+    if (typeof payload.package_root !== 'string' || payload.package_root === '') {
+      return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+    }
+    scanRoot = monorepo.normalizeRelative(payload.package_root);
+    if (!scanRoot) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  const { sources, complete } = discovery.discover(gitRoot, bundleRoot, services, scanRoot);
   const findings = complete ? [] : [{
     code: 'unreadable',
     origin: 'suite',
@@ -923,6 +941,138 @@ function executeMigrationPlan(request, services) {
     mapping: outcome.mapping,
     references: outcome.references,
   }, findings);
+}
+
+// `/setup`'s dynamic semantic partitioner and delegated worker protocol (#146).
+// Its own upstream, unmodified, is exactly `migration-plan`'s response shape:
+// `payload.plan` (`{entries, executable}`), `payload.mapping`, and
+// `payload.references`. Read-only and purely derivational, like `migration-plan`
+// itself: it never reads a source file, never writes anything, and never spawns or
+// prompts anything -- launching the fresh-context worker a brief describes is
+// `skills/okf-setup/SKILL.md`'s job, not this one's (#131: "the runtime never
+// spawns an agent and never prompts").
+const PLAN_DISPOSITIONS = new Set(['migrate', 'skip', 'residue', 'blocked_pending_decision']);
+
+function validPartitionPlanEntry(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (typeof item.path !== 'string' || item.path === '') return false;
+  if (!PLAN_DISPOSITIONS.has(item.disposition)) return false;
+  if (typeof item.reason !== 'string' || item.reason === '') return false;
+  if (item.disposition === 'migrate') {
+    return typeof item.concept === 'string' && item.concept !== '' && typeof item.type === 'string' && item.type !== '';
+  }
+  return item.concept === null && item.type === null;
+}
+
+function validPartitionPlan(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) &&
+    Array.isArray(value.entries) && value.entries.every(validPartitionPlanEntry) &&
+    value.executable === true;
+}
+
+function validPartitionMappingItem(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (typeof item.path !== 'string' || item.path === '') return false;
+  if (typeof item.concept !== 'string' || item.concept === '') return false;
+  if (typeof item.type !== 'string' || item.type === '') return false;
+  if (item.sources !== null && !Array.isArray(item.sources)) return false;
+  return typeof item.body === 'string';
+}
+
+function validPartitionReferenceItem(item) {
+  return !!item && typeof item === 'object' && !Array.isArray(item) &&
+    typeof item.path === 'string' && item.path !== '' &&
+    typeof item.reference_path === 'string' && item.reference_path !== '';
+}
+
+// A caller cannot hand this operation a `mapping`/`references` array that does not
+// correspond, one-for-one, to `plan.entries`' own `migrate`/`residue` sources --
+// exactly the invariant `migration-plan` itself always produces, checked here
+// rather than trusted blindly, since nothing stops a caller from tampering with or
+// hand-assembling the three pieces separately.
+function partitionInputConsistent(plan, mapping, references) {
+  const migrating = plan.entries.filter((entry) => entry.disposition === 'migrate');
+  const residue = plan.entries.filter((entry) => entry.disposition === 'residue');
+  if (mapping.length !== migrating.length || references.length !== residue.length) return false;
+  const migratingByPath = new Map(migrating.map((entry) => [entry.path, entry]));
+  const residueByPath = new Map(residue.map((entry) => [entry.path, entry]));
+  for (const item of mapping) {
+    const entry = migratingByPath.get(item.path);
+    if (!entry || entry.concept !== item.concept || entry.type !== item.type) return false;
+  }
+  for (const item of references) {
+    if (!residueByPath.has(item.path)) return false;
+  }
+  return true;
+}
+
+function partitionFinding(code, blocks, detail) {
+  return { code, origin: 'suite', severity: blocks ? 'error' : 'warning', blocks, detail };
+}
+
+function executePartitionCompute(request) {
+  const payload = request.payload;
+  if (!validPartitionPlan(payload.plan)) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  if (!Array.isArray(payload.mapping) || !payload.mapping.every(validPartitionMappingItem)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!Array.isArray(payload.references) || !payload.references.every(validPartitionReferenceItem)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!partitionInputConsistent(payload.plan, payload.mapping, payload.references)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.project_mode !== undefined && payload.project_mode !== 'code-backed' && payload.project_mode !== 'knowledge-only') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.max_sources_per_shard !== undefined && (!Number.isInteger(payload.max_sources_per_shard) || payload.max_sources_per_shard < 1)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  const outcome = partition.computePartition(payload.plan, payload.mapping, payload.references, {
+    cwd: path.resolve(payload.cwd),
+    bundle: bundleName,
+    projectMode: payload.project_mode,
+    maxSourcesPerShard: payload.max_sources_per_shard,
+  });
+  const findings = outcome.crossShardLinks.map((link) => partitionFinding('cross_shard_link', false, link));
+  return respond(request, 'ok', {
+    max_sources_per_shard: outcome.maxSourcesPerShard,
+    shards: outcome.shards,
+    cross_shard_links: outcome.crossShardLinks,
+  }, findings);
+}
+
+function executePartitionValidate(request) {
+  const payload = request.payload;
+  if (!payload.brief || typeof payload.brief !== 'object' || Array.isArray(payload.brief)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const outcome = partition.validateShard(payload.brief, payload.shard);
+  if (!outcome.ok) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [partitionFinding(outcome.code, true, outcome.detail)]);
+  }
+  return respond(request, 'ok', { valid: true }, []);
+}
+
+// `partition` bypasses the activation gate exactly like `plan`/`aggregate`/`report`
+// (see `activationBypassOperations` above), so the shared bypass block in `run()`
+// already turns an automatic invocation into silence before this ever runs -- no
+// second check is needed here, matching those three siblings' own convention.
+function executePartition(request, services) {
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const hasPlan = Object.hasOwn(payload, 'plan');
+  const hasShard = Object.hasOwn(payload, 'shard');
+  if (hasPlan === hasShard) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+
+  return hasPlan ? executePartitionCompute(request) : executePartitionValidate(request);
 }
 
 // Both routing operations admit first, then route the admitted data. redact() runs
@@ -1101,6 +1251,7 @@ function runActive(skill, request, services) {
     if (request.operation === 'report') return executeReport(request, services);
     if (request.operation === 'discover') return executeDiscover(request, services);
     if (request.operation === 'migration-plan') return executeMigrationPlan(request, services);
+    if (request.operation === 'partition') return executePartition(request, services);
     return unknownOperation(request);
   }
   if (skill === 'okf-review') {

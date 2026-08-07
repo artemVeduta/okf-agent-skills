@@ -215,8 +215,19 @@ function shouldSkipDir(bundleRoot, dir) {
   return EXCLUDED_DIR_NAMES.has(path.basename(dir)) || dir === bundleRoot;
 }
 
-function discover(gitRoot, bundleRoot, services) {
-  const { files, complete } = services.listFiles(gitRoot, (dir) => shouldSkipDir(bundleRoot, dir));
+// #146: the per-package scan scope #142 deferred. A monorepo package sharing the
+// workspace repository (not its own Git repository) has no `cwd` of its own to scan
+// from -- `monorepo.buildBrief` deliberately keeps `cwd` at the workspace root for
+// that case -- so scoping its own sub-agent's `discover` call to only its own subtree
+// needs a second, explicit coordinate: `scanRoot`, a `gitRoot`-relative directory the
+// walk starts from instead of `gitRoot` itself. Every returned `path` stays
+// `gitRoot`-relative regardless, unchanged, because every downstream consumer
+// (`migration.js`'s concept-path derivation, the bundle-collision check) already
+// assumes that identity. Omitting `scanRoot` scans the whole repository, exactly as
+// before -- this is strictly additive.
+function discover(gitRoot, bundleRoot, services, scanRoot) {
+  const root = scanRoot ? path.join(gitRoot, scanRoot) : gitRoot;
+  const { files, complete } = services.listFiles(root, (dir) => shouldSkipDir(bundleRoot, dir));
   const sources = files.map((file) => classify(file, relPosix(gitRoot, file), services));
   return { sources, complete };
 }
