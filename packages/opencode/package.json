@@ -1,5 +1,5 @@
 {
-  "name": "@artemVeduta/okf-agent-skills-opencode",
+  "name": "@artemveduta/okf-agent-skills",
   "version": "0.1.0",
   "description": "Marker-gated, read-only orientation for OKF-managed bundles — OpenCode plugin",
   "main": ".opencode/plugins/okf.mjs",
