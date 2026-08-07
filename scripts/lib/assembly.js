@@ -42,7 +42,7 @@
  *     set is #148's job, not this module's.
  *   - nothing silently disappears: a source path claimed by two different
  *     shards is refused rather than silently accepted from whichever shard
- *     is read first (`scripts/lib/runtime.js`'s own shard-set coverage check
+ *     is read first (`scripts/lib/setup.js`'s own shard-set coverage check
  *     refuses a *missing* shard before this module ever runs).
  *   - a shard's own reported `blockers` are carried forward verbatim; their
  *     presence marks the assembled result `partial` (unresolved, not

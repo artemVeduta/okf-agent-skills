@@ -19,7 +19,7 @@ driven through one thin wrapper script per skill. See
 for the full behavioral specification and
 [`docs/spec/okf-agent-skills-v0.1.0-completion.md`](docs/spec/okf-agent-skills-v0.1.0-completion.md)
 for the decisions that closed this release's remaining open items — cited
-below as **D5**–**D10**.
+below as **D5**–**D11**.
 
 ## Install
 
@@ -107,16 +107,12 @@ The `.codex-plugin/plugin.json` at the plugin root declares skills and hooks
 paths; hooks use `${PLUGIN_ROOT}` for all path resolution. Codex loads the
 plugin layer only for trusted projects.
 
-## First run: two steps this release cannot do for you
+## First run
 
-### 1. Author the bundle-root `index.md` by hand
+### 1. Create the bundle-root `index.md`
 
-Decision **D5** reclassified the write-gate bootstrap exception as
-deferred, not granted: **`v0.1.0` never creates a bundle root.** There is no
-`init`, no `migrate`, and no bootstrap path — a request naming any of those
-is refused as an unknown operation. The one write-gate rule is that a
-mutation requires the bundle-root `index.md` to already parse with an exact
-root version declaration:
+The write gate has one rule: a mutation requires the bundle-root `index.md`
+to already parse with an exact root version declaration:
 
 ```yaml
 ---
@@ -124,9 +120,9 @@ okf_version: "0.2"
 ---
 ```
 
-You write that file, at the bundle root, before your first `okf-write` call
-can pass the write gate. Nothing in this suite initializes, creates, or
-bootstraps a bundle for you.
+Either `okf-setup` `init` writes that file for you, or you author it by hand
+at the bundle root. One of the two must happen before your first `okf-write`
+call can pass the write gate.
 
 ### 2. Create the zero-byte activation marker
 
@@ -165,10 +161,11 @@ retained design for a later guarded release, not part of `v0.1.0`.
 - The manual-operation guard, guard ledger, guard lock, preview/approval
   flow, durable operation store, recovery snapshots, rollback, and crash
   reconciliation.
-- Migration writes, concept merge and split, archive relocation, and
-  cross-repository writes.
-- A write-gate bootstrap exception for creating a new bundle root
-  (**D5**).
+- Concept merge and split, archive relocation, and cross-repository
+  writes. Migration itself ships, as a phase of `okf-setup` (**D11**).
+- A recovery subsystem for setup or migration: no checkpoint file, resume
+  state, journal, snapshot, or undo history. Git owns history and
+  rollback (**D11**).
 - Fixture corpora and scale strata that would calibrate the support
   ceiling (**D10**).
 - Live Claude Code, Codex, and OpenCode process tests; the adapter

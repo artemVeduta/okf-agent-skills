@@ -46,7 +46,7 @@
  *
  * Concept identity (#131, #22): the bundle-relative path without `.md`, so the
  * target file this module checks for a collision is always exactly
- * `<bundleRoot>/<concept>.md`, matching how `scripts/lib/runtime.js` resolves a
+ * `<bundleRoot>/<concept>.md`, matching how `scripts/lib/setup.js` resolves a
  * concept's file on the write path.
  */
 

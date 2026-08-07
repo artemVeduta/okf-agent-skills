@@ -155,17 +155,57 @@ Decision: `v0.1.0` ships the ceiling labeled **provisional** everywhere it appea
 calibrated claim anywhere in the release — README included. Reading MAY continue above the ceiling
 without claiming completeness. Naming the fixture corpora and strata is deferred to `v0.2.0`.
 
+### D11 — `okf-setup` is the sixth skill; it closes the bootstrap row D5 deferred, and carries migration as an internal phase
+
+Map #129 and its grillings (#133, #134) and research (#131) supersede D5's deferral and two
+responsibility-boundary rules of the pinned spec. This record closes row L3656 and states what
+replaces them. D5 stands as the history of the earlier deferral, and is superseded here only on
+the points below.
+
+- **The sealed skill set grows from five to six.** `skills/` holds `okf`, `okf-read`, `okf-write`,
+  `okf-lifecycle`, `okf-review`, and `okf-setup`. This is the recorded decision the "no new skill
+  without a decision" rule requires. No seventh skill follows from it.
+- **The bootstrap exception is defined, not deferred.** `init` is a sealed router operation owned
+  by `okf-setup`. It creates or repairs the bundle-root `index.md` with an exact
+  `okf_version: "0.2"` declaration. It is idempotent: it overwrites an invalid root and is a no-op
+  on a valid one. It runs ownership, REACH, TRUST, and ACCESS, and skips PRESENCE and the evidence
+  gate, because there is no bundle to find yet and nothing to cite. The write gate keeps exactly
+  one rule for every other mutation.
+- **`init` moves off `okf-lifecycle`.** Pinned-spec line 2748 is superseded on `init` alone.
+  `sync` and `compact` are unchanged, and `compact` still takes the unknown-operation result.
+- **Migration is a phase, not an operation.** There is no user-facing `migrate`, and no
+  `/migrate`, `/resume`, or `/restore`. An explicitly invoked `okf-setup` session carries it as
+  `discover`, `migration-plan`, `partition`, `assemble`, `migration-validate`, and `publish`.
+  Pinned-spec line 2751 is superseded on its "not a new skill" clause alone; the clauses that
+  forbid a CLI, automatic synchronization, and implicit initialization stand.
+- **No operation of `okf-setup` runs automatically.** An automatic caller gets silence, which is
+  what every other operation gives on an inactive bundle.
+- **`publish` never writes a concept directly.** It delegates one `okf-write` `create` call per
+  concept through the same delegation bridge a sub-agent uses, so each concept passes the full
+  admission, evidence gate, and write gate. `okf-setup` creates delegation briefs and never
+  accepts one: it carries no role in the delegation bridge.
+- **Git owns recovery.** No checkpoint file, resume state, recovery journal, snapshot, backup, or
+  undo history ships with setup or migration. A failed attempt restarts from `okf-setup` against
+  the repository's current state. This keeps Decision #43's deferred guard family deferred.
+- **Migration never modifies a source document**, never guesses an unresolved semantic decision —
+  it batches the questions into one compact round — and stages the whole bundle for validation
+  before publication.
+
+The consequence for the README is the reverse of D5's: the first-run section MUST NOT state that
+the suite cannot create a bundle root. It states the one write-gate rule and names both ways to
+satisfy it — `okf-setup` `init`, or an `index.md` the developer authors.
+
 ---
 
 ## User Stories
 
 **Installing and first run**
 
-1. As a developer, I want the documented install command to place five skills and their wrapper
+1. As a developer, I want the documented install command to place six skills and their wrapper
    scripts into my skills store, so that my harness can discover them at all.
-2. As a developer, I want the README to tell me that `v0.1.0` cannot create a bundle for me and to
-   show me the bundle-root `index.md` I must author first, so that my first write does not fail
-   against the write gate for a reason I cannot diagnose.
+2. As a developer, I want the README to tell me the one rule the write gate applies and both ways
+   to satisfy it — `okf-setup` `init`, or the bundle-root `index.md` I author myself — so that my
+   first write does not fail against the write gate for a reason I cannot diagnose.
 3. As a developer, I want the README to tell me that automatic behavior stays off until I create
    the zero-byte activation marker at my worktree root, so that nothing touches my repository
    before I opt in.
@@ -249,10 +289,10 @@ without claiming completeness. Naming the fixture corpora and strata is deferred
 
 ### The skill inventory and each skill's job
 
-`skills/` holds exactly five directories, no more and no fewer: `okf`, `okf-read`, `okf-write`,
-`okf-lifecycle`, `okf-review`. Each holds a `SKILL.md`. `okf` is the router; the other four are
-leaves. No guard skill and no retrieval skill ships. Guard and shared runtime behavior stay
-modules.
+`skills/` holds exactly six directories, no more and no fewer: `okf`, `okf-read`, `okf-write`,
+`okf-lifecycle`, `okf-review`, and `okf-setup` (D11). Each holds a `SKILL.md`. `okf` is the
+router; the other five are leaves. No guard skill and no retrieval skill ships. Guard and shared
+runtime behavior stay modules.
 
 Responsibility boundaries are already settled by the pinned spec and are restated here only as the
 authoring target:
@@ -263,19 +303,22 @@ authoring target:
   exist.
 - `okf-write` — bounded mutations, all of them through the shared write path. Native file tools
   never substitute for it.
-- `okf-lifecycle` — narrow automatic synchronization, plus explicit reconciliation. `init`,
-  `migrate`, and `compact` are not `v0.1.0` operations and take the unknown-operation result.
+- `okf-lifecycle` — narrow automatic synchronization, plus explicit reconciliation. `compact` is
+  not a `v0.1.0` operation and takes the unknown-operation result. `init` belongs to `okf-setup`
+  (D11), and there is no `migrate` operation at all.
 - `okf-review` — trust tiers and review baselines. It reads, validates, and reports. It never
   confirms, self-approves, executes, or mutates the reviewed subject.
+- `okf-setup` — explicitly invoked project setup: bootstrap through `init`, config inspection and
+  repair, monorepo planning, and the migration phase from discovery through publication (D11). No
+  operation of it runs automatically, and none of them writes a concept directly.
 
-### The router's dispatch table is coarser than the runtime's
+### The router's dispatch table is a map, not the authorization rule
 
-The router's `SKILL.md` carries a dispatch table keyed on four user-facing operation names — read,
-write, lifecycle, review — each naming its owner skill. The runtime's sealed operation table is
-finer-grained and keyed on the request's fixed `operation` field. These are two different tables at
-two different altitudes and both are correct; the `SKILL.md` table is the human- and agent-facing
-map, and it MUST NOT be presented as the authorization rule. The router implements no second
-authorization rule.
+The router's `SKILL.md` carries a dispatch table of sixteen user-facing operation categories, each
+naming its owner skill: read, write, lifecycle, and review, plus the twelve `okf-setup` operations
+(D11). The runtime's sealed operation table is the finer-grained one, keyed on the request's fixed
+`operation` field. The `SKILL.md` table is the human- and agent-facing map, and it MUST NOT be
+presented as the authorization rule. The router implements no second authorization rule.
 
 ### Frontmatter is the portable minimum
 
@@ -320,10 +363,10 @@ and returns a wrapper response where a receipt is required.
 ### Making the inventory test load-bearing
 
 The `existsSync` early return in the inventory test is deleted. After deletion the test asserts,
-against the real tree: the exact five-directory inventory; a `SKILL.md` in each; a frontmatter
+against the real tree: the exact six-directory inventory; a `SKILL.md` in each; a frontmatter
 block with non-empty `name` and `description`; `name` matching the directory; a third-person
-description with exactly one trigger branch marker; the reach clause present on the four leaves and
-absent from the router; the router's four dispatch rows; every relative link resolving on disk;
+description with exactly one trigger branch marker; the reach clause present on the five leaves and
+absent from the router; the router's dispatch rows; every relative link resolving on disk;
 every referenced script path existing relative to the skill directory; and no normative statement
 repeated. The test's fixture-driven cases already pass and are untouched.
 
@@ -352,8 +395,8 @@ Every one of these asserts at the wrapper seam.
   convenience, CI MUST still pass without it.
 - **README** — replaces the placeholder. It documents: what the suite does; the one install
   command; the manual harness integration steps that the base install deliberately leaves manual;
-  the per-adapter install command with its explicit target directory; the hand-authored
-  bundle-root bootstrap from D5; activation by the zero-byte marker, which installation and session
+  the per-adapter install command with its explicit target directory; the two ways to satisfy the
+  write gate's root rule from D11; activation by the zero-byte marker, which installation and session
   entry never create; the provisional support ceiling from D10 with no calibrated claim; the
   disclosed absence of concurrent-writer serialization and crash recovery; the deferred scope; and
   the unrelated-project statement from D9.
