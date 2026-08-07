@@ -9,6 +9,8 @@ const requiredPayload = new Map([
   ['sync', ['cwd', 'bundle', 'concept']],
   ['review', ['cwd', 'bundle', 'concept']],
   ['init', ['cwd']],
+  ['inspect', ['cwd']],
+  ['repair', ['cwd']],
   ['resolve', ['cwd']],
   ['read', ['cwd', 'target']],
   ['search', ['cwd', 'query']],
@@ -71,6 +73,11 @@ function parseRequest(text, expectedSkill) {
     }
     if (typeof obj.payload.bundle !== 'string' && !Array.isArray(obj.payload.candidates)) {
       throw new Error('Missing payload.bundle or payload.candidates');
+    }
+  }
+  if (obj.operation === 'repair') {
+    if (!Array.isArray(obj.payload.targets) || obj.payload.targets.length === 0) {
+      throw new Error('Missing payload.targets');
     }
   }
   if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');

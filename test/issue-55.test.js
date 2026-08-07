@@ -13,7 +13,10 @@ const reachClause = /\bwhen another skill must invoke it\b/i;
 // other inventory member is delegate-only and carries the generic reach clause instead.
 const directInvocationSkills = new Set(['okf', 'okf-setup']);
 const routerTable = '| Operations | Owner |';
-const routerRoutes = [['read', 'okf-read'], ['write', 'okf-write'], ['lifecycle', 'okf-lifecycle'], ['review', 'okf-review'], ['init', 'okf-setup']];
+const routerRoutes = [
+  ['read', 'okf-read'], ['write', 'okf-write'], ['lifecycle', 'okf-lifecycle'], ['review', 'okf-review'],
+  ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
+];
 
 function writeSkill(t, name, source, files = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'okf-55-'));
@@ -200,7 +203,7 @@ function validSkill(name = 'okf-read') {
     'okf-setup': 'Bootstraps an OKF bundle when a user explicitly invokes setup.',
   };
   const dispatch = name === 'okf'
-    ? `\n## Dispatch\n\n${routerTable}\n| --- | --- |\n| \`read\` | \`okf-read\` |\n| \`write\` | \`okf-write\` |\n| \`lifecycle\` | \`okf-lifecycle\` |\n| \`review\` | \`okf-review\` |\n| \`init\` | \`okf-setup\` |\n`
+    ? `\n## Dispatch\n\n${routerTable}\n| --- | --- |\n| \`read\` | \`okf-read\` |\n| \`write\` | \`okf-write\` |\n| \`lifecycle\` | \`okf-lifecycle\` |\n| \`review\` | \`okf-review\` |\n| \`init\` | \`okf-setup\` |\n| \`inspect\` | \`okf-setup\` |\n| \`repair\` | \`okf-setup\` |\n`
     : '';
   return `---\nname: ${name}\ndescription: ${descriptions[name] || 'Reads bounded material when a task requires it.'}\n---\n# Skill\n${dispatch}`;
 }

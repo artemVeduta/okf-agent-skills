@@ -696,6 +696,22 @@ function postWriteInit(bundleRoot, services, expectedTree) {
   }
 }
 
+// Read-only counterpart to `evaluateInit`: `/setup`'s inspection report for the
+// bundle root. Reuses the same parser as `evaluateInit` so the two never drift on
+// what counts as parseable or valid; unlike `evaluateInit` it never touches disk.
+function inspectIndex(bundleRoot, services) {
+  const indexPath = path.join(bundleRoot, 'index.md');
+  if (!services.exists(indexPath)) return { state: 'missing' };
+  let tree;
+  try {
+    tree = parseTreeFromText(services.readFile(indexPath)).tree;
+  } catch (error) {
+    return { state: 'invalid', reason: error.reason || 'unparseable_frontmatter' };
+  }
+  if (tree.okf_version !== '0.2') return { state: 'invalid', reason: 'missing_or_wrong_okf_version' };
+  return { state: 'ok' };
+}
+
 function postWrite(bundleRoot, rel, services, expectedTree) {
   const findings = [];
   const file = path.resolve(bundleRoot, rel);
@@ -1054,6 +1070,7 @@ function evaluateReview(request, services) {
 
 module.exports = {
   evaluate, evaluateCreate, evaluateInit, evaluateReview,
+  inspectIndex,
   parseFrontmatter, parseYAML, serializeFrontmatter,
   postWrite, postWriteInit, projectMode, validateRead,
 };

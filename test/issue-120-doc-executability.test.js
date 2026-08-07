@@ -42,10 +42,11 @@ function isPlaceholder(value) {
   return typeof value === 'string' && /^<.*>$/.test(value);
 }
 
-// `today` is documented as optional (skills/okf-review/SKILL.md), and so is
-// `project_mode` (skills/okf-setup/SKILL.md); any other placeholder this fixture
-// can't fill is a doc/runtime mismatch, not something to hide.
-const OPTIONAL_PLACEHOLDER_KEYS = new Set(['today', 'project_mode']);
+// `today` is documented as optional (skills/okf-review/SKILL.md), and so are
+// `project_mode`, `manifest`, and `workspace_id` (skills/okf-setup/SKILL.md); any
+// other placeholder this fixture can't fill is a doc/runtime mismatch, not
+// something to hide.
+const OPTIONAL_PLACEHOLDER_KEYS = new Set(['today', 'project_mode', 'manifest', 'workspace_id']);
 
 function fixtureRequest(example, fixture) {
   const payload = {};
@@ -103,27 +104,32 @@ test('every skill doc is accounted for: which carry a request example and which 
   assert.deepEqual(missingExample, [], `a leaf skill with no request example is a gap, not a silently accepted state (currently without one: ${withoutExample.join(', ') || 'none'})`);
 });
 
-for (const name of skills.filter((candidate) => wrapperExamples(skillDoc(candidate)).length > 0)) {
-  test(`${name}'s documented request example is not blocked by a gate it could have satisfied`, (t) => {
-    const examples = wrapperExamples(skillDoc(name));
-    assert.equal(examples.length, 1, `${name}/SKILL.md must carry exactly one okf-wrapper/1 example`);
-    const [example] = examples;
+// Most skills document exactly one operation with one example. `okf-setup` owns
+// three (#138: `init`, `inspect`, `repair`), each with its own example, so this
+// runs once per documented example rather than assuming one example per skill.
+for (const name of skills) {
+  const examples = wrapperExamples(skillDoc(name));
+  const operations = examples.map((example) => example.operation);
+  assert.deepEqual(operations, [...new Set(operations)], `${name}/SKILL.md documents more than one okf-wrapper/1 example for the same operation`);
 
-    const root = bundle(t);
-    const request = fixtureRequest(example, fixtureFor(root));
+  for (const example of examples) {
+    test(`${name}'s documented request example for ${example.operation} is not blocked by a gate it could have satisfied`, (t) => {
+      const root = bundle(t);
+      const request = fixtureRequest(example, fixtureFor(root));
 
-    const required = protocol.requiredPayload.get(example.operation) || [];
-    for (const key of required) {
-      assert.ok(typeof request.payload[key] === 'string' && request.payload[key] !== '', `${name}'s example for ${example.operation} omits payload.${key} after fixture substitution, required per scripts/lib/protocol.js`);
-    }
+      const required = protocol.requiredPayload.get(example.operation) || [];
+      for (const key of required) {
+        assert.ok(typeof request.payload[key] === 'string' && request.payload[key] !== '', `${name}'s example for ${example.operation} omits payload.${key} after fixture substitution, required per scripts/lib/protocol.js`);
+      }
 
-    const response = runWrapper(example.skill, request);
-    const code = response.data && response.data.code;
-    if (response.result === 'blocked' && TOP_LEVEL_FIELD_CODES.has(code)) {
-      const finding = response.findings.find((item) => item.code === code);
-      assert.fail(`${name} (${example.operation}): blocked by ${code} (gate: ${finding && finding.detail && finding.detail.gate}) — the documented example could have named this top-level field itself`);
-    }
-  });
+      const response = runWrapper(example.skill, request);
+      const code = response.data && response.data.code;
+      if (response.result === 'blocked' && TOP_LEVEL_FIELD_CODES.has(code)) {
+        const finding = response.findings.find((item) => item.code === code);
+        assert.fail(`${name} (${example.operation}): blocked by ${code} (gate: ${finding && finding.detail && finding.detail.gate}) — the documented example could have named this top-level field itself`);
+      }
+    });
+  }
 }
 
 // enumerate and validate are the only okf-read operations whose SKILL.md bullet

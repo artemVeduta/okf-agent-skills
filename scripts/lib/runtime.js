@@ -1,6 +1,8 @@
 const path = require('node:path');
+const crypto = require('node:crypto');
 const validation = require('./validation');
 const admission = require('./admission');
+const manifest = require('./manifest');
 const routing = require('./routing');
 const lifecycle = require('./lifecycle');
 const orientation = require('./orientation');
@@ -12,7 +14,7 @@ const routerOwners = new Map([
   ['orient', 'okf-read'],
   ['create', 'okf-write'], ['revise', 'okf-write'], ['format', 'okf-write'], ['machine-verify', 'okf-write'],
   ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
-  ['init', 'okf-setup'],
+  ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
 ]);
 
 const primaryEffects = new Map([
@@ -344,6 +346,113 @@ function executeInit(request, services) {
   return settle('applied', [...outcome.findings, ...checked.findings], { completed: completedEffects });
 }
 
+// `/setup`'s deterministic state report for the three config files (#133/#138).
+// Read-only: it never writes, and it runs even when the activation marker itself is
+// what is being inspected, so `run()` reaches this directly rather than gating it
+// behind the very marker it reports on. `okf-setup`'s procedure owns the consent
+// prompts and the "fix all?" interaction; this function only reports state.
+const repairTargets = new Set(['activation', 'manifest']);
+
+function executeInspect(request, services) {
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const bundleRoot = path.resolve(payload.cwd, bundleName);
+
+  const marker = services.activationMarker(gitRoot);
+  const activation = marker === 'valid' ? { state: 'ok' }
+    : marker === 'absent' ? { state: 'missing' }
+      : { state: 'invalid', reason: 'not_zero_byte_regular_file' };
+
+  return respond(request, 'ok', {
+    index_md: validation.inspectIndex(bundleRoot, services),
+    activation,
+    manifest: manifest.inspect(path.join(gitRoot, '.okf-workspace.json'), gitRoot, services),
+  }, []);
+}
+
+// `/setup`'s approved-repair executor for the two plain-filesystem config files
+// (#133/#138). `.okf-active` and `.okf-workspace.json` are not OKF operations through
+// the write gate — no REACH/TRUST/ACCESS admission, no evidence, no atomic publish,
+// no `effects` vocabulary — they are exactly the plain filesystem actions #133 named.
+// `index.md` repair is not here at all: it goes through `init`. Consent lives in
+// `okf-setup`'s procedure, not here — reaching this function is itself the approval.
+// Idempotent like `init`: a target already in state `ok` is always left untouched.
+function executeRepair(request, services) {
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const targets = payload.targets;
+  const validShape = Array.isArray(targets) && targets.length > 0 &&
+    new Set(targets).size === targets.length && targets.every((target) => repairTargets.has(target));
+  if (!validShape) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  if (payload.manifest !== undefined && !targets.includes('manifest')) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  let manifestContent = null;
+  if (targets.includes('manifest')) {
+    if (payload.manifest !== undefined) {
+      if (!payload.manifest || typeof payload.manifest !== 'object' || Array.isArray(payload.manifest)) {
+        return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+      }
+      manifestContent = payload.manifest;
+    } else {
+      if (payload.workspace_id !== undefined && typeof payload.workspace_id !== 'string') {
+        return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+      }
+      manifestContent = manifest.template({
+        repoName: path.basename(gitRoot),
+        bundleAlias: bundleName,
+        workspaceId: payload.workspace_id || crypto.randomUUID(),
+      });
+    }
+    const finding = manifest.validate(manifestContent);
+    if (finding) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [finding]);
+  }
+
+  if (!services.writable(gitRoot)) {
+    return respond(request, 'blocked', {}, [suiteFinding('PARENT_DIRECTORY_NOT_WRITABLE', { gate: 'repair', path: gitRoot })]);
+  }
+
+  const data = {};
+  let wrote = false;
+
+  if (targets.includes('activation')) {
+    if (services.activationMarker(gitRoot) === 'valid') {
+      data.activation = { written: false };
+    } else {
+      services.writeFile(path.join(gitRoot, '.okf-active'), '');
+      data.activation = { written: true };
+      wrote = true;
+    }
+  }
+
+  if (targets.includes('manifest')) {
+    const manifestFile = path.join(gitRoot, '.okf-workspace.json');
+    if (manifest.inspect(manifestFile, gitRoot, services).state === 'ok') {
+      data.manifest = { written: false };
+    } else {
+      services.writeFile(manifestFile, `${JSON.stringify(manifestContent, null, 2)}\n`);
+      data.manifest = { written: true, workspace_id: manifestContent.workspace_id };
+      wrote = true;
+    }
+  }
+
+  return respond(request, wrote ? 'applied' : 'no-op', data, []);
+}
+
 // Both routing operations admit first, then route the admitted data. redact() runs
 // on the admission half only; routing results carry authorized paths already.
 function admitAndRoute(request, services, router) {
@@ -512,8 +621,10 @@ function runActive(skill, request, services) {
   }
   if (skill === 'okf') return routerRun(request, services);
   if (skill === 'okf-setup') {
-    if (request.operation !== 'init') return unknownOperation(request);
-    return executeInit(request, services);
+    if (request.operation === 'init') return executeInit(request, services);
+    if (request.operation === 'inspect') return executeInspect(request, services);
+    if (request.operation === 'repair') return executeRepair(request, services);
+    return unknownOperation(request);
   }
   if (skill === 'okf-review') {
     if (request.operation === 'review') {
@@ -552,6 +663,22 @@ function runActive(skill, request, services) {
 
 function run(skill, request, services) {
   if (!skills.has(skill)) return respond(request, 'blocked', { code: 'UNKNOWN_SKILL' }, []);
+
+  // `inspect` and `repair` report and fix the activation marker itself, so they run
+  // ahead of the shared activation gate below rather than being gated behind it,
+  // whether reached directly through `okf-setup` or through the `okf` router; an
+  // automatic caller still gets silence, matching every other operation's automatic
+  // behavior when OKF is not yet active here (#138).
+  if (request.operation === 'inspect' || request.operation === 'repair') {
+    if (skill === 'okf-setup') {
+      if (request.invocation === 'automatic') return null;
+      return runActive(skill, request, services);
+    }
+    if (skill === 'okf') {
+      if (request.invocation === 'automatic') return null;
+      return routerRun(request, services);
+    }
+  }
 
   const activation = activationState(request, services);
   if (activation === 'absent') {
