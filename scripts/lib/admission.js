@@ -150,6 +150,58 @@ function admitRead(request, services) {
   return admitInternal(request, services, true);
 }
 
+// `init` may create a bundle root that does not exist on disk yet, so PRESENCE
+// (which requires an existing `index.md`) does not apply, and ACCESS is checked
+// against the nearest existing ancestor rather than the bundle root itself.
+function nearestExisting(dir, services) {
+  let current = dir;
+  for (;;) {
+    if (services.exists(current)) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return current;
+    current = parent;
+  }
+}
+
+function evaluateForInit(entries, context, services) {
+  return entries.map((entry) => {
+    const candidate = makeCandidate(entry, context.workspaceRoot || context.cwd);
+    const reached = reach.evaluate(candidate, context, services);
+    const record = (failed_gate, findings) => ({
+      bundle_alias: candidate.bundle_alias,
+      bundle_root: candidate.bundle_root,
+      owner: candidate.owner,
+      named_by_user: candidate.named_by_user,
+      mode: candidate.mode,
+      required: candidate.required,
+      state: failed_gate === null ? 'active' : 'inactive',
+      failed_gate,
+      next_gate: null,
+      findings,
+    });
+    if (!reached.passed) return record('REACH', [reached.finding]);
+    const accessible = services.access(nearestExisting(candidate.bundle_root, services));
+    const owningRoot = candidate.owner === undefined ? services.gitRootOf(candidate.path) : candidate.owner;
+    const implicit = context.gitRoot !== null && owningRoot === context.gitRoot;
+    const trusted = implicit || trust.trusted(candidate.path, services);
+    const findings = [...reached.anomalies];
+    if (!trusted) findings.push(reach.gateFinding('UNTRUSTED', 'TRUST', candidate));
+    if (!accessible) findings.push(reach.gateFinding('ACCESS_DENIED', 'ACCESS', candidate));
+    return record(!trusted ? 'TRUST' : (!accessible ? 'ACCESS' : null), findings);
+  });
+}
+
+function admitInit(request, services) {
+  const payload = request.payload;
+  if (!validPayload(payload)) return invalid();
+  const cwd = path.resolve(payload.cwd);
+  const gitRoot = services.gitRootOf(cwd);
+  const context = { cwd, gitRoot, workspaceRoot: payload.workspace_root === undefined ? null : path.resolve(payload.workspace_root) };
+  const candidates = evaluateForInit(payload.candidates || [], context, services);
+  const blocked = candidates.flatMap((x) => x.findings).some((f) => f.blocks);
+  return { result: blocked ? 'blocked' : 'ok', data: { federation: 'none', candidates }, findings: [] };
+}
+
 // Shared by orient and navigation: an empty active set means nothing to work
 // with; a required member missing, non-exhaustive coverage, or a blocking
 // finding on an active candidate makes the result partial even when
@@ -178,4 +230,4 @@ function redact(data) {
   };
 }
 
-module.exports = { admit, admitRead, redact, completeness };
+module.exports = { admit, admitRead, admitInit, redact, completeness };

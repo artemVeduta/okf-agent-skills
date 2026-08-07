@@ -9,7 +9,7 @@ const { temporaryRoot } = require('../test-support/snapshot');
 const repo = path.resolve(__dirname, '..');
 const scriptsRoot = path.join(repo, 'scripts');
 const skillsRoot = path.join(repo, 'skills');
-const skills = ['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review'];
+const skills = ['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review', 'okf-setup'];
 
 // How an installer must copy a source skill: the `scripts` symlink is
 // dereferenced into real files, so the installed skill carries its own

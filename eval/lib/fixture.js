@@ -1,7 +1,7 @@
 // Builds one fresh fixture repository per eval case.
 //
 // A Flue conversation reset does not reset files, so every case — mutating
-// or not — gets its own temporary bundle root. The five real skills are
+// or not — gets its own temporary bundle root. The six real skills are
 // mounted by copying `skills/<name>` from this checkout into
 // `<root>/.agents/skills/<name>`, which is the layout Flue discovers
 // workspace skills from (docs/research/flue-skill-evaluation.md). A copy,
@@ -17,7 +17,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(here, '..', '..');
 const skillsRoot = path.join(repoRoot, 'skills');
 
-export const SKILL_NAMES = ['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review'];
+export const SKILL_NAMES = ['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review', 'okf-setup'];
 
 export function createFixture() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-flue-eval-')));

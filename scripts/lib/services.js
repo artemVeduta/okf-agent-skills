@@ -41,7 +41,14 @@ function gitRootOf(start) {
   }
 }
 
-function listFiles(root) {
+// `skipDir(directory)`, when supplied, prunes a directory before descending into it:
+// the directory is left out of `files` without being lstat'd or read, and without
+// affecting `complete`. This is how a caller (e.g. `scripts/lib/discovery.js`, #142)
+// excludes a subtree such as `node_modules` without paying for its own symlinks
+// (pnpm's `node_modules` is symlink-heavy) or losing the honest `complete: false`
+// signal to noise from a subtree it never intended to scan. The default skips
+// nothing, so every existing caller's behavior is unchanged.
+function listFiles(root, skipDir = () => false) {
   const files = [];
   let complete = true;
 
@@ -54,6 +61,7 @@ function listFiles(root) {
       for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
         const file = path.join(directory, entry.name);
         if (entry.isDirectory()) {
+          if (skipDir(file)) continue;
           visit(file);
         } else if (entry.isFile()) {
           files.push(file);
@@ -76,12 +84,17 @@ function listFiles(root) {
 module.exports = {
   exists: fs.existsSync,
   readFile: (file) => fs.readFileSync(file, 'utf8'),
+  // Raw bytes, for the discovery classifier's UTF-8 validation and magic-number
+  // sniffing (#142) — `readFile` above always decodes as UTF-8, which would hide
+  // exactly the encoding and signature evidence that classification needs.
+  readBuffer: (file) => fs.readFileSync(file),
   writeFile: (file, data) => fs.writeFileSync(file, data, 'utf8'),
   publishFile,
   realpath: fs.realpathSync,
   isFile: (file) => fs.statSync(file).isFile(),
   isLink: (file) => { try { return fs.lstatSync(file).isSymbolicLink(); } catch { return false; } },
   access: (file) => { try { fs.accessSync(file, fs.constants.R_OK); return true; } catch { return false; } },
+  writable: (file) => { try { fs.accessSync(file, fs.constants.W_OK); return true; } catch { return false; } },
   listFiles,
   mkdir: (dir) => fs.mkdirSync(dir, { recursive: true }),
   remove: (file) => fs.rmSync(file, { force: true }),

@@ -6,10 +6,20 @@ const path = require('node:path');
 
 const repo = path.join(__dirname, '..');
 const skills = path.join(repo, 'skills');
-const inventory = ['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review'];
+const inventory = ['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review', 'okf-setup'];
 const reachClause = /\bwhen another skill must invoke it\b/i;
+// `okf` and `okf-setup` are the two directly-invoked skills: `okf` is the router a user
+// selects an operation through, and `okf-setup` accepts no delegation brief (#134). Every
+// other inventory member is delegate-only and carries the generic reach clause instead.
+const directInvocationSkills = new Set(['okf', 'okf-setup']);
 const routerTable = '| Operations | Owner |';
-const routerRoutes = [['read', 'okf-read'], ['write', 'okf-write'], ['lifecycle', 'okf-lifecycle'], ['review', 'okf-review']];
+const routerRoutes = [
+  ['read', 'okf-read'], ['write', 'okf-write'], ['lifecycle', 'okf-lifecycle'], ['review', 'okf-review'],
+  ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
+  ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
+  ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'], ['partition', 'okf-setup'],
+  ['assemble', 'okf-setup'], ['migration-validate', 'okf-setup'], ['publish', 'okf-setup'],
+];
 
 function writeSkill(t, name, source, files = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'okf-55-'));
@@ -159,8 +169,8 @@ function validateSkill(directory) {
     if (!firstWord || !/s$/i.test(firstWord)) errors.push('DESCRIPTION_NOT_THIRD_PERSON');
     if ((description.match(/\bwhen\b/gi) || []).length !== 1) errors.push('DESCRIPTION_TRIGGER_BRANCH_COUNT');
     if (reachClause.test(description)) {
-      if (!inventory.includes(directoryName) || directoryName === 'okf') errors.push('REACH_CLAUSE_FORBIDDEN');
-    } else if (inventory.includes(directoryName) && directoryName !== 'okf') {
+      if (!inventory.includes(directoryName) || directInvocationSkills.has(directoryName)) errors.push('REACH_CLAUSE_FORBIDDEN');
+    } else if (inventory.includes(directoryName) && !directInvocationSkills.has(directoryName)) {
       errors.push('REACH_CLAUSE_REQUIRED');
     }
   }
@@ -193,9 +203,10 @@ function validSkill(name = 'okf-read') {
     'okf-write': 'Writes bounded OKF updates when another skill must invoke it.',
     'okf-lifecycle': 'Maintains OKF lifecycle work when another skill must invoke it.',
     'okf-review': 'Reviews OKF evidence when another skill must invoke it.',
+    'okf-setup': 'Bootstraps an OKF bundle when a user explicitly invokes setup.',
   };
   const dispatch = name === 'okf'
-    ? `\n## Dispatch\n\n${routerTable}\n| --- | --- |\n| \`read\` | \`okf-read\` |\n| \`write\` | \`okf-write\` |\n| \`lifecycle\` | \`okf-lifecycle\` |\n| \`review\` | \`okf-review\` |\n`
+    ? `\n## Dispatch\n\n${routerTable}\n| --- | --- |\n| \`read\` | \`okf-read\` |\n| \`write\` | \`okf-write\` |\n| \`lifecycle\` | \`okf-lifecycle\` |\n| \`review\` | \`okf-review\` |\n| \`init\` | \`okf-setup\` |\n| \`inspect\` | \`okf-setup\` |\n| \`repair\` | \`okf-setup\` |\n| \`plan\` | \`okf-setup\` |\n| \`aggregate\` | \`okf-setup\` |\n| \`report\` | \`okf-setup\` |\n| \`discover\` | \`okf-setup\` |\n| \`migration-plan\` | \`okf-setup\` |\n| \`partition\` | \`okf-setup\` |\n| \`assemble\` | \`okf-setup\` |\n| \`migration-validate\` | \`okf-setup\` |\n| \`publish\` | \`okf-setup\` |\n`
     : '';
   return `---\nname: ${name}\ndescription: ${descriptions[name] || 'Reads bounded material when a task requires it.'}\n---\n# Skill\n${dispatch}`;
 }
@@ -225,10 +236,12 @@ test('rejects each static description violation', (t) => {
   for (const [label, source, error] of cases) assert.ok(validateSkill(writeSkill(t, 'okf-read', source)).includes(error), label);
 });
 
-test('requires reach clauses only for the four leaf skills', (t) => {
+test('requires reach clauses only for the delegate-only leaf skills', (t) => {
   assert.ok(validateSkill(writeSkill(t, 'okf-read', validSkill().replace('when another skill must invoke it', 'when a task requires it')))
     .includes('REACH_CLAUSE_REQUIRED'));
   assert.ok(validateSkill(writeSkill(t, 'okf', validSkill('okf').replace('when a user selects an operation', 'when another skill must invoke it')))
+    .includes('REACH_CLAUSE_FORBIDDEN'));
+  assert.ok(validateSkill(writeSkill(t, 'okf-setup', validSkill('okf-setup').replace('when a user explicitly invokes setup', 'when another skill must invoke it')))
     .includes('REACH_CLAUSE_FORBIDDEN'));
 });
 

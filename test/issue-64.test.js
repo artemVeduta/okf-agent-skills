@@ -208,7 +208,9 @@ test('router rejects unsupported broad lifecycle operations without changes', (t
   const root = bundle(t);
   const before = snapshot(root);
 
-  for (const operation of ['init', 'migrate', 'compact']) {
+  // `init` is no longer unsupported (#137): it is a sealed router operation owned by
+  // `okf-setup`. `migrate` and `compact` remain unimplemented.
+  for (const operation of ['migrate', 'compact']) {
     const response = run(routerWrapper, {
       protocol: 'okf-wrapper/1',
       skill: 'okf',

@@ -92,22 +92,86 @@ function parseYAML(text) {
     return fail(line, 'unterminated quoted scalar');
   }
 
+  // YAML 1.2 Core Schema tag resolution (spec 1.2.2 section 10.3.2): only these
+  // exact-case words are null/bool; every other capitalization (`Yes`, `on`, ...)
+  // is a plain string, and is returned as one below.
+  const NULL_WORDS = new Set(['~', 'null', 'Null', 'NULL']);
+  const TRUE_WORDS = new Set(['true', 'True', 'TRUE']);
+  const FALSE_WORDS = new Set(['false', 'False', 'FALSE']);
+
+  // Core Schema double-quote escapes this reader supports. Anything else
+  // (`\xNN`, `\uNNNN`, `\a`, `\N`, ...) is refused rather than silently
+  // stripped of its backslash, which would change the string's meaning.
+  const DOUBLE_QUOTE_ESCAPES = { '\\': '\\', '"': '"', n: '\n', t: '\t', r: '\r', '0': '\0' };
+
+  function decodeDoubleQuoted(body, line) {
+    let out = '';
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i];
+      if (c !== '\\') { out += c; continue; }
+      i += 1;
+      const esc = body[i];
+      if (esc === undefined) fail(line, 'unterminated escape sequence in a double-quoted scalar');
+      if (!Object.hasOwn(DOUBLE_QUOTE_ESCAPES, esc)) fail(line, `unsupported escape sequence '\\${esc}' in a double-quoted scalar`);
+      out += DOUBLE_QUOTE_ESCAPES[esc];
+    }
+    return out;
+  }
+
+  // Splits the inside of a single-line `[ ... ]` flow sequence on top-level
+  // commas, respecting quotes. A nested `[` or `{` is refused rather than
+  // partially parsed, since this reader supports flow sequences of scalars
+  // only (the OKF v0.2 frontmatter model uses them only for lists like
+  // `tags: [architecture]`).
+  function splitFlowSeq(inner, line) {
+    const items = [];
+    let cur = '';
+    let quote = null;
+    for (let i = 0; i < inner.length; i++) {
+      const c = inner[i];
+      if (quote) {
+        cur += c;
+        if (quote === '"' && c === '\\') { i += 1; cur += inner[i] ?? ''; }
+        else if (c === quote) quote = null;
+        continue;
+      }
+      if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+      if (c === '[' || c === '{') fail(line, 'a nested flow collection is not supported');
+      if (c === ',') { items.push(cur.trim()); cur = ''; continue; }
+      cur += c;
+    }
+    if (quote) fail(line, 'unterminated quoted scalar in a flow sequence');
+    items.push(cur.trim());
+    if (items.some((item) => item === '')) fail(line, 'a flow sequence item is empty');
+    return items;
+  }
+
   function decode(t, line) {
-    if (t === '' || t === '~' || t === 'null') return null;
-    if (t === 'true') return true;
-    if (t === 'false') return false;
+    if (NULL_WORDS.has(t) || t === '') return null;
+    if (TRUE_WORDS.has(t)) return true;
+    if (FALSE_WORDS.has(t)) return false;
     if (t === '[]') return [];
     if (t === '{}') return {};
     if (t[0] === '"' || t[0] === "'") {
       if (quoteEnd(t, line) !== t.length - 1) fail(line, 'unexpected text after a quoted scalar');
       const body = t.slice(1, -1);
-      return t[0] === '"' ? body.replace(/\\(.)/g, (m, c) => (c === 'n' ? '\n' : c)) : body.replace(/''/g, "'");
+      return t[0] === '"' ? decodeDoubleQuoted(body, line) : body.replace(/''/g, "'");
     }
     if (isSeqText(t)) fail(line, 'nested sequences are not supported');
     if ('|>'.includes(t[0])) fail(line, 'block scalars are not supported');
-    if ('[{'.includes(t[0])) fail(line, 'flow collections are not supported');
+    if (t[0] === '[') {
+      if (t[t.length - 1] !== ']') fail(line, 'a flow sequence must open and close on the same line');
+      return splitFlowSeq(t.slice(1, -1), line).map((item) => decode(item, line));
+    }
+    if (t[0] === '{') fail(line, 'flow mappings are not supported');
     if ('&*!%@`'.includes(t[0])) fail(line, `unsupported construct: ${t[0]}`);
-    if (/^-?\d+(\.\d+)?$/.test(t) && String(Number(t)) === t) return Number(t);
+    if (/^[-+]?0[xX][0-9a-fA-F]+$/.test(t) || /^[-+]?0[oO][0-7]+$/.test(t)) {
+      fail(line, `numeric literal '${t}' is not supported; quote it as a string`);
+    }
+    if (/^[+-]?\d+(\.\d+)?$/.test(t)) {
+      if (String(Number(t)) === t) return Number(t);
+      fail(line, `numeric literal '${t}' cannot be represented exactly; quote it as a string`);
+    }
     return t;
   }
 
@@ -190,6 +254,7 @@ function parseYAML(text) {
       if (ind < indent || isSeqText(lines[idx].trim())) break;
       const line = stripComment(lines[idx]).trim();
       idx += 1;
+      if (line === '...') fail(idx, 'multi-document markers are not supported in frontmatter');
       const kv = splitKey(line, idx);
       if (!kv) fail(idx, 'expected "key: value"');
       assign(obj, seen, kv, indent, idx);
@@ -596,6 +661,122 @@ function evaluateCreate(request, services) {
   });
 }
 
+// `init` parses the root text directly rather than through `readTree`, because an
+// existing-but-unparseable root is a valid input here (whole-file overwrite), not a
+// thrown error the way it is for every other reader in this module.
+function parseTreeFromText(text) {
+  const extracted = extractFrontmatter(text);
+  if (extracted.unterminated) {
+    const err = new Error('unterminated frontmatter block');
+    err.line = 0;
+    err.reason = err.message;
+    throw err;
+  }
+  return { tree: parseYAML(extracted.frontmatter), body: extracted.body };
+}
+
+// Walks up from `dir` to the nearest ancestor that exists, mirroring the bootstrap
+// reality that the bundle directory itself may not exist yet.
+function nearestExistingDir(dir, services) {
+  let current = dir;
+  for (;;) {
+    if (services.exists(current)) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return current;
+    current = parent;
+  }
+}
+
+// `init` writes only the bundle root. It is idempotent (a valid root with nothing
+// to add is a no-op, not an error) and repairing (an absent, wrong, or unparseable
+// `okf_version` is overwritten). `project_mode` is optional and merges into an
+// already-valid root on a second call.
+function evaluateInit(request, services) {
+  const bundleRoot = path.resolve(request.payload.bundle);
+  const indexPath = path.join(bundleRoot, 'index.md');
+  const findings = [];
+  const done = (result, data) => ({ result, data, findings: sortFindings(findings) });
+
+  if (!services.writable(nearestExistingDir(bundleRoot, services))) {
+    findings.push(blocker('PARENT_DIRECTORY_NOT_WRITABLE', 'suite', { gate: 'init', path: 'index.md' }));
+    return done('blocked', {});
+  }
+
+  let currentText = null;
+  let currentTree = null;
+  let currentBody = null;
+  let parseable = false;
+  if (services.exists(indexPath)) {
+    currentText = services.readFile(indexPath);
+    try {
+      const parsed = parseTreeFromText(currentText);
+      currentTree = parsed.tree;
+      currentBody = parsed.body;
+      parseable = true;
+    } catch {
+      parseable = false;
+    }
+  }
+
+  const projectMode = request.payload.project_mode;
+  const baseTree = parseable ? currentTree : {};
+  const tree = { ...baseTree, okf_version: '0.2' };
+  if (projectMode !== undefined) tree.project_mode = projectMode;
+
+  const alreadyValid = parseable && currentTree.okf_version === '0.2' &&
+    (projectMode === undefined || currentTree.project_mode === projectMode);
+  if (alreadyValid) return done('ok', { written: false, tree: currentTree });
+
+  const serialized = serializeFrontmatter(tree);
+  const mismatch = roundTripMismatch(tree, serialized);
+  if (mismatch) {
+    findings.push(blocker('PARSE_TREE_MISMATCH', 'suite', { path: 'index.md', ...mismatch }));
+    return done('blocked', {});
+  }
+
+  const body = parseable ? currentBody : '# Bundle\n';
+  return done('ok', {
+    written: true,
+    tree,
+    rendered: serialized + body,
+    expected: currentText,
+    file: indexPath,
+  });
+}
+
+// Post-write for `init` re-reads only the root declaration and confirms the saved
+// parse tree matches what was written; it is not a concept, so `postWrite`'s
+// concept-shaped checks (type, sources, links, upstreams) do not apply.
+function postWriteInit(bundleRoot, services, expectedTree) {
+  const findings = [];
+  try {
+    const current = readTree(path.join(bundleRoot, 'index.md'), services);
+    const comparison = parseTreeEqual(expectedTree, current.tree);
+    if (!comparison.equal) {
+      findings.push(blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: 'index.md', construct: comparison.path, reason: 'saved tree mismatch' }));
+    }
+    return { valid: !findings.some((finding) => finding.blocks), findings: sortFindings(findings) };
+  } catch (error) {
+    return { valid: false, findings: [blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: 'index.md', reason: error.message || 'read failed' })] };
+  }
+}
+
+// Read-only counterpart to `evaluateInit`: `/setup`'s inspection report for the
+// bundle root. Reuses the same parser as `evaluateInit` so the two never drift on
+// what counts as parseable or valid; unlike `evaluateInit` it never touches disk.
+function inspectIndex(bundleRoot, services) {
+  const indexPath = path.join(bundleRoot, 'index.md');
+  if (!services.exists(indexPath)) return { state: 'missing' };
+  let tree;
+  try {
+    tree = parseTreeFromText(services.readFile(indexPath)).tree;
+  } catch (error) {
+    return { state: 'invalid', reason: error.reason || 'unparseable_frontmatter' };
+  }
+  if (tree.okf_version !== '0.2') return { state: 'invalid', reason: 'missing_or_wrong_okf_version' };
+  return { state: 'ok' };
+}
+
 function postWrite(bundleRoot, rel, services, expectedTree) {
   const findings = [];
   const file = path.resolve(bundleRoot, rel);
@@ -629,6 +810,14 @@ function parseReadText(text) {
   return { tree: parseYAML(extracted.frontmatter), body: extracted.body };
 }
 
+// #130/#131: `index.md`/`log.md` are reserved navigation at any hierarchy level,
+// never a concept -- the root `index.md`'s own `okf_version`/`project_mode`
+// declaration is the one exception `checkRoot`/`projectMode` already read
+// directly, not a general license for a reserved file to carry `type` or any
+// other concept-shaped frontmatter. A nested `index.md` doing so (the exact
+// dogfood defect #131 records for this repo's own `okf/releases/index.md`) is
+// as nonconforming as one that fails to parse at all, so it is folded into the
+// same `BUNDLE_FILES_NONCONFORMING` finding rather than inventing a second code.
 function parseReservedText(text) {
   const extracted = extractFrontmatter(text);
   if (extracted.missing) return;
@@ -638,7 +827,13 @@ function parseReservedText(text) {
     err.reason = err.message;
     throw err;
   }
-  parseYAML(extracted.frontmatter);
+  const tree = parseYAML(extracted.frontmatter);
+  if (tree && typeof tree === 'object' && !Array.isArray(tree) && Object.hasOwn(tree, 'type')) {
+    const err = new Error('reserved file carries concept frontmatter');
+    err.line = 0;
+    err.reason = err.message;
+    throw err;
+  }
 }
 
 function parseFinding(code, file, error) {
@@ -778,7 +973,15 @@ function validateRead(bundleRoot, services, options = {}) {
 
     const conceptFindings = [];
     const tree = parsed.tree;
-    if (typeof tree.type !== 'string' || tree.type === '') {
+    // Default (an already-published, tolerated bundle) checks only the one
+    // universal requirement, `type`. `options.strict` (#148: a staged, not-yet-
+    // published bundle) instead runs `checkConcept` -- the exact same
+    // conditional-obligation checks the write gate already enforces on a fresh
+    // concept -- because staged content is about to become a first-time write,
+    // not an already-accepted document upstream permits to have drifted.
+    if (options.strict) {
+      checkConcept(tree, entry.path, conceptFindings);
+    } else if (typeof tree.type !== 'string' || tree.type === '') {
       conceptFindings.push(blocker('TYPE_MISSING', 'okf', { path: entry.path }));
     }
 
@@ -952,4 +1155,10 @@ function evaluateReview(request, services) {
   return { result, data, findings: sortFindings(findings) };
 }
 
-module.exports = { evaluate, evaluateCreate, evaluateReview, parseFrontmatter, parseYAML, serializeFrontmatter, postWrite, projectMode, validateRead };
+module.exports = {
+  evaluate, evaluateCreate, evaluateInit, evaluateReview,
+  inspectIndex,
+  parseFrontmatter, parseYAML, serializeFrontmatter,
+  postWrite, postWriteInit, projectMode, validateRead,
+  withoutFencedCode, markdownLinks, bodyLinkPath,
+};

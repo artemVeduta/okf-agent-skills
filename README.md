@@ -3,7 +3,7 @@
 Cross-harness agent skills for maintaining an
 [Open Knowledge Format](https://okf.md/) bundle — a lightweight, file-based
 knowledge base of Markdown concepts — from Claude Code, OpenAI Codex, and
-OpenCode. One `okf` router skill dispatches to four leaf skills:
+OpenCode. One `okf` router skill dispatches to five leaf skills:
 
 | Skill | Job |
 | --- | --- |
@@ -11,6 +11,7 @@ OpenCode. One `okf` router skill dispatches to four leaf skills:
 | `okf-write` | The sole path for bounded mutations — create, revise, format, relate, machine-verify. |
 | `okf-lifecycle` | Narrow automatic synchronization, plus explicit reconciliation. |
 | `okf-review` | Reads, validates, and reports trust tiers and staleness. It never confirms, approves, or mutates. |
+| `okf-setup` | Inspects the three `/setup` config files and, once approved, bootstraps the bundle-root `index.md` via `init` and repairs `.okf-active`/`.okf-workspace.json`; for a monorepo, `plan` detects package boundaries and builds one sub-agent brief per package and `aggregate` reports their results into the shared workspace manifest; `discover` scans the active project (or, scoped to one monorepo package, its own subtree) and classifies each candidate source document as markdown, unsupported, other, or ambiguous; `migration-plan` turns that inventory into a fully-determined migration plan — migrate, skip, retain as residue, or blocked pending one compact batched round of user decisions; `partition` groups an executable plan into shards by directory locality, builds each shard's fresh-context worker brief, and validates a worker's returned shard against it; `assemble` combines every validated shard into one staged bundle, blocking on a cross-shard concept-target collision, surfacing an exact cross-shard duplicate as a candidate, resolving a cross-shard link or naming the migration-caused relationship loss when it cannot, and marking the result `partial` while any shard blocker remains; `migration-validate` gates that staged bundle before publication — structural/conformance and link-integrity checks reused from the write gate, every selected source cross-checked against its own recorded disposition, and a semantic-fidelity disclosure that stays `false` unless a human review was actually declared, however clean the rest of the check comes back; `publish` promotes a validated staged bundle into real bundle concepts by delegating one `okf-write` `create` call per concept through the same delegation bridge a sub-agent uses, never writing a concept directly; `report` turns migration signals into post-setup analytics for the agent to render. Direct invocation only. |
 
 The skills are backed by a zero-dependency Node.js runtime (`scripts/lib/`)
 driven through one thin wrapper script per skill. See
@@ -18,7 +19,7 @@ driven through one thin wrapper script per skill. See
 for the full behavioral specification and
 [`docs/spec/okf-agent-skills-v0.1.0-completion.md`](docs/spec/okf-agent-skills-v0.1.0-completion.md)
 for the decisions that closed this release's remaining open items — cited
-below as **D5**–**D10**.
+below as **D5**–**D11**.
 
 ## Install
 
@@ -106,16 +107,12 @@ The `.codex-plugin/plugin.json` at the plugin root declares skills and hooks
 paths; hooks use `${PLUGIN_ROOT}` for all path resolution. Codex loads the
 plugin layer only for trusted projects.
 
-## First run: two steps this release cannot do for you
+## First run
 
-### 1. Author the bundle-root `index.md` by hand
+### 1. Create the bundle-root `index.md`
 
-Decision **D5** reclassified the write-gate bootstrap exception as
-deferred, not granted: **`v0.1.0` never creates a bundle root.** There is no
-`init`, no `migrate`, and no bootstrap path — a request naming any of those
-is refused as an unknown operation. The one write-gate rule is that a
-mutation requires the bundle-root `index.md` to already parse with an exact
-root version declaration:
+The write gate has one rule: a mutation requires the bundle-root `index.md`
+to already parse with an exact root version declaration:
 
 ```yaml
 ---
@@ -123,9 +120,9 @@ okf_version: "0.2"
 ---
 ```
 
-You write that file, at the bundle root, before your first `okf-write` call
-can pass the write gate. Nothing in this suite initializes, creates, or
-bootstraps a bundle for you.
+Either `okf-setup` `init` writes that file for you, or you author it by hand
+at the bundle root. One of the two must happen before your first `okf-write`
+call can pass the write gate.
 
 ### 2. Create the zero-byte activation marker
 
@@ -164,10 +161,11 @@ retained design for a later guarded release, not part of `v0.1.0`.
 - The manual-operation guard, guard ledger, guard lock, preview/approval
   flow, durable operation store, recovery snapshots, rollback, and crash
   reconciliation.
-- Migration writes, concept merge and split, archive relocation, and
-  cross-repository writes.
-- A write-gate bootstrap exception for creating a new bundle root
-  (**D5**).
+- Concept merge and split, archive relocation, and cross-repository
+  writes. Migration itself ships, as a phase of `okf-setup` (**D11**).
+- A recovery subsystem for setup or migration: no checkpoint file, resume
+  state, journal, snapshot, or undo history. Git owns history and
+  rollback (**D11**).
 - Fixture corpora and scale strata that would calibrate the support
   ceiling (**D10**).
 - Live Claude Code, Codex, and OpenCode process tests; the adapter

@@ -114,10 +114,10 @@ function scriptFiles(directory = scripts) {
   });
 }
 
-test('ships exactly five process wrappers without skill or guard modules', () => {
-  const wrappers = ['okf.js', 'okf-read.js', 'okf-write.js', 'okf-lifecycle.js', 'okf-review.js'];
+test('ships exactly six process wrappers without skill or guard modules', () => {
+  const wrappers = ['okf.js', 'okf-read.js', 'okf-write.js', 'okf-lifecycle.js', 'okf-review.js', 'okf-setup.js'];
   const topLevelWrappers = fs.readdirSync(scripts)
-    .filter((file) => /^okf(?:-(?:read|write|lifecycle|review))?\.js$/.test(file))
+    .filter((file) => /^okf(?:-(?:read|write|lifecycle|review|setup))?\.js$/.test(file))
     .sort();
   assert.deepEqual(topLevelWrappers, wrappers.slice().sort());
   for (const file of wrappers) assert.equal(fs.statSync(path.join(scripts, file)).isFile(), true, file);

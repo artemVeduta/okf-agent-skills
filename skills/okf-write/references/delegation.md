@@ -5,7 +5,10 @@ than allowlisting `okf-write` directly.
 
 The brief carries `role: "okf-writer"`, plus `task_kind`, `operation_class`, `cwd`, `bundle`,
 `paths`, `allowed_effects`, `forbidden_effects`, `evidence`, `required_checks`, `settings`,
-`expected_result`, and `changes`.
+`expected_result`, and `changes`. For `operation_class: "create"`, an optional `body` field
+carries the new concept's Markdown body, forwarded as `payload.body` (#149: `okf-setup`'s own
+`publish` operation is the first caller to use it, promoting a staged migration concept into the
+bundle); every brief that omits it behaves exactly as it did before this field existed.
 
 `okf-delegate` validates that brief — completeness, no conflict between `allowed_effects` and
 `forbidden_effects`, no scope wider than the writer role — before it ever dispatches the

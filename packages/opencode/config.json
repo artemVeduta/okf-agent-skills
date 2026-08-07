@@ -5,7 +5,8 @@
       "okf-read": "deny",
       "okf-write": "deny",
       "okf-lifecycle": "deny",
-      "okf-review": "deny"
+      "okf-review": "deny",
+      "okf-setup": "deny"
     }
   }
 }

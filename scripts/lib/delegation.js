@@ -51,6 +51,15 @@ function buildRequest(brief) {
     payload.evidence = brief.evidence;
     payload.effects = brief.allowed_effects;
     payload.set = brief.changes;
+    // #149: a `create` brief's document body is a deliberate, additive extension of
+    // this brief -> request mapping, not a rebuilt parallel path. Every other field
+    // above already existed; `body` is new because no caller before the setup
+    // orchestration adapter ever needed a delegated `create` to carry one --
+    // `okf-writer` briefs in the wild so far only ever revised existing content
+    // (`changes` alone). Optional and forwarded only for `create`, so a brief that
+    // omits it (every brief before this ticket) builds the exact same request as
+    // before.
+    if (brief.operation_class === 'create' && typeof brief.body === 'string') payload.body = brief.body;
   } else if (brief.operation_class === 'read') {
     payload.target = brief.paths[0];
   } else if (brief.operation_class === 'search') {

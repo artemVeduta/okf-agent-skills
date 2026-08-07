@@ -7,5 +7,5 @@
     { "native_event": "session.created", "role": "lifecycle-only" },
     { "native_event": "session.compacted", "role": "lifecycle-only" }
   ],
-  "next_action": "Manually merge the permission.skill: deny rules for okf, okf-read, okf-write, okf-lifecycle, and okf-review into the applicable opencode.json or opencode.jsonc, after any broader permission pattern so it stays the last matching rule."
+  "next_action": "Manually merge the permission.skill: deny rules for okf, okf-read, okf-write, okf-lifecycle, okf-review, and okf-setup into the applicable opencode.json or opencode.jsonc, after any broader permission pattern so it stays the last matching rule."
 }

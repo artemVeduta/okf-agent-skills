@@ -2,78 +2,55 @@ const path = require('node:path');
 const validation = require('./validation');
 const admission = require('./admission');
 const routing = require('./routing');
+const { inside } = require('./paths');
 const lifecycle = require('./lifecycle');
 const orientation = require('./orientation');
+const setup = require('./setup');
+const {
+  respond, suiteFinding, writeResponse, effectRecords, targetOutsideWorktreeBlocked,
+  primaryEffects, derivedEffects,
+} = require('./response');
 
-const skills = new Set(['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review']);
+const skills = new Set(['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review', 'okf-setup']);
 const navigationResults = new Set(['ok', 'degraded', 'not-configured', 'unavailable']);
 const routerOwners = new Map([
   ['enumerate', 'okf-read'], ['search', 'okf-read'], ['read', 'okf-read'], ['validate', 'okf-read'],
   ['orient', 'okf-read'],
   ['create', 'okf-write'], ['revise', 'okf-write'], ['format', 'okf-write'], ['machine-verify', 'okf-write'],
   ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
+  ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
+  ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
+  ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'], ['partition', 'okf-setup'],
+  ['assemble', 'okf-setup'], ['migration-validate', 'okf-setup'], ['publish', 'okf-setup'],
 ]);
 
-const primaryEffects = new Map([
-  ['create', 'concept-create'], ['revise', 'concept-revise'], ['format', 'format'],
-  ['relationship', 'relationship'], ['machine-verify', 'machine-verify'],
-]);
-const derivedEffects = new Set(['index-maintenance', 'log-append']);
+// `inspect`, `repair`, `plan`, `aggregate`, `report`, `partition`, `assemble`, and
+// `publish` all report on or compute around state that exists before or independently
+// of the activation marker, so all eight bypass the shared activation gate the same way
+// (#133/#138/#135/#136/#146/#147/#149). `discover` (#142) and `migration-plan` (#144)
+// deliberately do NOT: unlike those eight, each needs a bundle root to already exist
+// -- `discover` to exclude it from the scan, `migration-plan` to check a candidate
+// target path for a collision -- and each runs as a step of an already-active setup
+// session rather than something that inspects or repairs the marker itself.
+// `partition` (#146) needs no bundle root at all: it only groups an already-determined
+// plan the caller supplies (or validates a worker's returned shard against the brief
+// the caller supplies), never touching the bundle or the filesystem beyond resolving
+// `cwd`'s own Git root for the briefs it builds. `assemble` (#147) writes only the
+// staging area alongside the bundle, never the bundle itself, so it shares the same
+// bypass for the same reason. `migration-validate` (#148) only ever reads that same
+// staging area back, never the bundle itself either, so it bypasses for the identical
+// reason `assemble` does. `publish` (#149) never touches the bundle directly either --
+// every real mutation it causes happens one level down, inside a delegated `okf-write`
+// `create` call that runs its own full admission (REACH/TRUST/ACCESS/PRESENCE),
+// evidence gate, and write gate exactly as any other caller of that seam would; gating
+// `publish` itself a second time at this outer level would only duplicate that check
+// with weaker information (no per-concept evidence, no per-concept task kind) than the
+// delegated call already has. An automatic caller gets the same silence every other
+// operation on an inactive bundle gets; only an explicit call after `init`/`repair`
+// have run reaches `discover`/`migration-plan`.
+const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report', 'partition', 'assemble', 'migration-validate', 'publish']);
+
 const forbiddenEffectKeys = ['deprecate', 'move', 'rename', 'rewrite'];
-const writeLimits = { writes: 'not serialized', crash_recovery: 'not provided' };
-
-function respond(request, result, data, findings, options = {}) {
-  return {
-    protocol: 'okf-wrapper/1',
-    skill: request.skill,
-    operation: request.operation,
-    result,
-    scope: options.scope === undefined ? request.scope || null : options.scope,
-    evidence_limits: options.evidence_limits === undefined ? null : options.evidence_limits,
-    data,
-    findings,
-    next_action: options.next_action === undefined ? null : options.next_action,
-  };
-}
-
-function suiteFinding(code, detail) {
-  return { code, origin: 'suite', severity: 'error', blocks: true, detail };
-}
-
-// A write result determines its own authorization and validation state, so callers
-// name the result only and cannot desynchronise the trio.
-const authorizationByResult = new Map([
-  ['blocked', 'blocked'], ['abstained', 'allowed'], ['applied', 'notice'],
-  ['no-op', 'notice'], ['failed/incomplete', 'notice'],
-]);
-const validationByResult = new Map([
-  ['blocked', 'not-run'], ['abstained', 'not-run'], ['applied', 'valid'],
-  ['no-op', 'not-needed'], ['failed/incomplete', 'failed'],
-]);
-
-function writeResponse(request, options) {
-  const {
-    result, effects = [], evidence = [], findings = [], code,
-    scope = request.scope || null, completed: completedEffects = [], residue = [],
-  } = options;
-  const completed = new Set(completedEffects);
-  const data = {
-    authorization: authorizationByResult.get(result),
-    effects,
-    task_kind: request.task_kind === undefined ? null : request.task_kind,
-    actual_effects: effectRecords(effects.filter(({ effect }) => completed.has(effect)).map(({ effect }) => effect), 'notice'),
-    residue,
-    evidence,
-    validation: validationByResult.get(result),
-  };
-  if (code !== undefined) data.code = code;
-  const nextAction = result === 'applied' || result === 'no-op' ? null : 'Correct the reported gate and submit one bounded request.';
-  return respond(request, result, data, findings, { scope, evidence_limits: writeLimits, next_action: nextAction });
-}
-
-function effectRecords(effects, authorization) {
-  return effects.map((effect, index) => ({ effect, authorization, inherited: index > 0 }));
-}
 
 function boundedEffects(operation, payload) {
   const primary = primaryEffects.get(operation);
@@ -93,11 +70,6 @@ function scopeFor(request, requireScope) {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope) || Object.keys(scope).length !== 1 ||
     !Array.isArray(scope.concepts) || scope.concepts.length !== 1 || scope.concepts[0] !== concept) return { invalid: true, scope: scope || null };
   return { scope };
-}
-
-function inside(root, file) {
-  const relative = path.relative(root, file);
-  return relative !== '' && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`);
 }
 
 function readEvidence(payload, operation, bundleRoot, services) {
@@ -254,6 +226,7 @@ function executeBounded(request, services, operation, requireScope = false) {
   return settle('applied', [...outcome.findings, ...checked.findings], { completed: completedEffects });
 }
 
+
 // Both routing operations admit first, then route the admitted data. redact() runs
 // on the admission half only; routing results carry authorized paths already.
 function admitAndRoute(request, services, router) {
@@ -295,7 +268,7 @@ function admitAndNavigate(request, services, router) {
 }
 
 function unknownOperation(request) {
-  if (request.skill === 'okf-write' || request.skill === 'okf-lifecycle' || request.skill === 'okf') {
+  if (request.skill === 'okf-write' || request.skill === 'okf-lifecycle' || request.skill === 'okf' || request.skill === 'okf-setup') {
     return writeResponse(request, { result: 'blocked', code: 'UNKNOWN_OPERATION' });
   }
   return respond(request, 'blocked', { code: 'UNKNOWN_OPERATION' }, []);
@@ -305,6 +278,7 @@ function automaticMutation(skill, request) {
   return request.invocation === 'automatic' && (
     (skill === 'okf-write' && primaryEffects.has(request.operation)) ||
     (skill === 'okf-lifecycle' && request.operation === 'sync') ||
+    (skill === 'okf-setup' && request.operation === 'init') ||
     (skill === 'okf' && (primaryEffects.has(request.operation) || request.operation === 'sync'))
   );
 }
@@ -368,21 +342,6 @@ function enumerateRead(request, services) {
   return admitAndNavigate(admittedRequest, services, routing.enumerate);
 }
 
-function targetOutsideWorktreeBlocked(request, effects) {
-  return writeResponse(request, {
-    result: 'blocked',
-    effects: effectRecords(effects, 'blocked'),
-    findings: [{
-      code: 'WRITE_TARGET_OUTSIDE_WORKTREE',
-      origin: 'suite',
-      severity: 'error',
-      blocks: true,
-      detail: { gate: 'write routing', reason: 'outside_active_worktree' },
-    }],
-    code: 'WRITE_TARGET_OUTSIDE_WORKTREE',
-  });
-}
-
 function orientRespond(request, services, marker) {
   const outcome = orientation.orient(request, services, marker);
   return outcome === null ? null : respond(request, outcome.result, outcome.data, outcome.findings, { next_action: outcome.next_action });
@@ -397,7 +356,7 @@ function activationState(request, services) {
 }
 
 function isWriteOperation(skill, request) {
-  return (skill === 'okf-write' || skill === 'okf') && primaryEffects.has(request.operation);
+  return (skill === 'okf-write' || skill === 'okf' || skill === 'okf-setup') && primaryEffects.has(request.operation);
 }
 
 function routerRun(request, services) {
@@ -420,6 +379,10 @@ function runActive(skill, request, services) {
     return respond(request, outcome.result, admission.redact(outcome.data), outcome.findings);
   }
   if (skill === 'okf') return routerRun(request, services);
+  if (skill === 'okf-setup') {
+    const operation = setup.operations.get(request.operation);
+    return operation ? operation(request, services) : unknownOperation(request);
+  }
   if (skill === 'okf-review') {
     if (request.operation === 'review') {
       const outcome = validation.evaluateReview(request, services);
@@ -457,6 +420,24 @@ function runActive(skill, request, services) {
 
 function run(skill, request, services) {
   if (!skills.has(skill)) return respond(request, 'blocked', { code: 'UNKNOWN_SKILL' }, []);
+
+  // `inspect` and `repair` report and fix the activation marker itself, `plan` and
+  // `aggregate` plan and report around a workspace that may not have one yet, and
+  // `report` only classifies caller-supplied migration signals, so all five run
+  // ahead of the shared activation gate below rather than being gated behind it,
+  // whether reached directly through `okf-setup` or through the `okf` router; an
+  // automatic caller still gets silence, matching every other operation's automatic
+  // behavior when OKF is not yet active here (#138/#135/#136).
+  if (activationBypassOperations.has(request.operation)) {
+    if (skill === 'okf-setup') {
+      if (request.invocation === 'automatic') return null;
+      return runActive(skill, request, services);
+    }
+    if (skill === 'okf') {
+      if (request.invocation === 'automatic') return null;
+      return routerRun(request, services);
+    }
+  }
 
   const activation = activationState(request, services);
   if (activation === 'absent') {

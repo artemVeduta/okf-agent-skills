@@ -8,6 +8,18 @@ const requiredPayload = new Map([
   ['machine-verify', ['cwd', 'bundle', 'concept']],
   ['sync', ['cwd', 'bundle', 'concept']],
   ['review', ['cwd', 'bundle', 'concept']],
+  ['init', ['cwd']],
+  ['inspect', ['cwd']],
+  ['repair', ['cwd']],
+  ['plan', ['cwd']],
+  ['aggregate', ['cwd']],
+  ['report', ['cwd']],
+  ['discover', ['cwd']],
+  ['migration-plan', ['cwd']],
+  ['partition', ['cwd']],
+  ['assemble', ['cwd']],
+  ['migration-validate', ['cwd']],
+  ['publish', ['cwd']],
   ['resolve', ['cwd']],
   ['read', ['cwd', 'target']],
   ['search', ['cwd', 'query']],
@@ -70,6 +82,34 @@ function parseRequest(text, expectedSkill) {
     }
     if (typeof obj.payload.bundle !== 'string' && !Array.isArray(obj.payload.candidates)) {
       throw new Error('Missing payload.bundle or payload.candidates');
+    }
+  }
+  if (obj.operation === 'repair') {
+    if (!Array.isArray(obj.payload.targets) || obj.payload.targets.length === 0) {
+      throw new Error('Missing payload.targets');
+    }
+  }
+  if (obj.operation === 'aggregate') {
+    if (!Array.isArray(obj.payload.results) || obj.payload.results.length === 0) {
+      throw new Error('Missing payload.results');
+    }
+  }
+  if (obj.operation === 'migration-plan') {
+    if (!Array.isArray(obj.payload.sources)) {
+      throw new Error('Missing payload.sources');
+    }
+  }
+  if (obj.operation === 'assemble') {
+    if (!isPlainObject(obj.payload.partition)) {
+      throw new Error('Missing payload.partition');
+    }
+    if (!Array.isArray(obj.payload.shards) || obj.payload.shards.length === 0) {
+      throw new Error('Missing payload.shards');
+    }
+  }
+  if (obj.operation === 'publish') {
+    if (!Array.isArray(obj.payload.staged) || obj.payload.staged.length === 0) {
+      throw new Error('Missing payload.staged');
     }
   }
   if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');

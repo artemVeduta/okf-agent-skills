@@ -90,4 +90,82 @@ function select(payload, context, services) {
   return read(file, services);
 }
 
-module.exports = { select };
+// A `monorepo` hint, never a decision (#133/#138): either the manifest itself
+// already declares more than one repository or bundle, or the Git root carries
+// `.gitmodules`. `/setup`'s procedure is the one place that acts on the hint —
+// it warns and asks the user to choose a template, it never guesses for them.
+function monorepoSignal(gitRoot, raw, services) {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    if (Array.isArray(raw.repositories) && raw.repositories.length > 1) return true;
+    if (Array.isArray(raw.bundles) && raw.bundles.length > 1) return true;
+  }
+  return services.exists(path.join(gitRoot, '.gitmodules'));
+}
+
+// `/setup`'s deterministic three-state report for `.okf-workspace.json`: `missing`,
+// `ok`, or `invalid` carrying the validator's own reason. An invalid file's own
+// `workspace_id` is surfaced as `salvage` when it is at least a well-formed UUIDv4,
+// so a regenerated manifest can keep workspace identity instead of minting a new one
+// — `/setup`'s procedure decides whether to use it, this function only reports it.
+function inspect(file, gitRoot, services) {
+  if (!services.exists(file)) {
+    return { state: 'missing', monorepo: services.exists(path.join(gitRoot, '.gitmodules')) };
+  }
+  let raw;
+  try {
+    raw = JSON.parse(services.readFile(file));
+  } catch {
+    return { state: 'invalid', reason: 'invalid_json', salvage: null, monorepo: monorepoSignal(gitRoot, null, services) };
+  }
+  const finding = validate(raw);
+  const monorepo = monorepoSignal(gitRoot, raw, services);
+  if (finding) {
+    const salvage = raw && typeof raw === 'object' && !Array.isArray(raw) &&
+      typeof raw.workspace_id === 'string' && uuid.test(raw.workspace_id) ? { workspace_id: raw.workspace_id } : null;
+    return { state: 'invalid', reason: finding.detail.reason, salvage, monorepo };
+  }
+  return { state: 'ok', monorepo };
+}
+
+// The single-bundle template named by #133's resolution: one repository — the
+// workspace root itself — owning one source bundle. Always run back through
+// `validate()` by the caller before it is written; this builder does not
+// special-case its own output.
+//
+// #135 open point 6: the multi-package form, chosen with `packages` (the shape
+// `scripts/lib/monorepo.js`'s `detect()` returns). A package with its own Git
+// repository (a submodule, `separateRepo: true`) gets its own repository entry
+// and owns its bundle directly; a package sharing the workspace repository is
+// owned by the root repository at its package-relative bundle path. Every bundle
+// is `required: true` and `mode: "source"` — the workspace declares every
+// detected package as an intended bundle, so a package whose worker did not yet
+// produce one is `degraded`, not silently absent, through the same federation
+// health check every other required-but-inactive bundle already gets.
+function template({ repoName, bundleAlias, workspaceId, packages, bundleName }) {
+  if (!packages) {
+    return {
+      schema_version: 1,
+      workspace_id: workspaceId,
+      repositories: [{ name: repoName, path: '.', local: true }],
+      bundles: [{ alias: bundleAlias, owner: repoName, root: bundleAlias, required: true, mode: 'source' }],
+    };
+  }
+  const directory = bundleName || 'okf';
+  const repositories = [{ name: repoName, path: '.', local: true }];
+  const seenRepositories = new Set([repoName]);
+  const bundles = [];
+  for (const pkg of packages) {
+    if (pkg.separateRepo) {
+      if (!seenRepositories.has(pkg.alias)) {
+        repositories.push({ name: pkg.alias, path: pkg.path, local: true });
+        seenRepositories.add(pkg.alias);
+      }
+      bundles.push({ alias: pkg.alias, owner: pkg.alias, root: directory, required: true, mode: 'source' });
+    } else {
+      bundles.push({ alias: pkg.alias, owner: repoName, root: `${pkg.path}/${directory}`, required: true, mode: 'source' });
+    }
+  }
+  return { schema_version: 1, workspace_id: workspaceId, repositories, bundles };
+}
+
+module.exports = { select, inspect, template, validate };
