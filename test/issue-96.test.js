@@ -53,6 +53,8 @@ test('a project-layout skill install answers a real request from its own install
   const installed = path.join(skillsDir, 'okf-read');
   assert.equal(fs.lstatSync(path.join(installed, 'scripts')).isSymbolicLink(), false, 'the installer dereferences the symlink');
   const result = runInstalledWrapper(installed, 'okf-read', admitRequest(root), root);
+  const writeInstalled = path.join(skillsDir, 'okf-write');
+  assert.equal(fs.existsSync(path.join(writeInstalled, 'references', 'wrapper-request-fields.md')), true, 'a symlinked reference file is dereferenced and survives install');
 
   assert.equal(result.status, 0);
   assert.equal(result.stderr, '');

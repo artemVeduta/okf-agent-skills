@@ -16,16 +16,23 @@ description: Writes bounded OKF mutations when another skill must invoke it.
   "protocol": "okf-wrapper/1",
   "skill": "okf-write",
   "operation": "revise",
+  "task_kind": "fix",
   "payload": {
     "cwd": "/path/to/repo",
     "bundle": "bundle-name",
     "concept": "concept-id",
-    "evidence": {}
+    "evidence": ["evidence.md"]
   }
 }
 ```
 
-`protocol` is always the literal `okf-wrapper/1` and `skill` is always the literal `okf-write`. `operation` names one of the five bounded operations this skill performs: `create`, `revise`, `format`, `relationship`, `machine-verify`. Every one of these is bounded, so `payload` always carries non-empty `cwd`, `bundle`, and `concept`, plus whatever keys the operation itself needs — `evidence` for a claim or verification write, `effects` for a relationship change, `set` for a field change. A status value is not writable in v0.1.0: `set.status` returns `UNSUPPORTED_INPUT`.
+`protocol` is always the literal `okf-wrapper/1` and `skill` is always the literal `okf-write`. `operation` names one of the five bounded operations this skill performs: `create`, `revise`, `format`, `relationship`, `machine-verify`. Every one of these is bounded, so `payload` always carries non-empty `cwd`, `bundle`, and `concept`, plus whatever keys the operation itself needs — `evidence` for a claim or verification write, `effects` for a relationship change, `set` for a field change. Each `evidence` path must name a file that exists inside the bundle root; a missing file returns `EVIDENCE_UNAVAILABLE`. A status value is not writable in v0.1.0: `set.status` returns `UNSUPPORTED_INPUT`.
+
+`task_kind` and `scope` are top-level fields, siblings of `payload`, not keys inside it. Every one
+of `okf-write`'s five operations requires a write-eligible `task_kind`, and `scope`, when supplied,
+must name `payload.concept`. See
+[references/wrapper-request-fields.md](references/wrapper-request-fields.md) for the full statement
+of `task_kind`, `scope`, and `invocation`.
 
 `okf-write` sends this request to `node <skill-root>/scripts/okf-write.js`, where `<skill-root>` is the directory containing this SKILL.md — never a path resolved from the current working directory or PATH.
 
@@ -79,3 +86,4 @@ Decision D5 also bounds every write here: mutation requires a parsed bundle-root
 1. **Identify the bounded operation.** Match the requested change to one of `create`, `revise`, `format`, `relationship`, or `machine-verify`. Done when the operation and its required payload keys (`cwd`, `bundle`, `concept`, plus the operation-specific key) are known; not done while the change could still map to more than one operation.
 2. **Construct and send the wrapper request.** Build the JSON object shown above and pipe it to the `okf-write` wrapper. Done when the process exits and one of the three outcomes above has been observed and named; not done while the outcome is unnamed or a refusal is being treated as a crash.
 3. **Reconcile every requested effect.** Walk the response and account for each requested effect as applied, refused (with its `data.code`), or not run because the process failed before reaching it. A bounded write is done only when every requested effect has one of those three dispositions — one unaccounted effect leaves the write unfinished.
+4. **Report within the ceiling.** A clean result is done when reported as one line: the operation and result, nothing else; not done if the full response is shown. A refusal, an internal failure, or a `failed/incomplete` result is done only with the full response, naming the gate code and next action; not done if trimmed to one line, softened, or reported as a crash. Show the full response for any result if the caller asks.
