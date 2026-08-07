@@ -1138,4 +1138,5 @@ module.exports = {
   inspectIndex,
   parseFrontmatter, parseYAML, serializeFrontmatter,
   postWrite, postWriteInit, projectMode, validateRead,
+  withoutFencedCode, markdownLinks, bodyLinkPath,
 };

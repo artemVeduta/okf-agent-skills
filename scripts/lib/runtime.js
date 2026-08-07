@@ -855,19 +855,28 @@ function validPlanSource(item) {
   return item.question === undefined;
 }
 
-// `/setup`'s migration plan derivation and batched-question round (#144). Turns
-// `discover`'s (#142) source inventory into a fully-determined migration plan: every
-// source gets an intentional disposition -- `migrate`, `skip`, `residue`, or
-// `blocked_pending_decision` -- and `data.plan.executable` is `false` whenever any
+// `/setup`'s migration plan derivation and batched-question round (#144), plus the
+// source-to-concept mapping engine, provenance extraction, reference-path
+// derivation, and link rewriting (#145). Turns `discover`'s (#142) source inventory
+// into a fully-determined migration plan: every source gets an intentional
+// disposition -- `migrate`, `skip`, `residue`, or `blocked_pending_decision` -- a
+// concept path derived from its type's own canonical directory (not a mechanical
+// mirror of the source path), and `data.plan.executable` is `false` whenever any
 // entry is still `blocked_pending_decision`, so an executor cannot run a
-// half-decided plan by accident. Read-only and purely derivational, like `discover`:
-// it reads each markdown source's own frontmatter (through the same reader
-// `discover` and the write path both use) and checks the bundle for a file already
-// at the candidate target path, and nothing else -- it never prompts a human;
-// rendering the batch and asking the question is `skills/okf-setup/SKILL.md`'s job.
-// Like `discover`, it needs the bundle root to already exist (to check for a target
-// collision), so it is not in `activationBypassOperations`, and it shares the same
-// "no automatic caller" family invariant through its own explicit guard below.
+// half-decided plan by accident. `data.mapping` carries, for every `migrate` entry,
+// the provenance its own frontmatter already declared (verbatim, never fabricated)
+// and its body with unambiguous internal links rewritten to their new concept
+// paths; `data.references` carries the deterministic `references/` path for every
+// `residue` entry's raw evidence; `data.plan.duplicates` surfaces, never merges, an
+// exact content duplicate among the sources this call is migrating. Read-only and
+// purely derivational, like `discover`: it reads each markdown source's own
+// frontmatter and body (through the same reader `discover` and the write path both
+// use) and checks the bundle for a file already at the candidate target path, and
+// nothing else -- it never prompts a human; rendering the batch and asking the
+// question is `skills/okf-setup/SKILL.md`'s job. Like `discover`, it needs the
+// bundle root to already exist (to check for a target collision), so it is not in
+// `activationBypassOperations`, and it shares the same "no automatic caller" family
+// invariant through its own explicit guard below.
 function executeMigrationPlan(request, services) {
   if (request.invocation === 'automatic') return null;
   const payload = request.payload;
@@ -889,16 +898,30 @@ function executeMigrationPlan(request, services) {
   const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers);
   if (outcome.invalid) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
 
-  const findings = outcome.questions.map((q) => ({
-    code: 'plan_question_open',
-    origin: 'suite',
-    severity: 'warning',
-    blocks: false,
-    detail: { path: q.path, kind: q.kind },
-  }));
+  const findings = [
+    ...outcome.questions.map((q) => ({
+      code: 'plan_question_open',
+      origin: 'suite',
+      severity: 'warning',
+      blocks: false,
+      detail: { path: q.path, kind: q.kind },
+    })),
+    // #145: an exact content duplicate among sources this call is migrating is
+    // surfaced, never silently merged and never blocking -- #131's "exact
+    // duplicates may be surfaced as candidates".
+    ...outcome.duplicates.map((d) => ({
+      code: 'plan_duplicate_candidate',
+      origin: 'suite',
+      severity: 'warning',
+      blocks: false,
+      detail: { paths: d.paths },
+    })),
+  ];
   return respond(request, 'ok', {
-    plan: { entries: outcome.entries, executable: outcome.executable },
+    plan: { entries: outcome.entries, executable: outcome.executable, duplicates: outcome.duplicates },
     questions: outcome.questions,
+    mapping: outcome.mapping,
+    references: outcome.references,
   }, findings);
 }
 
