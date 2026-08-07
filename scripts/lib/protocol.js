@@ -14,6 +14,7 @@ const requiredPayload = new Map([
   ['plan', ['cwd']],
   ['aggregate', ['cwd']],
   ['report', ['cwd']],
+  ['discover', ['cwd']],
   ['resolve', ['cwd']],
   ['read', ['cwd', 'target']],
   ['search', ['cwd', 'query']],

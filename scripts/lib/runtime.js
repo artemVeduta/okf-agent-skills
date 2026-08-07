@@ -4,6 +4,7 @@ const validation = require('./validation');
 const admission = require('./admission');
 const manifest = require('./manifest');
 const monorepo = require('./monorepo');
+const discovery = require('./discovery');
 const routing = require('./routing');
 const lifecycle = require('./lifecycle');
 const orientation = require('./orientation');
@@ -17,11 +18,17 @@ const routerOwners = new Map([
   ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
   ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
   ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
+  ['discover', 'okf-setup'],
 ]);
 
 // `inspect`, `repair`, `plan`, `aggregate`, and `report` all report on or plan around
 // state that exists before or independently of the activation marker, so all five
-// bypass the shared activation gate the same way (#133/#138/#135/#136).
+// bypass the shared activation gate the same way (#133/#138/#135/#136). `discover`
+// (#142) deliberately does NOT: unlike those five, it needs a bundle root to already
+// exist so it can exclude it from the scan, and it runs as a step of an already-active
+// setup session rather than something that inspects or repairs the marker itself. An
+// automatic caller gets the same silence every other operation on an inactive bundle
+// gets; only an explicit call after `init`/`repair` have run reaches it.
 const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report']);
 
 const primaryEffects = new Map([
@@ -791,6 +798,46 @@ function executeReport(request, services) {
   }, findings);
 }
 
+// `/setup`'s discovery scan and source classifier (#142). Read-only: it never writes,
+// and it runs against an already-active bundle (see `activationBypassOperations`
+// above for why this one is not in that set) so it can exclude the bundle root from
+// its own scan. `data.sources` is `discovery.discover()`'s classification, one entry
+// per file: `category` is `markdown` (a direct parse target), `unsupported` (a
+// recognised format the migration will not interpret), `other` (not a candidate
+// document format), or `ambiguous` (the evidence does not settle it, carrying a
+// `question` for the user rather than a guess). `data.complete` mirrors
+// `services.listFiles()`'s own field name and meaning exactly: `false` means the scan
+// itself was partial (a symlink or an unreadable directory), reported here as a
+// non-blocking `unreadable` finding -- the same code/shape `admitAndNavigate` already
+// uses for a degraded read -- rather than silently dropped from the response.
+function executeDiscover(request, services) {
+  // `discover` is not in `activationBypassOperations` (it needs the bundle root to
+  // already exist), but it still shares the rest of `okf-setup`'s family invariant
+  // that none of its operations runs automatically (#134) -- silence, not a report,
+  // for a caller other than an explicit `/setup` session, the same outcome the other
+  // six reach through the bypass block above.
+  if (request.invocation === 'automatic') return null;
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const bundleRoot = path.resolve(payload.cwd, bundleName);
+
+  const { sources, complete } = discovery.discover(gitRoot, bundleRoot, services);
+  const findings = complete ? [] : [{
+    code: 'unreadable',
+    origin: 'suite',
+    severity: 'error',
+    blocks: false,
+    detail: { gate: 'discovery', reason: 'incomplete_walk' },
+  }];
+  return respond(request, 'ok', { complete, sources }, findings);
+}
+
 // Both routing operations admit first, then route the admitted data. redact() runs
 // on the admission half only; routing results carry authorized paths already.
 function admitAndRoute(request, services, router) {
@@ -965,6 +1012,7 @@ function runActive(skill, request, services) {
     if (request.operation === 'plan') return executePlan(request, services);
     if (request.operation === 'aggregate') return executeAggregate(request, services);
     if (request.operation === 'report') return executeReport(request, services);
+    if (request.operation === 'discover') return executeDiscover(request, services);
     return unknownOperation(request);
   }
   if (skill === 'okf-review') {
