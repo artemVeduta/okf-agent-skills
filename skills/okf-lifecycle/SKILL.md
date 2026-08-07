@@ -30,6 +30,7 @@ For `sync`, `okf-lifecycle` constructs:
   "skill": "okf-lifecycle",
   "operation": "sync",
   "invocation": "explicit",
+  "scope": { "concepts": ["<concept identifier>"] },
   "payload": {
     "cwd": "<absolute working directory>",
     "bundle": "<bundle identifier>",
@@ -38,9 +39,9 @@ For `sync`, `okf-lifecycle` constructs:
 }
 ```
 
-`invocation` is always `"explicit"` here, for incremental synchronization and for explicit reconciliation alike: the agent, not an adapter or a hook, sends this request, and model or parent-skill routing never turns it into an automatic invocation. `invocation: "automatic"` names a request an adapter or a hook emits on its own; that class stays read-only, and the runtime returns `AUTOMATIC_MUTATION_BLOCKED` for a `sync` request that carries it, even when its evidence and scope are otherwise valid.
+`invocation` is always `"explicit"` here, for incremental synchronization and for explicit reconciliation alike: the agent, not an adapter or a hook, sends this request, and model or parent-skill routing never turns it into an automatic invocation.
 
-`sync` is a bounded operation: `payload.cwd`, `payload.bundle`, and `payload.concept` are all required, non-empty strings, and a request missing any of them fails before the runtime ever sees it. `invocation` is a required top-level field for `sync` as well.
+`sync` is a bounded operation: `payload.cwd`, `payload.bundle`, and `payload.concept` are all required, non-empty strings, and a request missing any of them fails before the runtime ever sees it. `invocation` and `scope` are also required top-level fields for `sync`; `scope` must name exactly the concept in `payload.concept` — `{ "concepts": [<that same concept>] }`. See [references/wrapper-request-fields.md](references/wrapper-request-fields.md) for the full statement of `task_kind`, `scope`, and `invocation`, including when `sync` returns `result: "blocked"` versus when it abstains.
 
 `okf-lifecycle` runs this request through `node <skill-root>/scripts/okf-lifecycle.js`, where `<skill-root>` is the directory containing this SKILL.md — never a path resolved from the current working directory or PATH.
 
@@ -48,7 +49,7 @@ For `sync`, `okf-lifecycle` constructs:
 
 Every wrapper call ends in exactly one of three conditions:
 
-1. **Valid response.** Exit code 0, one JSON line on stdout. A refusal is a valid response, not a failure — an `abstained` result with no findings, or a `blocked` result carrying `data.code: "INVALID_SCOPE"` when the scope cannot be resolved, is a completed answer.
+1. **Valid response.** Exit code 0, one JSON line on stdout. An `abstained` result with no findings is a completed answer, not a refusal — the ordinary outcome of a `sync` with nothing to do. A `blocked` result carrying `data.code: "INVALID_SCOPE"` when the scope cannot be resolved is a refusal: also a valid response, not a failure.
 2. **Invalid wrapper input.** The request never parsed: malformed JSON, a wrong `skill` value, a missing `operation`, a missing required `payload` key, or a missing `invocation` on `sync`. Nothing on stdout, a short diagnostic on stderr, exit code 64.
 3. **Internal failure.** The request parsed and the runtime threw. One complete response (`result: "failed/incomplete"`, `data.code: "RUNTIME_FAILURE"`) still lands on stdout, a `Runtime failure: ...` diagnostic goes to stderr, exit code 70.
 
@@ -64,3 +65,4 @@ It does not own the derived-maintenance effects that an ordinary `sync` triggers
 2. Classify the trigger as incremental (ordinary work, agent-selected) or explicit reconciliation (requested by name). Both trigger classes send `invocation: "explicit"`. Done when the trigger class is fixed before any payload is built; not done if the class is still undecided or was inferred after the scope was chosen.
 3. Build the wrapper request for the scope that trigger class authorizes: narrow for incremental synchronization, wider only for explicit reconciliation. Done when the request matches the shape above and its scope matches the trigger class from step 2; not done if the scope is wider than the trigger authorizes.
 4. Run the `okf-lifecycle` wrapper and name the exit condition the call ended in. Done when the response is reported as a valid response (refusal included), invalid wrapper input, or an internal failure; not done while a refusal is being reported as a crash or a crash as a refusal.
+5. Report within the ceiling. A clean result is done when reported as one line: the operation and result, nothing else; not done if the full response is shown. A refusal, an internal failure, or a `failed/incomplete` result is done only with the full response, naming the gate code and next action; not done if trimmed to one line, softened, or reported as a crash. Show the full response for any result if the caller asks.

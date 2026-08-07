@@ -35,6 +35,7 @@ eval/
   cases/
     activation.eval.js    — the five activation cases (one data row each), positive and negative
     wrapper-contract.eval.js
+    wrapper-request-field-placement.eval.js
 ```
 
 ## The fixture workspace
@@ -56,10 +57,11 @@ and one concept file (`note.md`). A fresh fixture repository is built for
 every case, mutating or not, because a Flue conversation reset does not
 reset files.
 
-## The six cases
+## The seven cases
 
-Five of the six cases dispatch a prompt to the Flue agent and inspect the
-conversation transcript for `activate_skill` tool calls:
+Six of the seven cases dispatch a prompt to the Flue agent and inspect the
+conversation transcript — five for `activate_skill` tool calls, one for the
+`bash` tool calls that carry the wrapper request the model composed:
 
 | Case | Kind | Asserts |
 | --- | --- | --- |
@@ -69,6 +71,7 @@ conversation transcript for `activate_skill` tool calls:
 | `okf-review-positive-activation` | positive | `okf` or `okf-review` is among the activated skills for a staleness/trust-tier prompt. |
 | `unrelated-negative-activation` | negative | none of the five OKF skills activate for a prompt with no connection to OKF. |
 | `okf-write-wrapper-contract` | wrapper-contract | the real `okf-write` wrapper process, run against a fresh fixture bundle, emits exactly one JSON line and exit 0, and the response's `result` is `applied`. |
+| `okf-write-task-kind-top-level` | field-placement | for the same bounded revise prompt, with no hint about field placement, the `okf-wrapper/1` request the model composed in a shell command carries `task_kind` as a top-level field, not inside `payload`. |
 
 Each positive case accepts either the router (`okf`) or the specific leaf
 skill, because the router's own `SKILL.md` is the piece that is supposed to
@@ -76,11 +79,18 @@ route a direct request to its owner leaf — Flue may see either name in the
 transcript depending on how far the model's own tool-call chain runs in one
 turn.
 
-The sixth case does not need a live model. It runs the wrapper directly,
-the same way Flue's `local()` sandbox would run it through the model's
-`bash` tool, and asserts the wrapper's one-line JSON result and exit class —
-the real product contract, per the research doc. It is the one case this
-environment can score today without a model.
+The `okf-write-wrapper-contract` case does not need a live model. It runs
+the wrapper directly, the same way Flue's `local()` sandbox would run it
+through the model's `bash` tool, and asserts the wrapper's one-line JSON
+result and exit class — the real product contract, per the research doc. It
+is the one case this environment can score today without a model.
+
+`okf-write-task-kind-top-level` is model-driven and non-gating, like the
+five activation cases: its result is not stable between runs and a failure
+is a signal to look, not a release blocker. It gives evidence only. The deterministic
+`report.check` and `wrapper-contract.check` suites, and the root
+`node --test "test/*.test.js"`, remain the authority on doc and runtime
+agreement — this case only watches what a live model actually sends.
 
 ## Running it
 
@@ -88,7 +98,7 @@ Use the script. It installs the packages if they are absent, runs the
 deterministic checks, then runs the cases:
 
 ```sh
-./eval.sh              # all six cases
+./eval.sh              # all seven cases
 ./eval.sh okf-write    # only cases whose id contains "okf-write"
 ```
 
@@ -98,10 +108,12 @@ The steps on their own:
 cd eval
 npm install
 npm run check   # deterministic checks: no Flue, no model, always runs
-npm run eval    # the six cases against a live Flue agent
+npm run eval    # the seven cases against a live Flue agent
 ```
 
 ## Credentials
+
+`npm run eval` makes live model calls and spends provider quota.
 
 `npm run eval` needs a model provider credential. Each provider reads its own
 environment variable. Copy `.env.example` to `.env`, then fill in the
@@ -132,7 +144,8 @@ proves the runtime read the variable and called the provider.
 A missing credential and a rejected credential both report `status:
 "blocked"`. Neither one is a result about the OKF skills.
 
-Without a credential, every case that needs a live model reports `status:
+Without a credential, every case that needs a live model — the five
+activation cases and `okf-write-task-kind-top-level` — reports `status:
 "blocked"` with the exact reason, and the wrapper-contract case still
 reports `status: "pass"` or `status: "fail"` for real.
 
@@ -148,11 +161,12 @@ runs, the per-case trial counts, and what they prove.
 `npm run eval` prints one JSON line per case, then one summary line. The
 wrapper-contract case is a `spawnSync` of the real wrapper script, not a
 Flue dispatch — its `kind` names that distinctly from the five
-`activation-positive`/`activation-negative` cases:
+`activation-positive`/`activation-negative` cases and from
+`okf-write-task-kind-top-level`'s own `field-placement` kind:
 
 ```json
 {"id": "okf-write-wrapper-contract", "kind": "wrapper-contract", "description": "...", "status": "pass", "detail": null}
-{"summary": {"total": 6, "pass": 1, "fail": 0, "blocked": 5}}
+{"summary": {"total": 7, "pass": 1, "fail": 0, "blocked": 6}}
 ```
 
 `status` is one of three values:

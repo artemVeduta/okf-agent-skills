@@ -83,4 +83,4 @@ function serializeResponse(response) {
   return JSON.stringify(ordered);
 }
 
-module.exports = { parseRequest, serializeResponse };
+module.exports = { parseRequest, serializeResponse, requiredPayload };

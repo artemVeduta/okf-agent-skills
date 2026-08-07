@@ -2,7 +2,7 @@
 # Runs the non-gating Flue eval slice.
 #
 # Usage:
-#   ./eval.sh              run the deterministic checks, then all six cases
+#   ./eval.sh              run the deterministic checks, then all seven cases
 #   ./eval.sh okf-write    run the checks, then only cases whose id matches
 #
 # Put the credential and the model in `.env` (see README.md, "Credentials").
@@ -22,7 +22,7 @@ npm run check
 # false pass, so the run is still safe to make. Say so once and continue.
 if [ ! -f .env ] && [ ! -f ../.env ] && [ -z "${OPENCODE_API_KEY:-}${ANTHROPIC_API_KEY:-}" ]; then
   echo "eval.sh: no .env file and no provider key in the environment." >&2
-  echo "eval.sh: the five activation cases will report 'blocked'." >&2
+  echo "eval.sh: the five activation cases and okf-write-task-kind-top-level will report 'blocked'." >&2
 fi
 
 npm run eval --silent -- "$@"
