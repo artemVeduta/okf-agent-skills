@@ -7,6 +7,7 @@ const monorepo = require('./monorepo');
 const discovery = require('./discovery');
 const migration = require('./migration');
 const partition = require('./partition');
+const assembly = require('./assembly');
 const routing = require('./routing');
 const lifecycle = require('./lifecycle');
 const orientation = require('./orientation');
@@ -21,23 +22,26 @@ const routerOwners = new Map([
   ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
   ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
   ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'], ['partition', 'okf-setup'],
+  ['assemble', 'okf-setup'],
 ]);
 
-// `inspect`, `repair`, `plan`, `aggregate`, `report`, and `partition` all report on or
-// compute around state that exists before or independently of the activation marker,
-// so all six bypass the shared activation gate the same way (#133/#138/#135/#136/
-// #146). `discover` (#142) and `migration-plan` (#144) deliberately do NOT: unlike
-// those six, each needs a bundle root to already exist -- `discover` to exclude it
-// from the scan, `migration-plan` to check a candidate target path for a collision --
-// and each runs as a step of an already-active setup session rather than something
-// that inspects or repairs the marker itself. `partition` (#146) needs no bundle
-// root at all: it only groups an already-determined plan the caller supplies (or
-// validates a worker's returned shard against the brief the caller supplies), never
-// touching the bundle or the filesystem beyond resolving `cwd`'s own Git root for the
-// briefs it builds. An automatic caller gets the same silence every other operation
-// on an inactive bundle gets; only an explicit call after `init`/`repair` have run
-// reaches `discover`/`migration-plan`.
-const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report', 'partition']);
+// `inspect`, `repair`, `plan`, `aggregate`, `report`, `partition`, and `assemble` all
+// report on or compute around state that exists before or independently of the
+// activation marker, so all seven bypass the shared activation gate the same way
+// (#133/#138/#135/#136/#146/#147). `discover` (#142) and `migration-plan` (#144)
+// deliberately do NOT: unlike those seven, each needs a bundle root to already exist
+// -- `discover` to exclude it from the scan, `migration-plan` to check a candidate
+// target path for a collision -- and each runs as a step of an already-active setup
+// session rather than something that inspects or repairs the marker itself.
+// `partition` (#146) needs no bundle root at all: it only groups an already-determined
+// plan the caller supplies (or validates a worker's returned shard against the brief
+// the caller supplies), never touching the bundle or the filesystem beyond resolving
+// `cwd`'s own Git root for the briefs it builds. `assemble` (#147) writes only the
+// staging area alongside the bundle, never the bundle itself, so it shares the same
+// bypass for the same reason. An automatic caller gets the same silence every other
+// operation on an inactive bundle gets; only an explicit call after `init`/`repair`
+// have run reaches `discover`/`migration-plan`.
+const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report', 'partition', 'assemble']);
 
 const primaryEffects = new Map([
   ['create', 'concept-create'], ['revise', 'concept-revise'], ['format', 'format'],
@@ -1075,6 +1079,157 @@ function executePartition(request, services) {
   return hasPlan ? executePartitionCompute(request) : executePartitionValidate(request);
 }
 
+// `payload.partition.shards[]` is exactly one `partition` compute-mode
+// `data.shards[]` entry (`{shard, sources, brief}`), unmodified -- reusing
+// `validPartitionMappingItem`/`validPartitionReferenceItem` for the brief's
+// own `mapping`/`references` arrays rather than a second shape check, since
+// a brief's `mapping`/`references` are exactly those two shapes already.
+function validAssemblyPartitionShard(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (typeof item.shard !== 'string' || item.shard === '') return false;
+  if (!Array.isArray(item.sources) || item.sources.length === 0 || item.sources.some((s) => typeof s !== 'string' || s === '')) {
+    return false;
+  }
+  const brief = item.brief;
+  if (!brief || typeof brief !== 'object' || Array.isArray(brief) || brief.shard !== item.shard) return false;
+  if (!Array.isArray(brief.mapping) || !brief.mapping.every(validPartitionMappingItem)) return false;
+  if (!Array.isArray(brief.references) || !brief.references.every(validPartitionReferenceItem)) return false;
+  if (!Array.isArray(brief.sources) || brief.sources.some((s) => typeof s !== 'string' || s === '')) return false;
+  return true;
+}
+
+function validCrossShardLink(item) {
+  return !!item && typeof item === 'object' && !Array.isArray(item) &&
+    typeof item.from === 'string' && item.from !== '' && typeof item.to === 'string' && item.to !== '' &&
+    typeof item.from_shard === 'string' && item.from_shard !== '' && typeof item.to_shard === 'string' && item.to_shard !== '';
+}
+
+function validAssemblyPartition(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!Array.isArray(value.shards) || value.shards.length === 0) return false;
+  const seen = new Set();
+  for (const item of value.shards) {
+    if (!validAssemblyPartitionShard(item) || seen.has(item.shard)) return false;
+    seen.add(item.shard);
+  }
+  if (value.cross_shard_links === undefined) return true;
+  return Array.isArray(value.cross_shard_links) && value.cross_shard_links.every(validCrossShardLink);
+}
+
+function validAssemblyShardRef(item) {
+  return !!item && typeof item === 'object' && !Array.isArray(item) &&
+    typeof item.shard === 'string' && item.shard !== '' && typeof item.path === 'string' && item.path !== '';
+}
+
+// Every shard `payload.partition.shards` names must have exactly one entry in
+// `payload.shards`, and nothing in `payload.shards` may name a shard
+// `payload.partition` never produced -- `aggregate`'s own "coversExactly"
+// discipline (#135), extended to shard identity instead of package identity,
+// so a shard missing from the set is refused rather than silently assembled
+// as if the corpus were smaller than it is.
+function assemblyShardCoverage(partitionShards, gathered) {
+  const expected = new Set(partitionShards.map((item) => item.shard));
+  const named = new Set(gathered.map((item) => item.shard));
+  return {
+    missing: [...expected].filter((id) => !named.has(id)).sort(),
+    unknown: [...named].filter((id) => !expected.has(id)).sort(),
+  };
+}
+
+// `assemble` (#147) bypasses the activation gate exactly like `partition`
+// (see `activationBypassOperations` above): it never touches the bundle
+// itself, only the staging area beside it, so the shared bypass block in
+// `run()` already turns an automatic invocation into silence before this
+// ever runs.
+function executeAssemble(request, services) {
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!validAssemblyPartition(payload.partition)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!Array.isArray(payload.shards) || payload.shards.length === 0 || !payload.shards.every(validAssemblyShardRef)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const gatheredIds = new Set(payload.shards.map((item) => item.shard));
+  if (gatheredIds.size !== payload.shards.length) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  const partitionShards = payload.partition.shards;
+  const crossShardLinks = payload.partition.cross_shard_links || [];
+
+  const coverage = assemblyShardCoverage(partitionShards, payload.shards);
+  if (coverage.missing.length > 0 || coverage.unknown.length > 0) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT', missing_shards: coverage.missing, unknown_shards: coverage.unknown }, [
+      partitionFinding('ASSEMBLY_SHARD_SET_MISMATCH', true, coverage),
+    ]);
+  }
+
+  const gatheredByShard = new Map(payload.shards.map((item) => [item.shard, item]));
+  const shardContents = new Map();
+  for (const shard of partitionShards) {
+    const ref = gatheredByShard.get(shard.shard);
+    const rel = monorepo.normalizeRelative(ref.path);
+    let content;
+    if (rel) {
+      try {
+        content = JSON.parse(services.readFile(path.join(gitRoot, rel)));
+      } catch {
+        content = undefined;
+      }
+    }
+    if (content === undefined) {
+      return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT', shard: shard.shard }, [
+        partitionFinding('ASSEMBLY_SHARD_UNREADABLE', true, { shard: shard.shard, path: ref.path }),
+      ]);
+    }
+    shardContents.set(shard.shard, content);
+  }
+
+  const outcome = assembly.computeAssembly(partitionShards, shardContents);
+  if (!outcome.ok) {
+    if (outcome.code === 'CONCEPT_TARGET_COLLISION') {
+      return respond(request, 'blocked', { code: 'CONCEPT_TARGET_COLLISION', collisions: outcome.collisions },
+        outcome.collisions.map((collision) => partitionFinding('CONCEPT_TARGET_COLLISION', true, collision)));
+    }
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT', shard: outcome.shard }, [
+      partitionFinding(outcome.code, true, { shard: outcome.shard, ...outcome.detail }),
+    ]);
+  }
+
+  const links = assembly.resolveCrossShardLinks(crossShardLinks, outcome.concepts);
+  const findings = [
+    ...outcome.duplicates.map((duplicate) => partitionFinding('ASSEMBLY_DUPLICATE_CANDIDATE', false, duplicate)),
+    ...links.lost.map((link) => partitionFinding('MIGRATION_LINK_LOST', false, link)),
+    ...outcome.blockers.map((blocker) => partitionFinding('ASSEMBLY_SOURCE_BLOCKED', false, { path: blocker.path, reason: blocker.reason, shard: blocker.shard })),
+  ];
+
+  const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
+  const staged = outcome.concepts.map((item) => {
+    const file = path.join(stagingRoot, `${item.concept}.md`);
+    services.mkdir(path.dirname(file));
+    services.writeFile(file, item.rendered);
+    return { path: item.path, concept: item.concept, type: item.type, shard: item.shard, file: path.relative(gitRoot, file) };
+  });
+
+  return respond(request, 'ok', {
+    status: outcome.blockers.length > 0 ? 'partial' : 'complete',
+    publishable: outcome.blockers.length === 0,
+    staged,
+    references: outcome.references,
+    blockers: outcome.blockers,
+    duplicates: outcome.duplicates,
+    links,
+    staging_dir: path.relative(gitRoot, stagingRoot),
+  }, findings);
+}
+
 // Both routing operations admit first, then route the admitted data. redact() runs
 // on the admission half only; routing results carry authorized paths already.
 function admitAndRoute(request, services, router) {
@@ -1252,6 +1407,7 @@ function runActive(skill, request, services) {
     if (request.operation === 'discover') return executeDiscover(request, services);
     if (request.operation === 'migration-plan') return executeMigrationPlan(request, services);
     if (request.operation === 'partition') return executePartition(request, services);
+    if (request.operation === 'assemble') return executeAssemble(request, services);
     return unknownOperation(request);
   }
   if (skill === 'okf-review') {

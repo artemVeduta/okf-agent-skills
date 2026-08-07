@@ -26,11 +26,14 @@ const validation = require('./validation');
 // configurable directory-exclusion list may ship. This set is fixed, in code, not
 // configurable through any request payload, and used only to decide which
 // subtree a discovery scan walks -- it does not gate REACH, TRUST, ACCESS, or any
-// admission decision. The three names #142 calls "obvious": version-control
-// internals and vendored dependencies are never authored source documents, and
-// the OKF bundle itself must not be re-discovered as a candidate source for its
-// own migration.
-const EXCLUDED_DIR_NAMES = new Set(['.git', 'node_modules']);
+// admission decision. The names #142 calls "obvious": version-control internals
+// and vendored dependencies are never authored source documents, and the OKF
+// bundle itself must not be re-discovered as a candidate source for its own
+// migration. `.okf-staging` (#147) joins the same set for the same reason: the
+// assembler's own pre-publication staging area, written beside the bundle rather
+// than inside it, must not be re-discovered as source material by a later
+// `discover` call in the same or a rerun setup session.
+const EXCLUDED_DIR_NAMES = new Set(['.git', 'node_modules', '.okf-staging']);
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown']);
 const HTML_EXTENSIONS = new Set(['.html', '.htm']);

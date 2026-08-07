@@ -17,6 +17,7 @@ const requiredPayload = new Map([
   ['discover', ['cwd']],
   ['migration-plan', ['cwd']],
   ['partition', ['cwd']],
+  ['assemble', ['cwd']],
   ['resolve', ['cwd']],
   ['read', ['cwd', 'target']],
   ['search', ['cwd', 'query']],
@@ -94,6 +95,14 @@ function parseRequest(text, expectedSkill) {
   if (obj.operation === 'migration-plan') {
     if (!Array.isArray(obj.payload.sources)) {
       throw new Error('Missing payload.sources');
+    }
+  }
+  if (obj.operation === 'assemble') {
+    if (!isPlainObject(obj.payload.partition)) {
+      throw new Error('Missing payload.partition');
+    }
+    if (!Array.isArray(obj.payload.shards) || obj.payload.shards.length === 0) {
+      throw new Error('Missing payload.shards');
     }
   }
   if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');

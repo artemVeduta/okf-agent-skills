@@ -18,6 +18,7 @@ const routerRoutes = [
   ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
   ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
   ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'], ['partition', 'okf-setup'],
+  ['assemble', 'okf-setup'],
 ];
 
 function writeSkill(t, name, source, files = {}) {
@@ -205,7 +206,7 @@ function validSkill(name = 'okf-read') {
     'okf-setup': 'Bootstraps an OKF bundle when a user explicitly invokes setup.',
   };
   const dispatch = name === 'okf'
-    ? `\n## Dispatch\n\n${routerTable}\n| --- | --- |\n| \`read\` | \`okf-read\` |\n| \`write\` | \`okf-write\` |\n| \`lifecycle\` | \`okf-lifecycle\` |\n| \`review\` | \`okf-review\` |\n| \`init\` | \`okf-setup\` |\n| \`inspect\` | \`okf-setup\` |\n| \`repair\` | \`okf-setup\` |\n| \`plan\` | \`okf-setup\` |\n| \`aggregate\` | \`okf-setup\` |\n| \`report\` | \`okf-setup\` |\n| \`discover\` | \`okf-setup\` |\n| \`migration-plan\` | \`okf-setup\` |\n| \`partition\` | \`okf-setup\` |\n`
+    ? `\n## Dispatch\n\n${routerTable}\n| --- | --- |\n| \`read\` | \`okf-read\` |\n| \`write\` | \`okf-write\` |\n| \`lifecycle\` | \`okf-lifecycle\` |\n| \`review\` | \`okf-review\` |\n| \`init\` | \`okf-setup\` |\n| \`inspect\` | \`okf-setup\` |\n| \`repair\` | \`okf-setup\` |\n| \`plan\` | \`okf-setup\` |\n| \`aggregate\` | \`okf-setup\` |\n| \`report\` | \`okf-setup\` |\n| \`discover\` | \`okf-setup\` |\n| \`migration-plan\` | \`okf-setup\` |\n| \`partition\` | \`okf-setup\` |\n| \`assemble\` | \`okf-setup\` |\n`
     : '';
   return `---\nname: ${name}\ndescription: ${descriptions[name] || 'Reads bounded material when a task requires it.'}\n---\n# Skill\n${dispatch}`;
 }
