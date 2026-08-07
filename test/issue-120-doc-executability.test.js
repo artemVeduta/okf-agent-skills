@@ -14,7 +14,9 @@ const skills = fs.readdirSync(skillsRoot, { withFileTypes: true })
   .map((entry) => entry.name);
 
 // Per-operation payload fields come from protocol.js instead of being duplicated here.
-const TOP_LEVEL_FIELD_CODES = new Set(['TASK_KIND_NOT_WRITE_ELIGIBLE', 'INVALID_SCOPE', 'AUTOMATIC_MUTATION_BLOCKED']);
+// The third top-level field, `invocation`, has no code here: parseRequest refuses a
+// `sync` that omits it before the runtime runs, so runWrapper's exit-0 assertion catches it.
+const TOP_LEVEL_FIELD_CODES = new Set(['TASK_KIND_NOT_WRITE_ELIGIBLE', 'INVALID_SCOPE']);
 const FIXTURE_KEYS = new Set(['cwd', 'bundle', 'concept', 'target']);
 
 function skillDoc(name) {
