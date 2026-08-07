@@ -810,6 +810,14 @@ function parseReadText(text) {
   return { tree: parseYAML(extracted.frontmatter), body: extracted.body };
 }
 
+// #130/#131: `index.md`/`log.md` are reserved navigation at any hierarchy level,
+// never a concept -- the root `index.md`'s own `okf_version`/`project_mode`
+// declaration is the one exception `checkRoot`/`projectMode` already read
+// directly, not a general license for a reserved file to carry `type` or any
+// other concept-shaped frontmatter. A nested `index.md` doing so (the exact
+// dogfood defect #131 records for this repo's own `okf/releases/index.md`) is
+// as nonconforming as one that fails to parse at all, so it is folded into the
+// same `BUNDLE_FILES_NONCONFORMING` finding rather than inventing a second code.
 function parseReservedText(text) {
   const extracted = extractFrontmatter(text);
   if (extracted.missing) return;
@@ -819,7 +827,13 @@ function parseReservedText(text) {
     err.reason = err.message;
     throw err;
   }
-  parseYAML(extracted.frontmatter);
+  const tree = parseYAML(extracted.frontmatter);
+  if (tree && typeof tree === 'object' && !Array.isArray(tree) && Object.hasOwn(tree, 'type')) {
+    const err = new Error('reserved file carries concept frontmatter');
+    err.line = 0;
+    err.reason = err.message;
+    throw err;
+  }
 }
 
 function parseFinding(code, file, error) {
@@ -959,7 +973,15 @@ function validateRead(bundleRoot, services, options = {}) {
 
     const conceptFindings = [];
     const tree = parsed.tree;
-    if (typeof tree.type !== 'string' || tree.type === '') {
+    // Default (an already-published, tolerated bundle) checks only the one
+    // universal requirement, `type`. `options.strict` (#148: a staged, not-yet-
+    // published bundle) instead runs `checkConcept` -- the exact same
+    // conditional-obligation checks the write gate already enforces on a fresh
+    // concept -- because staged content is about to become a first-time write,
+    // not an already-accepted document upstream permits to have drifted.
+    if (options.strict) {
+      checkConcept(tree, entry.path, conceptFindings);
+    } else if (typeof tree.type !== 'string' || tree.type === '') {
       conceptFindings.push(blocker('TYPE_MISSING', 'okf', { path: entry.path }));
     }
 

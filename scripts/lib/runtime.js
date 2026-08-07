@@ -22,7 +22,7 @@ const routerOwners = new Map([
   ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
   ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
   ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'], ['partition', 'okf-setup'],
-  ['assemble', 'okf-setup'],
+  ['assemble', 'okf-setup'], ['migration-validate', 'okf-setup'],
 ]);
 
 // `inspect`, `repair`, `plan`, `aggregate`, `report`, `partition`, and `assemble` all
@@ -38,10 +38,12 @@ const routerOwners = new Map([
 // the caller supplies), never touching the bundle or the filesystem beyond resolving
 // `cwd`'s own Git root for the briefs it builds. `assemble` (#147) writes only the
 // staging area alongside the bundle, never the bundle itself, so it shares the same
-// bypass for the same reason. An automatic caller gets the same silence every other
+// bypass for the same reason. `migration-validate` (#148) only ever reads that same
+// staging area back, never the bundle itself either, so it bypasses for the identical
+// reason `assemble` does. An automatic caller gets the same silence every other
 // operation on an inactive bundle gets; only an explicit call after `init`/`repair`
 // have run reaches `discover`/`migration-plan`.
-const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report', 'partition', 'assemble']);
+const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report', 'partition', 'assemble', 'migration-validate']);
 
 const primaryEffects = new Map([
   ['create', 'concept-create'], ['revise', 'concept-revise'], ['format', 'format'],
@@ -1230,6 +1232,104 @@ function executeAssemble(request, services) {
   }, findings);
 }
 
+/*
+ * #148: the pre-publish validation gate for whatever `assemble` (#147) staged
+ * at `.okf-staging/<bundle>`, plus the completeness and semantic-fidelity
+ * disclosure #131 requires before that staged content may ever reach the real
+ * bundle. Three legs, each reused rather than reimplemented:
+ *
+ *   - structural/conformance and link integrity: `validation.validateRead`
+ *     itself, given `strict: true` (added by this same ticket) so every
+ *     staged concept is checked against `checkConcept` -- the identical
+ *     conditional-obligation checks (`sources[].resource`, `generated[].by`,
+ *     `Attested Computation` needing `runtime`, human-prefix) the write gate
+ *     already runs on a fresh concept, because staged content is exactly that:
+ *     about to become a first-time write, not an already-published document
+ *     upstream tolerates having drifted. The reserved-navigation rule (a
+ *     nested `index.md`/`log.md` must never carry concept frontmatter -- the
+ *     exact defect #131 records for this repo's own `okf/releases/index.md`)
+ *     is unconditional inside `validateRead` regardless of `strict`, so it is
+ *     caught here the same way an ordinary `okf-read validate` call would
+ *     catch it once the bundle is live. Broken links stay warnings, never
+ *     blockers, because #131 says upstream permits them.
+ *   - completeness: never a file-count comparison (#131: raw parity is not a
+ *     success measure, most visibly for `code-backed` filtering, where
+ *     code-recoverable material is deliberately never migrated). Instead,
+ *     `payload.plan` is exactly `migration-plan`'s own `data.plan` shape,
+ *     reused as-is via this same file's own `validPartitionPlan` (`partition`
+ *     already demands the identical shape for the identical reason: every
+ *     entry already carries its own intentional disposition and a non-empty
+ *     reason, or the whole payload is refused before anything is computed).
+ *     What that reuse cannot see on its own is a source that fell off the
+ *     plan entirely -- an entry simply never recorded for it -- so
+ *     `payload.selected` (the full set `discover` actually found this run)
+ *     is cross-checked against `plan.entries`' own paths independently; a
+ *     `skip`-disposition entry with a real reason (a `code-backed` filter,
+ *     for example) satisfies completeness exactly as intentionally as a
+ *     `migrate` one, while a `selected` path with no entry at all is the one
+ *     thing this leg refuses to let pass unnoticed.
+ *   - semantic fidelity: `payload.semantic_review` is `report`'s own shape
+ *     and is mandatory here for the same reason it is mandatory there --
+ *     never inferred true from a clean structural pass. This is deliberately
+ *     the loudest rule in the whole operation: even a bundle with zero
+ *     structural findings and zero missing dispositions still reports
+ *     `semantic_fidelity: { assessed: false }`, with its own warning finding,
+ *     unless a human review was actually declared. This operation never
+ *     recomputes `report`'s own summary statistics; a caller who wants those
+ *     still calls `report` itself, separately, once this gate is satisfied.
+ */
+function validSelectedPath(item) {
+  return typeof item === 'string' && item !== '';
+}
+
+function executeMigrationValidate(request, services) {
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const selected = payload.selected === undefined ? [] : payload.selected;
+  if (!Array.isArray(selected) || !selected.every(validSelectedPath)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!validPartitionPlan(payload.plan)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!validSemanticReview(payload.semantic_review)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  const disposed = new Set(payload.plan.entries.map((item) => item.path));
+  const missingDisposition = [...new Set(selected.filter((item) => !disposed.has(item)))].sort();
+  const findings = missingDisposition.map((item) => suiteFinding('SOURCE_DISPOSITION_MISSING', { path: item }));
+
+  // A migration with nothing to `migrate`/`residue` never gives `assemble` a
+  // reason to create the staging root at all (it only ever `mkdir`s a staged
+  // concept's own directory), so an absent staging directory is an empty,
+  // not a broken, bundle -- never the `realpath` failure `validateRead` would
+  // otherwise throw on a path that does not exist.
+  const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
+  const structural = services.exists(stagingRoot)
+    ? validation.validateRead(stagingRoot, services, { strict: true, today: payload.today })
+    : { data: { concepts: [] }, findings: [] };
+  findings.push(...structural.findings);
+
+  const assessed = payload.semantic_review.performed === true;
+  if (!assessed) findings.push(reportFinding('semantic_fidelity_not_assessed', 'warning', { scope: 'bundle' }));
+
+  const publishable = !findings.some((item) => item.blocks);
+  return respond(request, 'ok', {
+    status: publishable ? 'complete' : 'partial',
+    publishable,
+    missing_disposition: missingDisposition,
+    concepts_checked: structural.data.concepts.map((item) => item.path),
+    semantic_fidelity: { assessed },
+  }, findings);
+}
+
 // Both routing operations admit first, then route the admitted data. redact() runs
 // on the admission half only; routing results carry authorized paths already.
 function admitAndRoute(request, services, router) {
@@ -1408,6 +1508,7 @@ function runActive(skill, request, services) {
     if (request.operation === 'migration-plan') return executeMigrationPlan(request, services);
     if (request.operation === 'partition') return executePartition(request, services);
     if (request.operation === 'assemble') return executeAssemble(request, services);
+    if (request.operation === 'migration-validate') return executeMigrationValidate(request, services);
     return unknownOperation(request);
   }
   if (skill === 'okf-review') {
