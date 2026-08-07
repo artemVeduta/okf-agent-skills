@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OKF Agent Skills v0.1.0 - Architecture</title>
+<style>
+:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#c9d1d9;--muted:#8b949e;--accent:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;--purple:#a371f7;--orange:#db6d28;--cyan:#39d6d4;--gap-red:#ff6b6b}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:13px;line-height:1.5;padding:20px}
+h1{font-size:22px;color:var(--accent);margin-bottom:4px}
+h2{font-size:16px;color:var(--accent);margin:28px 0 12px;border-bottom:1px solid var(--border);padding-bottom:6px}
+h3{font-size:13px;color:var(--purple);margin:16px 0 8px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:20px}
+.leg{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;padding:12px;background:var(--surface);border-radius:8px;border:1px solid var(--border)}
+.leg-i{display:flex;align-items:center;gap:6px;font-size:12px}
+.leg-s{width:14px;height:14px;border-radius:3px;flex-shrink:0}
+.leg-s.gap{background:var(--gap-red)}
+.leg-s.rt{background:var(--green)}
+.leg-s.sp{background:var(--accent)}
+.leg-s.sk{background:var(--purple)}
+.leg-s.ad{background:var(--cyan)}
+.leg-s.te{background:var(--yellow)}
+.leg-s.df{border:2px dashed var(--orange);background:transparent}
+.dg{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:20px;overflow-x:auto}
+.dl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px}
+.bx{border-radius:6px;padding:10px 14px;font-size:12px;position:relative;min-width:120px}
+.bt{font-weight:600;font-size:13px;margin-bottom:4px}
+.bd{color:var(--muted);font-size:11px}
+.bx-gap{border:2px solid var(--gap-red);background:rgba(255,107,107,0.08)}
+.bx-gap .bt{color:var(--gap-red)}
+.bx-rt{border:1px solid var(--green);background:rgba(63,185,80,0.06)}
+.bx-sp{border:1px solid var(--accent);background:rgba(88,166,255,0.06)}
+.bx-sk{border:1px solid var(--purple);background:rgba(163,113,247,0.06)}
+.bx-ad{border:1px solid var(--cyan);background:rgba(57,214,212,0.06)}
+.bx-te{border:1px solid var(--yellow);background:rgba(210,153,34,0.06)}
+.bx-df{border:2px dashed var(--orange);background:rgba(219,109,40,0.05)}
+.pipe{display:flex;align-items:center;gap:0;flex-wrap:wrap;justify-content:center}
+.ps{border-radius:6px;padding:8px 12px;font-size:11px;text-align:center;min-width:80px;max-width:140px}
+.ps.act{border:1px solid var(--green);background:rgba(63,185,80,0.08)}
+.ps.mis{border:2px dashed var(--gap-red);background:rgba(255,107,107,0.08)}
+.ps .sl{font-weight:600;font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.ps .sn{font-weight:600;font-size:12px}
+.ps .sd{font-size:10px;color:var(--muted)}
+.ps .sd.gap{color:var(--gap-red)}
+.arw{color:var(--muted);font-size:14px;font-weight:bold;flex-shrink:0;margin:0 4px}
+.ard{text-align:center;color:var(--muted);font-size:14px;font-weight:bold}
+.lr{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.ll{width:100px;flex-shrink:0;font-size:11px;font-weight:600;color:var(--muted);text-align:right}
+.lc{flex:1;display:flex;gap:8px;flex-wrap:wrap}
+.gr{display:grid;gap:8px}
+.gr2{grid-template-columns:repeat(2,1fr)}
+.gr3{grid-template-columns:repeat(3,1fr)}
+.gr4{grid-template-columns:repeat(4,1fr)}
+.gr5{grid-template-columns:repeat(5,1fr)}
+.gc{background:rgba(255,107,107,0.05);border:1px solid rgba(255,107,107,0.2);border-radius:6px;padding:10px 12px}
+.gc .gi{font-size:10px;color:var(--gap-red);font-weight:600;margin-bottom:2px}
+.gc .gt{font-size:12px;font-weight:600;color:var(--text)}
+.gc .gd{font-size:11px;color:var(--muted);margin-top:3px}
+.bdg{display:inline-block;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:600}
+.bdg-gap{background:var(--gap-red);color:#fff}
+.bdg-df{border:1px solid var(--orange);color:var(--orange)}
+.bdg-dn{background:var(--green);color:#fff}
+.bdg-pr{background:transparent;color:var(--yellow);border:1px solid var(--yellow)}
+.sta{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.st{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:90px}
+.sv{font-size:22px;font-weight:700}
+.sl{font-size:11px;color:var(--muted)}
+hr{border:none;border-top:1px solid var(--border);margin:14px 0}
+.heat{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:16px}
+.he{flex:1;min-width:180px;padding:14px;border-radius:8px;border:1px solid var(--border)}
+.he.hi{border-color:#ff4444;background:rgba(255,68,68,0.03)}
+.he.med{border-color:#d29922;background:rgba(210,153,34,0.03)}
+.he.low{border-color:var(--muted);background:transparent}
+.heh{font-size:13px;font-weight:600;margin-bottom:4px}
+.hed{font-size:11px;color:var(--muted)}
+.he .hst{font-size:9px;color:var(--orange);text-transform:uppercase;letter-spacing:.04em}
+.vc{display:flex;flex-direction:column;align-items:center;gap:6px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase}
+.tgap td{color:var(--gap-red)}
+.tgap td:first-child{font-weight:600}
+.small{font-size:10px;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<h1>OKF Agent Skills v0.1.0 - Architecture</h1>
+<p class="sub">Full Project Lifecycle &bull; Full Developer Lifecycle &bull; Gap Analysis</p>
+
+<div class="sta">
+<div class="st"><div class="sv" style="color:var(--green)">260+</div><div class="sl">Tests (deterministic)</div></div>
+<div class="st"><div class="sv" style="color:var(--accent)">15</div><div class="sl">Runtime modules</div></div>
+<div class="st"><div class="sv" style="color:var(--purple)">5</div><div class="sl">Skills</div></div>
+<div class="st"><div class="sv" style="color:var(--cyan)">3</div><div class="sl">Harness adapters</div></div>
+<div class="st"><div class="sv" style="color:var(--gap-red)">28</div><div class="sl">Identified gaps</div></div>
+<div class="st"><div class="sv" style="color:var(--orange)">12</div><div class="sl">Deferred items</div></div>
+</div>
+
+<div class="leg">
+<div class="leg-i"><div class="leg-s rt"></div>Runtime (scripts/lib/)</div>
+<div class="leg-i"><div class="leg-s sp"></div>Spec (docs/spec/)</div>
+<div class="leg-i"><div class="leg-s sk"></div>Skills (skills/)</div>
+<div class="leg-i"><div class="leg-s ad"></div>Adapters (packages/)</div>
+<div class="leg-i"><div class="leg-s te"></div>Tests (test/)</div>
+<div class="leg-i"><div class="leg-s gap"></div>Gap / Unimplemented</div>
+<div class="leg-i"><div class="leg-s df"></div>Deferred (design retained)</div>
+</div>
+
+<!-- ====== PROJECT LIFECYCLE ====== -->
+<h2>1. Project Lifecycle - End to End</h2>
+<div class="dg">
+<div class="dl">From specification to continuous operation</div>
+<div class="pipe">
+<div class="ps act"><div class="sl">Phase 1</div><div class="sn">Specify</div><div class="sd">534 user stories<br>normative rules<br>issues cited</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Phase 2</div><div class="sn">Resolve Open Items</div><div class="sd">D5-D10 decisions<br>26 rows closed<br>0 rows Open</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Phase 3</div><div class="sn">Implement</div><div class="sd">15 runtime modules<br>5 wrapper scripts<br>0 dependencies</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Phase 4</div><div class="sn">Test</div><div class="sd">node --test<br>260+ deterministic<br>one contract seam</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Phase 5</div><div class="sn">Package</div><div class="sd">3 adapter packages<br>npm + marketplaces<br>Codex/CC/OpenCode</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Phase 6</div><div class="sn">Release</div><div class="sd">v* tag triggers<br>test + npm publish</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Phase 7</div><div class="sn">Install & Activate</div><div class="sd">User installs adapter<br>creates .okf-active<br>creates bundle root</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Phase 8</div><div class="sn">Operate</div><div class="sd">SessionStart &#8594; orient<br>skills on-demand<br>write pipeline gates</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps mis"><div class="sl">Phase 9</div><div class="sn"><span class="bdg bdg-gap">GAP</span> Monitor</div><div class="sd gap">No observability<br>No telemetry<br>No usage stats</div></div>
+</div>
+<div style="margin-top:16px"><div class="ps mis" style="display:inline-block"><div class="sl">Missing Entry</div><div class="sn"><span class="bdg bdg-gap">GAP</span> No Bootstrap</div><div class="sd gap">D5 deferred: user must hand-author<br>index.md with okf_version: "0.2"<br>No guided `init` command</div></div></div>
+</div>
+
+<!-- ====== LAYER DIAGRAM ====== -->
+<h2>2. System Architecture - Layer Diagram</h2>
+<div class="dg">
+<div class="dl">Layered architecture (outer &#8594; inner)</div>
+<div style="display:flex;flex-direction:column;gap:6px">
+
+<div class="lr">
+<div class="ll">Harness<br>Adapters</div>
+<div class="lc">
+<div class="bx bx-ad"><div class="bt">Claude Code</div><div class="bd">manifest.json<br>hooks/hooks.json<br>.claude-plugin/</div></div>
+<div class="bx bx-ad"><div class="bt">Codex</div><div class="bd">packages/codex/<br>SessionStart + Subagent<br>.agents/plugins/</div></div>
+<div class="bx bx-ad"><div class="bt">OpenCode</div><div class="bd">packages/opencode/<br>ESM plugin<br>npm: @artemveduta/...</div></div>
+<div class="bx bx-gap"><div class="bt"><span class="bdg bdg-gap">GAP</span> MCP Server</div><div class="bd">No MCP transport<br>for non-embedded<br>harnesses</div></div>
+</div>
+</div>
+
+<div class="lr">
+<div class="ll">Adapter<br>Bridge</div>
+<div class="lc">
+<div class="bx bx-rt"><div class="bt">adapter-hook.js</div><div class="bd">SessionStart translator<br>Derives logical cause<br>Always exits 0</div></div>
+<div class="bx bx-rt"><div class="bt">adapter-bridge.js</div><div class="bd">Spawns okf-read/write<br>stdio: inherit</div></div>
+<div class="bx bx-rt"><div class="bt">adapters.js</div><div class="bd">At-most-once claim<br>CAS pre-claim<br>Ledger bounded 256</div></div>
+<div class="bx bx-rt"><div class="bt">orientation.js</div><div class="bd">Seam table per harness<br>deriveKey composite<br>orient() entry</div></div>
+<div class="bx bx-gap"><div class="bt"><span class="bdg bdg-gap">RACE</span> Hook Racing</div><div class="bd">Rapid session restart<br>No claim dedup across<br>parallel processes</div></div>
+</div>
+</div>
+
+<div class="lr">
+<div class="ll">Wrapper<br>Scripts<br><span class="small">CONTRACT SEAM</span></div>
+<div class="lc">
+<div class="bx bx-rt"><div class="bt">wrapper.js</div><div class="bd">stdin &#8594; parse &#8594; run &#8594; stdout<br>Protocol JSON<br>Exit codes 0/64/70</div></div>
+<div class="bx bx-rt"><div class="bt">okf.js</div><div class="bd">Router<br>&#8594; 4 sub-skills</div></div>
+<div class="bx bx-rt"><div class="bt">okf-read.js</div><div class="bd">Read wrapper</div></div>
+<div class="bx bx-rt"><div class="bt">okf-write.js</div><div class="bd">Write wrapper</div></div>
+<div class="bx bx-rt"><div class="bt">okf-lifecycle.js</div><div class="bd">Lifecycle wrapper</div></div>
+<div class="bx bx-rt"><div class="bt">okf-review.js</div><div class="bd">Review wrapper</div></div>
+<div class="bx bx-rt"><div class="bt">okf-delegate.js</div><div class="bd">Delegation dispatch<br>Validates brief<br>Spawns worker</div></div>
+</div>
+</div>
+
+<div class="lr">
+<div class="ll">Runtime<br>Library<br><span class="small">scripts/lib/</span></div>
+<div class="lc">
+<div class="bx bx-rt"><div class="bt">protocol.js</div><div class="bd">Parse/serialize<br>Request/Response<br>9 fixed fields</div></div>
+<div class="bx bx-rt"><div class="bt">services.js</div><div class="bd">FS injection point<br>9 methods<br>Test substitutability</div></div>
+<div class="bx bx-rt"><div class="bt">runtime.js</div><div class="bd">Core dispatcher<br>executeBounded pipeline<br>routerOwners map</div></div>
+<div class="bx bx-rt"><div class="bt">admission.js</div><div class="bd">Gate ladder<br>REACH &#8594; PRESENCE<br>&#8594; {TRUST,ACCESS}</div></div>
+<div class="bx bx-rt"><div class="bt">reach.js</div><div class="bd">Containment gate<br>Symlink resolution<br>7 refusal codes</div></div>
+</div>
+</div>
+
+<div class="lr">
+<div class="ll">&nbsp;</div>
+<div class="lc">
+<div class="bx bx-rt"><div class="bt">presence.js</div><div class="bd">Bundle presence<br>index.md check<br>Git root check</div></div>
+<div class="bx bx-rt"><div class="bt">trust.js</div><div class="bd">Trust storage<br>okf-instance UUID<br>from .git/commondir</div></div>
+<div class="bx bx-rt"><div class="bt">routing.js</div><div class="bd">Read/write routing<br>Exact resolution<br>Multi-match diag</div></div>
+<div class="bx bx-rt"><div class="bt">navigation.js</div><div class="bd">LLM-guided nav<br>read/search/enumerate<br>Support ceiling</div></div>
+<div class="bx bx-rt"><div class="bt">validation.js</div><div class="bd">YAML subset parser<br>Pre/post-write<br>Trust tier eval</div></div>
+</div>
+</div>
+
+<div class="lr">
+<div class="ll">&nbsp;</div>
+<div class="lc">
+<div class="bx bx-rt"><div class="bt">lifecycle.js</div><div class="bd">Sync plan<br>abstained/revise<br>/create</div></div>
+<div class="bx bx-rt"><div class="bt">manifest.js</div><div class="bd">.okf-workspace.json<br>Schema v1<br>UUIDv4 validation</div></div>
+<div class="bx bx-rt"><div class="bt">delegation.js</div><div class="bd">Brief validation<br>Receipt construction<br>14-field protocol</div></div>
+<div class="bx bx-gap"><div class="bt"><span class="bdg bdg-gap">GAP</span> Static Trust</div><div class="bd">UUID only<br>No rotation<br>No revocation</div></div>
+<div class="bx bx-gap"><div class="bt"><span class="bdg bdg-gap">GAP</span> No Concurrency</div><div class="bd">No locking<br>Multiple sessions<br>content on bundle</div></div>
+</div>
+</div>
+
+<div class="lr">
+<div class="ll">Skills<br>Markdown</div>
+<div class="lc">
+<div class="bx bx-sk"><div class="bt">okf/SKILL.md</div><div class="bd">Router<br>Operation &#8594; skill<br>No second auth rule</div></div>
+<div class="bx bx-sk"><div class="bt">okf-read/SKILL.md</div><div class="bd">enumerate, validate<br>resolve, read, search<br>orient, admit</div></div>
+<div class="bx bx-sk"><div class="bt">okf-write/SKILL.md</div><div class="bd">create, revise, format<br>relationship<br>machine-verify</div></div>
+<div class="bx bx-sk"><div class="bt">okf-lifecycle/SKILL.md</div><div class="bd">sync only<br>Incremental or full<br>reconciliation</div></div>
+<div class="bx bx-sk"><div class="bt">okf-review/SKILL.md</div><div class="bd">Review trust tiers<br>Report, never approve<br>6 atomic effects</div></div>
+</div>
+</div>
+
+<div class="lr">
+<div class="ll">Spec<br><span class="small">docs/spec/</span></div>
+<div class="lc">
+<div class="bx bx-sp"><div class="bt">v0.1.0.md</div><div class="bd">Master spec<br>534 user stories<br>Open-items table</div></div>
+<div class="bx bx-sp"><div class="bt">completion.md</div><div class="bd">D5-D10 decisions<br>Skill inventory<br>Issue #91 narrowing</div></div>
+</div>
+</div>
+
+<div class="lr">
+<div class="ll">Agents<br><span class="small">agents/</span></div>
+<div class="lc">
+<div class="bx bx-sk"><div class="bt">okf-reader.md</div><div class="bd">Delegated read agent<br>Read/Grep/Glob<br>Never mutates</div></div>
+<div class="bx bx-sk"><div class="bt">okf-writer.md</div><div class="bd">Delegated write agent<br>Preflight recheck<br>14-field receipt</div></div>
+<div class="bx bx-gap"><div class="bt"><span class="bdg bdg-gap">GAP</span> Unreachable</div><div class="bd">Issue #91: delegation<br>path unreachable<br>after install</div></div>
+</div>
+</div>
+
+<div class="lr">
+<div class="ll">Tests<br><span class="small">test/</span></div>
+<div class="lc">
+<div class="bx bx-te"><div class="bt">22+ test files</div><div class="bd">node --test<br>Issue-numbered files<br>Admission, nav, write-gate</div></div>
+<div class="bx bx-te"><div class="bt">test-support/</div><div class="bd">snapshot.js<br>Fixture builders<br>spawnWrapper helper</div></div>
+<div class="bx bx-gap"><div class="bt"><span class="bdg bdg-gap">GAP</span> No Spec Trace</div><div class="bd">No automated trace<br>from spec line to<br>test file/line</div></div>
+</div>
+</div>
+
+<div class="lr">
+<div class="ll">Eval<br><span class="small">eval/</span></div>
+<div class="lc">
+<div class="bx" style="border:1px solid var(--pink);background:rgba(234,74,170,0.05)"><div class="bt">Flue-based eval</div><div class="bd">Non-gating<br>Only dependency in repo<br>Live model results</div></div>
+<div class="bx bx-gap"><div class="bt"><span class="bdg bdg-gap">GAP</span> No Perf Bench</div><div class="bd">No benchmark suite<br>No latency profiles<br>No scale testing</div></div>
+</div>
+</div>
+
+</div>
+</div>
+
+<!-- ====== SKILL SYSTEM ====== -->
+<h2>3. Skill System - Router + Leaf Skills</h2>
+<div class="dg">
+<div class="dl">Skill dispatch and operation ownership</div>
+<div style="display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;margin-bottom:20px">
+<div class="vc">
+<div class="bx bx-sk" style="min-width:180px"><div class="bt">okf (Router)</div><div class="bd">Operation &#8594; skill dispatch<br>No reach clause<br>No second auth rule</div></div>
+<div class="ard">&#8595;</div>
+</div>
+<div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
+<div class="vc">
+<div class="bx bx-sk" style="min-width:160px"><div class="bt">okf-read</div><div class="bd">Read-only<br>7 operations<br>1 atomic effect</div></div>
+</div>
+<div class="vc">
+<div class="bx bx-sk" style="min-width:160px"><div class="bt">okf-write</div><div class="bd">Bounded mutation<br>5 operations<br>Multiple effects</div></div>
+</div>
+<div class="vc">
+<div class="bx bx-sk" style="min-width:160px"><div class="bt">okf-lifecycle</div><div class="bd">Sync only<br>1 operation<br>Explicit invocation</div></div>
+</div>
+<div class="vc">
+<div class="bx bx-sk" style="min-width:160px"><div class="bt">okf-review</div><div class="bd">Trust report<br>1 operation<br>6 atomic effects</div></div>
+</div>
+</div>
+</div>
+
+<h3>Router dispatch table</h3>
+<table>
+<tr><th>Operation</th><th>Skill</th><th>Invocation</th><th>Atomic effect</th></tr>
+<tr><td>enumerate, validate, resolve, read, search, orient</td><td>okf-read</td><td>automatic / explicit</td><td>Read, validate, read-only analysis</td></tr>
+<tr><td>create, revise, format, relationship, machine-verify</td><td>okf-write</td><td>automatic / explicit</td><td>Bounded write (primary + derived)</td></tr>
+<tr><td>sync</td><td>okf-lifecycle</td><td>explicit only</td><td>Standalone broad rebuild</td></tr>
+<tr><td>review</td><td>okf-review</td><td>explicit only</td><td>Human verification display</td></tr>
+<tr class="tgap"><td>init</td><td>-</td><td>-</td><td><span class="bdg bdg-gap">GAP</span></td></tr>
+<tr class="tgap"><td>migrate</td><td>-</td><td>-</td><td><span class="bdg bdg-gap">GAP</span></td></tr>
+<tr class="tgap"><td>compact</td><td>-</td><td>-</td><td><span class="bdg bdg-gap">GAP</span></td></tr>
+</table>
+</div>
+
+<!-- ====== ADMISSION GATE LADDER ====== -->
+<h2>4. Admission Gate Ladder</h2>
+<div class="dg">
+<div class="dl">REACH &#8594; PRESENCE &#8594; {TRUST, ACCESS}</div>
+<div class="pipe" style="margin-bottom:16px">
+<div class="ps act"><div class="sl">Gate 1</div><div class="sn">REACH</div><div class="sd">CWD in workspace?<br>Target contained?<br>Symlink OK?<br>7 refusal codes</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Gate 2</div><div class="sn">PRESENCE</div><div class="sd">Bundle declared?<br>index.md exists?<br>Git root for repo?</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Gate 3</div><div class="sn">TRUST</div><div class="sd">okf-instance UUID<br>from .git/commondir<br>Static, no rotation</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Gate 4</div><div class="sn">ACCESS</div><div class="sd">Read-only bundle?<br>Ownership check<br>Project mode</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Gate 5</div><div class="sn">ADMIT</div><div class="sd">Complete/incomplete<br>bundle classification<br>Redact candidate</div></div>
+</div>
+<div style="display:flex;gap:12px">
+<div class="bx bx-gap" style="flex:1"><div class="bt"><span class="bdg bdg-gap">GAP</span> Trust Is Static</div><div class="bd">UUID from Git common dir. No trust rotation, no multi-party trust, no trust revocation. The trust model can only say "this is the same repo instance" - it cannot express "repo X trusts repo Y" or "trust was revoked".</div></div>
+<div class="bx bx-gap" style="flex:1"><div class="bt"><span class="bdg bdg-gap">GAP</span> No Cross-Repo Safety</div><div class="bd">Federated workspace allows multiple repos but cross-repo write safety is unspecified. A write in repo A could reference concepts in repo B without safety guarantees.</div></div>
+</div>
+</div>
+
+<!-- ====== WRITE PIPELINE ====== -->
+<h2>5. Write Pipeline - executeBounded</h2>
+<div class="dg">
+<div class="dl">Bounded write pipeline gate sequence</div>
+<div class="pipe">
+<div class="ps act"><div class="sl">Step 1</div><div class="sn">Effect Validation</div><div class="sd">Primary effects<br>Declared vs owned</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Step 2</div><div class="sn">Task Kind Check</div><div class="sd">feature work, fix<br>research eligible<br>bug, chore not</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Step 3</div><div class="sn">Scope Validation</div><div class="sd">Scope declared?<br>Conflict with<br>read-only effect?</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Step 4</div><div class="sn">Ownership</div><div class="sd">Does this session<br>own the target?</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Step 5</div><div class="sn">Admission</div><div class="sd">REACH &#8594; PRESENCE<br>&#8594; TRUST &#8594; ACCESS</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Step 6</div><div class="sn">Project Mode</div><div class="sd">code-backed vs<br>knowledge-only</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Step 7</div><div class="sn">Evidence</div><div class="sd">Navigation evidence<br>Support context<br>must be present</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Step 8</div><div class="sn">Pre-Write</div><div class="sd">YAML parse<br>Content validate<br>Link consistency</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Step 9</div><div class="sn">Publish</div><div class="sd">Atomic write-via-temp<br>Target-changed check<br>rename()</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Step 10</div><div class="sn">Post-Write</div><div class="sd">Re-read saved file<br>Semantic round-trip<br>Validate output</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Step 11</div><div class="sn">Derivatives</div><div class="sd">Index maintenance<br>Log append</div></div>
+</div>
+
+<div style="display:flex;gap:12px;margin-top:16px">
+<div class="bx bx-gap" style="flex:1"><div class="bt"><span class="bdg bdg-gap">GAP</span> No Rollback</div><div class="bd">Post-write validation can fail but there is no undo/rollback mechanism. The publish step is atomic (write-via-temp + rename) but the semantic state after a failed post-write is unrecoverable without git.</div></div>
+<div class="bx bx-gap" style="flex:1"><div class="bt"><span class="bdg bdg-gap">GAP</span> Derivative Maintenance</div><div class="bd">Index update and log append are marked as derivedEffects but the actual implementation of auto-maintained directory indices is unclear. What triggers an index rebuild?</div></div>
+<div class="bx bx-gap" style="flex:1"><div class="bt"><span class="bdg bdg-gap">GAP</span> No Search Index</div><div class="bd">search() reads files on every call. No pre-built search index. At scale (500 files ceiling) this means O(n) full scan per search query.</div></div>
+</div>
+</div>
+
+<!-- ====== ADAPTER CHAIN ====== -->
+<h2>6. Adapter Chain - SessionStart Flow</h2>
+<div class="dg">
+<div class="dl">How a harness session starts OKF orientation</div>
+<div class="pipe" style="margin-bottom:16px">
+<div class="ps act"><div class="sl">Harness</div><div class="sn">Session Start</div><div class="sd">startup, resume<br>clear, compact<br>fork</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Hook</div><div class="sn">hooks.json fires</div><div class="sd">node adapter-hook.js<br>claude-code<br>&lt;manifest&gt;</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Hook Script</div><div class="sn">Derive Cause</div><div class="sd">Logical cause from<br>native event<br>Composite key</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Adapter</div><div class="sn">Pre-Claim</div><div class="sd">CAS to .okf-occurrences<br>Prevent replay<br>Bounded 256 entries</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Adapter</div><div class="sn">Dispatch</div><div class="sd">Spawn okf-read<br>orient operation<br>via adapter-bridge</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Runtime</div><div class="sn">Orient</div><div class="sd">Activation check<br>Admission compute<br>Result returned</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Harness</div><div class="sn">Present</div><div class="sd">Result shown<br>in session context<br>Exit code 0 always</div></div>
+</div>
+<div style="display:flex;gap:12px">
+<div class="bx bx-gap" style="flex:1"><div class="bt"><span class="bdg bdg-gap">RACE</span> Parallel Sessions</div><div class="bd">Two rapid session restarts may race on .okf-occurrences.json. The CAS is file-level (JSON read-modify-write), not atomic, since there is no file locking.</div></div>
+<div class="bx bx-gap" style="flex:1"><div class="bt"><span class="bdg bdg-gap">GAP</span> OpenCode Permissions</div><div class="bd">OpenCode adapter config denies all 5 skills by default. User must hand-edit config.json for each skill. No guided permission setup wizard.</div></div>
+</div>
+</div>
+
+<!-- ====== DELEGATION FLOW ====== -->
+<h2>7. Delegation Flow</h2>
+<div class="dg">
+<div class="dl">Bounded delegation via brief validation and agent dispatch</div>
+<div class="pipe" style="margin-bottom:16px">
+<div class="ps act"><div class="sl">Main Session</div><div class="sn">Craft Brief</div><div class="sd">14-field JSON<br>role, settings<br>scope, changes</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">okf-delegate.js</div><div class="sn">Validate Brief</div><div class="sd">Required fields<br>Role check<br>Effect/scope conflict</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">okf-delegate.js</div><div class="sn">Dispatch</div><div class="sd">spawnSync wrapper<br>read or write<br>stdin JSON</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">Agent</div><div class="sn">Execute</div><div class="sd">okf-reader: read<br>okf-writer: write<br>+ preflight</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">okf-delegate.js</div><div class="sn">Receipt</div><div class="sd">okf-delegation/1<br>14-field receipt<br>status one of 5/6</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps mis"><div class="sl">Blocked</div><div class="sn"><span class="bdg bdg-gap">GAP</span> Unreachable</div><div class="sd gap">Issue #91:<br>Delegation path<br>not reachable<br>after install</div></div>
+</div>
+</div>
+
+<!-- ====== GAP HEAT MAP ====== -->
+<h2>8. Gap Analysis - Severity Heat Map</h2>
+<div class="dg">
+<div class="dl">All identified gaps by severity</div>
+
+<div class="heat">
+<div class="he hi">
+<div class="heh" style="color:var(--gap-red)">HIGH - Runtime Safety</div>
+<div class="hed">Gaps that may cause data loss or incorrect behavior</div>
+<div style="margin-top:10px">
+<div class="gc" style="margin-bottom:4px"><div class="gt">G1: No rollback/recovery</div><div class="gd">Failed post-write leaves unrecoverable state</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G2: No concurrency handling</div><div class="gd">Multiple sessions compete on same bundle files</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G3: Hook race condition</div><div class="gd">Rapid restart may replay CAS claims</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G4: No cross-repo safety</div><div class="gd">Federated writes across repos unguarded</div></div>
+</div>
+</div>
+
+<div class="he med">
+<div class="heh" style="color:var(--yellow)">MEDIUM - Feature Completeness</div>
+<div class="hed">Features needed for complete workflow</div>
+<div style="margin-top:10px">
+<div class="gc" style="margin-bottom:4px"><div class="gt">G5: No bootstrap (init)</div><div class="gd">User must hand-author bundle root</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G6: No migrate operation</div><div class="gd">Migration docs exist but no runtime</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G7: No compact operation</div><div class="gd">Dedup and merge indices not available</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G8: Trust model static</div><div class="gd">UUID only, no rotation/multi-party</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G9: No incremental tracking</div><div class="gd">Lifecycle cannot detect what changed</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G10: No auto-discovery</div><div class="gd">Bundles must be hand-declared</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G11: Delegation unreachable</div><div class="gd">Issue #91: path blocked after install</div></div>
+</div>
+</div>
+
+<div class="he low">
+<div class="heh" style="color:var(--muted)">LOW - Ecosystem / Polish</div>
+<div class="hed">Nice-to-have improvements</div>
+<div style="margin-top:10px">
+<div class="gc" style="margin-bottom:4px"><div class="gt">G12: No monitoring/telemetry</div><div class="gd">No usage stats or health signals</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G13: No structured spec-to-test trace</div><div class="gd">Cannot map spec line to test</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G14: No search index</div><div class="gd">O(n) scan per search query</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G15: No performance benchmarks</div><div class="gd">Support ceiling uncalibrated</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G16: No MCP server</div><div class="gd">Non-embedded harness unreachable</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G17: OpenCode perm manual</div><div class="gd">User hand-edits config.json</div></div>
+<div class="gc" style="margin-bottom:4px"><div class="gt">G18: No link repair</div><div class="gd">Link consistency is validation-only</div></div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- ====== DETAILED GAP TABLE ====== -->
+<h2>9. All Gaps - Detailed Register</h2>
+<div class="dg">
+<div class="dl">Complete gap inventory with source and impact</div>
+<table>
+<tr><th>ID</th><th>Gap</th><th>Source</th><th>Location</th><th>Impact</th></tr>
+<tr class="tgap"><td>G1</td><td>No rollback/recovery after failed post-write</td><td>Spec deferred</td><td>CONTEXT.md:626-674</td><td>Data loss risk on write failure</td></tr>
+<tr class="tgap"><td>G2</td><td>No concurrency control (multiple sessions)</td><td>Missing impl</td><td>runtime.js: executeBounded</td><td>File corruption on parallel writes</td></tr>
+<tr class="tgap"><td>G3</td><td>Hook race on .okf-occurrences.json</td><td>Missing impl</td><td>adapters.js: preClaim()</td><td>Replay of orientation claims</td></tr>
+<tr class="tgap"><td>G4</td><td>No cross-repo write safety guarantees</td><td>Spec open</td><td>federated-write-impact.md</td><td>Cross-repo corruption possible</td></tr>
+<tr class="tgap"><td>G5</td><td>No bootstrap/init for new bundles</td><td>D5 deferred</td><td>completion.md:77-82</td><td>Manual setup required</td></tr>
+<tr class="tgap"><td>G6</td><td>No migrate operation</td><td>D5 deferred</td><td>lifecycle SKILL.md</td><td>No format upgrade path</td></tr>
+<tr class="tgap"><td>G7</td><td>No compact (dedup/merge indices)</td><td>Deferred</td><td>lifecycle SKILL.md</td><td>Indices grow unbounded</td></tr>
+<tr class="tgap"><td>G8</td><td>Trust: UUID only, no rotation/revocation</td><td>PROVISIONAL</td><td>trust.js:2</td><td>Trust cannot evolve</td></tr>
+<tr class="tgap"><td>G9</td><td>No incremental change detection in lifecycle</td><td>Spec open</td><td>lifecycle.js: plan()</td><td>Full sync always needed</td></tr>
+<tr class="tgap"><td>G10</td><td>No auto-discovery of bundles</td><td>Spec open</td><td>manifest.js</td><td>Hand-declare all bundles</td></tr>
+<tr class="tgap"><td>G11</td><td>Delegation unreachable after install</td><td>Issue #91</td><td>completion.md:410-436</td><td>Delegation path blocked</td></tr>
+<tr class="tgap"><td>G12</td><td>No monitoring / telemetry</td><td>Missing impl</td><td>-</td><td>Blind to usage/errors</td></tr>
+<tr class="tgap"><td>G13</td><td>No spec-to-test traceability</td><td>Missing impl</td><td>test/</td><td>Coverage gaps invisible</td></tr>
+<tr class="tgap"><td>G14</td><td>No search index (file scan per query)</td><td>Missing impl</td><td>navigation.js: search()</td><td>O(n) per search, slow at scale</td></tr>
+<tr class="tgap"><td>G15</td><td>Support ceiling uncalibrated</td><td>D10 provisional</td><td>completion.md:145-157</td><td>No proven scalability claim</td></tr>
+<tr class="tgap"><td>G16</td><td>No MCP server transport</td><td>Missing impl</td><td>-</td><td>Only embedded harnesses</td></tr>
+<tr class="tgap"><td>G17</td><td>OpenCode permission: manual merge only</td><td>Missing impl</td><td>packages/opencode/</td><td>Friction on install</td></tr>
+<tr class="tgap"><td>G18</td><td>Link consistency is validation-only</td><td>Spec open</td><td>validation.js: evaluate()</td><td>Broken links detected, not fixed</td></tr>
+<tr class="tgap"><td>G19</td><td>12 CONTEXT.md terms unresolved</td><td>Spec open</td><td>CONTEXT.md (12 terms)</td><td>Open design questions</td></tr>
+<tr class="tgap"><td>G20</td><td>4 per-section open items in spec</td><td>Spec open</td><td>spec v0.1.0.md:3852-3857</td><td>Unsupplied rules</td></tr>
+<tr class="tgap"><td>G21</td><td>No concept-source traceability</td><td>Research gap</td><td>lifecycle-dimensions.md</td><td>Cannot trace concept origin</td></tr>
+<tr class="tgap"><td>G22</td><td>No merge/split semantics</td><td>Research gap</td><td>knowledge-corpus-migration.md</td><td>Conflict resolution ad-hoc</td></tr>
+<tr class="tgap"><td>G23</td><td>No bundle-move orphan handling</td><td>CONTEXT.md open</td><td>CONTEXT.md:704-706</td><td>Move can create orphans</td></tr>
+<tr class="tgap"><td>G24</td><td>Move/rename operations unimplemented</td><td>Deferred</td><td>okf-write SKILL.md</td><td>Effects owned but blocked</td></tr>
+<tr class="tgap"><td>G25</td><td>Deprecation status changes unimplemented</td><td>Deferred</td><td>okf-write SKILL.md</td><td>Effects owned but blocked</td></tr>
+<tr class="tgap"><td>G26</td><td>Inspection-snapshot and archive-lock blocked</td><td>Deferred</td><td>lifecycle SKILL.md</td><td>v0.2.0 reserved</td></tr>
+<tr class="tgap"><td>G27</td><td>Operation store / observation journal absent</td><td>Spec open</td><td>spec:3857</td><td>No operation history</td></tr>
+<tr class="tgap"><td>G28</td><td>Execution preference & session override</td><td>Retained design</td><td>completion.md:410-436</td><td>Design held for later</td></tr>
+</table>
+</div>
+
+<!-- ====== CI/CD ====== -->
+<h2>10. CI/CD Pipeline</h2>
+<div class="dg">
+<div class="dl">Continuous integration and release flow</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="ps act" style="text-align:left;padding:14px"><div class="sn">CI (ci.yml)</div><div style="font-size:11px;color:var(--muted);margin-top:4px">
+Trigger: push + PR<br>
+OS: ubuntu-latest<br>
+Node: v24<br>
+Command: node --test "test/*.test.js"<br>
+Concurrency: cancel-in-progress
+</div></div>
+<div class="ps act" style="text-align:left;padding:14px"><div class="sn">Publish (publish.yml)</div><div style="font-size:11px;color:var(--muted);margin-top:4px">
+Trigger: v* tag<br>
+Runs tests first<br>
+Bumps packages/opencode/package.json<br>
+Publishes to npm via NPM_TOKEN
+</div></div>
+</div>
+<div style="display:flex;gap:12px;margin-top:12px">
+<div class="bx bx-gap" style="flex:1"><div class="bt"><span class="bdg bdg-gap">GAP</span> No E2E Tests in CI</div><div class="bd">Only unit-style deterministic tests. No harness-level integration tests. Delegated agent execution not tested in CI.</div></div>
+<div class="bx bx-gap" style="flex:1"><div class="bt"><span class="bdg bdg-gap">GAP</span> No Smoke on Adapter Packages</div><div class="bd">Codex, OpenCode adapter packages are not tested in CI. Only the core runtime is covered.</div></div>
+</div>
+</div>
+
+<!-- ====== DEVELOPER LIFECYCLE ====== -->
+<h2>11. Developer Lifecycle - Full Flow</h2>
+
+<div class="dg">
+<div class="dl">Ticket Workflow - Issue to Implementation</div>
+<div class="pipe" style="margin-bottom:16px">
+<div class="ps act"><div class="sl">1</div><div class="sn">Spec</div><div class="sd">User story<br>Normative rule<br>Issue cited</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">2</div><div class="sn">Issue</div><div class="sd">Created in tracker<br>Cross-refs spec line<br>Edge cases listed</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">3</div><div class="sn">Triage</div><div class="sd">Categorize<br>Verify scope<br>Write brief</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">4</div><div class="sn">Design</div><div class="sd">Grill-me session<br>ADR if needed<br>Domain modeling</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">5</div><div class="sn">Implement</div><div class="sd">Collect build judge<br>TDD red-green<br>Wrapper contract</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">6</div><div class="sn">Test</div><div class="sd">node --test<br>Issue-*.test.js<br>One contract seam</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">7</div><div class="sn">Pre-PR</div><div class="sd">Code-review skill<br>Standards review<br>Spec review</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">8</div><div class="sn">CI</div><div class="sd">Push triggers CI<br>All tests pass<br>No secrets</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">9</div><div class="sn">Merge</div><div class="sd">PR approved<br>Squash merge<br>Close issue</div></div>
+</div>
+</div>
+
+<div class="dg">
+<div class="dl">Bugfix Workflow - Diagnosis to Fix</div>
+<div class="pipe" style="margin-bottom:16px">
+<div class="ps act"><div class="sl">1</div><div class="sn">Report</div><div class="sd">Bug symptom<br>Reproduction<br>Expected behavior</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">2</div><div class="sn">Diagnose</div><div class="sd">diagnosing-bugs skill<br>Trace flow<br>Root cause</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">3</div><div class="sn">Root Cause</div><div class="sd">All callers traced<br>One guard in<br>shared function</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">4</div><div class="sn">Test First</div><div class="sd">Repro test<br>Red bar<br>Issue-*.test.js</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">5</div><div class="sn">Fix</div><div class="sd">Minimal diff<br>No symptom patches<br>Root cause only</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">6</div><div class="sn">Verify</div><div class="sd">Test green<br>git diff clean<br>Lint passes</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">7</div><div class="sn">Pre-PR</div><div class="sd">code-review skill<br>Standards + Spec<br>Parallel review</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps mis"><div class="sl">Missing</div><div class="sn"><span class="bdg bdg-gap">GAP</span> Regression</div><div class="sd gap">No automated<br>regression suite<br>for skill behavior</div></div>
+</div>
+</div>
+
+<div class="dg">
+<div class="dl">Grilling Workflow - Design Stress-Testing</div>
+<div class="pipe" style="margin-bottom:16px">
+<div class="ps act"><div class="sl">1</div><div class="sn">Plan/Design</div><div class="sd">Architecture choice<br>API surface<br>Data model</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">2</div><div class="sn">grill-me</div><div class="sd">Relentless interview<br>Edge cases found<br>Assumptions tested</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">3</div><div class="sn">grill-with-docs</div><div class="sd">ADR written<br>Glossary updated<br>Decision recorded</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">4</div><div class="sn">domain-modeling</div><div class="sd">Ubiquitous language<br>Domain terms pinned<br>Design module seams</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">5</div><div class="sn">codebase-design</div><div class="sd">Deep module check<br>Interface seams<br>Testability review</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">6</div><div class="sn">to-tickets</div><div class="sd">Tracer-bullet tickets<br>Blocking edges<br>Published to tracker</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">7</div><div class="sn">wayfinder</div><div class="sd">Multi-session plan<br>Decision tickets<br>Resolve one at a time</div></div>
+</div>
+</div>
+
+<div class="dg">
+<div class="dl">Pre-PR Review Workflow</div>
+<div class="pipe" style="margin-bottom:16px">
+<div class="ps act"><div class="sl">1</div><div class="sn">Changes Ready</div><div class="sd">Branch done<br>All tests green<br>Lint clean</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">2</div><div class="sn">code-review</div><div class="sd">Spec review (parallel)<br>Standards review<br>Side-by-side report</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">3</div><div class="sn">ponytail-review</div><div class="sd">Over-engineering hunt<br>Dead code<br>Unneeded abstractions</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">4</div><div class="sn">thermo-nuclear</div><div class="sd">Maintainability audit<br>Giant file detection<br>Spaghetti check</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">5</div><div class="sn">receiving-review</div><div class="sd">Process feedback<br>Verification before<br>blind implementation</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">6</div><div class="sn">CI Pass</div><div class="sd">Push to PR<br>node --test<br>All 260+ pass</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">7</div><div class="sn">deslop</div><div class="sd">AI slop cleanup<br>Code style polish<br>Minimal diff</div></div>
+<div class="arw">&#8594;</div>
+<div class="ps act"><div class="sl">8</div><div class="sn">Merge</div><div class="sd">Squash<br>Close issue<br>Release notes</div></div>
+</div>
+</div>
+
+<!-- ====== OPEN ITEMS FROM SPEC ====== -->
+<h2>12. Deferred & Retained Design Items</h2>
+<div class="dg">
+<div class="dl">Items consciously deferred or retained for future releases</div>
+<table>
+<tr><th>ID</th><th>Item</th><th>Status</th><th>Source</th></tr>
+<tr><td>D1</td><td>Operation-store location</td><td><span class="bdg bdg-df">Deferred #43</span></td><td>Spec open-item row</td></tr>
+<tr><td>D2</td><td>New-bundle write-gate bootstrap exception</td><td><span class="bdg bdg-df">Deferred #9</span></td><td>D5 decision</td></tr>
+<tr><td>D3</td><td>Support-ceiling fixture corpora</td><td><span class="bdg bdg-df">Deferred D10</span></td><td>D10 decision</td></tr>
+<tr><td>D4</td><td>Coexistence with third-party OKF skills</td><td><span class="bdg bdg-df">Deferred D9</span></td><td>D9 decision</td></tr>
+<tr><td>D5</td><td>Execution preference</td><td><span class="bdg bdg-df">Retained #91</span></td><td>completion.md</td></tr>
+<tr><td>D6</td><td>Session override</td><td><span class="bdg bdg-df">Retained #91</span></td><td>completion.md</td></tr>
+<tr><td>D7</td><td>Exact invocation class per skill</td><td><span class="bdg bdg-df">Spec open</span></td><td>spec:3854</td></tr>
+<tr><td>D8</td><td>Exact public filenames of shared runtime</td><td><span class="bdg bdg-df">Spec open</span></td><td>spec:3855</td></tr>
+<tr><td>D9</td><td>Router dispatch protocol + guard</td><td><span class="bdg bdg-df">Spec open</span></td><td>spec:3856</td></tr>
+<tr><td>D10</td><td>Operation-manifest and observation-journal</td><td><span class="bdg bdg-df">Spec open</span></td><td>spec:3857</td></tr>
+<tr><td>D11</td><td>Inspection-snapshot</td><td><span class="bdg bdg-df">v0.2.0 reserved</span></td><td>lifecycle SKILL.md</td></tr>
+<tr><td>D12</td><td>Archive-lock</td><td><span class="bdg bdg-df">v0.2.0 reserved</span></td><td>lifecycle SKILL.md</td></tr>
+</table>
+</div>
+
+<!-- ====== MODULE MAP ====== -->
+<h2>13. Runtime Module Dependency Map</h2>
+<div class="dg">
+<div class="dl">How the 15 runtime modules call each other</div>
+<div style="font-size:12px;line-height:1.8">
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>runtime.js</b> &#8594; protocol, services, admission, routing, lifecycle, validation, delegation, orientation</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>admission.js</b> &#8594; reach, presence, trust, manifest</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>routing.js</b> &#8594; navigation, presence, manifest</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>navigation.js</b> &#8594; services, presence</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>validation.js</b> &#8594; services</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>adapters.js</b> &#8594; orientation</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>orientation.js</b> &#8594; admission, protocol, services</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>reach.js</b> &#8594; services</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>presence.js</b> &#8594; services</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>trust.js</b> &#8594; services</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>manifest.js</b> &#8594; services</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>lifecycle.js</b> &#8594; (none, pure logic)</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>delegation.js</b> &#8594; (none, pure validation)</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>protocol.js</b> &#8594; (none, pure parse)</div>
+<div class="bx bx-rt" style="display:inline-block;margin:4px"><b>services.js</b> &#8594; (none, fs facade)</div>
+</div>
+</div>
+
+<!-- ====== DATA FLOW SUMMARY ====== -->
+<h2>14. Data Flow Summary</h2>
+<div class="dg">
+<div class="dl">Key data flows through the system</div>
+<div class="gr gr2">
+<div class="bx bx-rt"><div class="bt">Read Path</div><div class="bd">User &#8594; Skill MD &#8594; Wrapper stdin &#8594; protocol.parse &#8594; runtime.run &#8594; admission.admitRead &#8594; routing.resolve/read/search/enumerate &#8594; navigation &#8594; services.readFile &#8594; Response JSON &#8594; stdout</div></div>
+<div class="bx bx-rt"><div class="bt">Write Path</div><div class="bd">User &#8594; Skill MD &#8594; Wrapper stdin &#8594; protocol.parse &#8594; runtime.run &#8594; executeBounded (11 gates) &#8594; validation.evaluate &#8594; services.publishFile &#8594; validation.postWrite &#8594; derivative updates &#8594; Response JSON &#8594; stdout</div></div>
+<div class="bx bx-ad"><div class="bt">Orientation Path</div><div class="bd">Harness event &#8594; hooks.json &#8594; adapter-hook.js &#8594; logical cause &#8594; adapters.preClaim &#8594; adapters.claimAndDispatch &#8594; adapter-bridge &#8594; okf-read (orient) &#8594; runtime.orient &#8594; admission.completeness &#8594; result</div></div>
+<div class="bx bx-ad"><div class="bt">Delegation Path</div><div class="bd">Main session &#8594; brief JSON &#8594; okf-delegate.js &#8594; delegation.validateBrief &#8594; spawnSync wrapper &#8594; worker agent executes &#8594; delegation.receipt() &#8594; okf-delegation/1 return</div></div>
+<div class="bx bx-sk"><div class="bt">Router Path</div><div class="bd">User &#8594; okf SKILL.md &#8594; wrapper stdin (operation) &#8594; runtime.run (okf) &#8594; routerOwners[operation] &#8594; dispatch to leaf wrapper &#8594; leaf executes &#8594; response</div></div>
+<div class="bx bx-sk"><div class="bt">Lifecycle Path</div><div class="bd">User (explicit) &#8594; okf-lifecycle SKILL.md &#8594; wrapper stdin (sync) &#8594; runtime.run &#8594; lifecycle.plan &#8594; abstained/revise/create &#8594; executeBounded (if not abstained) &#8594; response</div></div>
+</div>
+</div>
+
+<hr>
+<p class="sub">OKF Agent Skills v0.1.0 Architecture Visualization &bull; Generated from codebase analysis &bull; Gaps identified: 28 + 12 deferred</p>
+
+</body>
+</html>
