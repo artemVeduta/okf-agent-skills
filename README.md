@@ -3,7 +3,7 @@
 Cross-harness agent skills for maintaining an
 [Open Knowledge Format](https://okf.md/) bundle — a lightweight, file-based
 knowledge base of Markdown concepts — from Claude Code, OpenAI Codex, and
-OpenCode. One `okf` router skill dispatches to four leaf skills:
+OpenCode. One `okf` router skill dispatches to five leaf skills:
 
 | Skill | Job |
 | --- | --- |
@@ -11,6 +11,7 @@ OpenCode. One `okf` router skill dispatches to four leaf skills:
 | `okf-write` | The sole path for bounded mutations — create, revise, format, relate, machine-verify. |
 | `okf-lifecycle` | Narrow automatic synchronization, plus explicit reconciliation. |
 | `okf-review` | Reads, validates, and reports trust tiers and staleness. It never confirms, approves, or mutates. |
+| `okf-setup` | Bootstraps the bundle-root `index.md` via `init`, direct invocation only. |
 
 The skills are backed by a zero-dependency Node.js runtime (`scripts/lib/`)
 driven through one thin wrapper script per skill. See

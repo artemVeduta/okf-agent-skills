@@ -596,6 +596,106 @@ function evaluateCreate(request, services) {
   });
 }
 
+// `init` parses the root text directly rather than through `readTree`, because an
+// existing-but-unparseable root is a valid input here (whole-file overwrite), not a
+// thrown error the way it is for every other reader in this module.
+function parseTreeFromText(text) {
+  const extracted = extractFrontmatter(text);
+  if (extracted.unterminated) {
+    const err = new Error('unterminated frontmatter block');
+    err.line = 0;
+    err.reason = err.message;
+    throw err;
+  }
+  return { tree: parseYAML(extracted.frontmatter), body: extracted.body };
+}
+
+// Walks up from `dir` to the nearest ancestor that exists, mirroring the bootstrap
+// reality that the bundle directory itself may not exist yet.
+function nearestExistingDir(dir, services) {
+  let current = dir;
+  for (;;) {
+    if (services.exists(current)) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return current;
+    current = parent;
+  }
+}
+
+// `init` writes only the bundle root. It is idempotent (a valid root with nothing
+// to add is a no-op, not an error) and repairing (an absent, wrong, or unparseable
+// `okf_version` is overwritten). `project_mode` is optional and merges into an
+// already-valid root on a second call.
+function evaluateInit(request, services) {
+  const bundleRoot = path.resolve(request.payload.bundle);
+  const indexPath = path.join(bundleRoot, 'index.md');
+  const findings = [];
+  const done = (result, data) => ({ result, data, findings: sortFindings(findings) });
+
+  if (!services.writable(nearestExistingDir(bundleRoot, services))) {
+    findings.push(blocker('PARENT_DIRECTORY_NOT_WRITABLE', 'suite', { gate: 'init', path: 'index.md' }));
+    return done('blocked', {});
+  }
+
+  let currentText = null;
+  let currentTree = null;
+  let currentBody = null;
+  let parseable = false;
+  if (services.exists(indexPath)) {
+    currentText = services.readFile(indexPath);
+    try {
+      const parsed = parseTreeFromText(currentText);
+      currentTree = parsed.tree;
+      currentBody = parsed.body;
+      parseable = true;
+    } catch {
+      parseable = false;
+    }
+  }
+
+  const projectMode = request.payload.project_mode;
+  const baseTree = parseable ? currentTree : {};
+  const tree = { ...baseTree, okf_version: '0.2' };
+  if (projectMode !== undefined) tree.project_mode = projectMode;
+
+  const alreadyValid = parseable && currentTree.okf_version === '0.2' &&
+    (projectMode === undefined || currentTree.project_mode === projectMode);
+  if (alreadyValid) return done('ok', { written: false, tree: currentTree });
+
+  const serialized = serializeFrontmatter(tree);
+  const mismatch = roundTripMismatch(tree, serialized);
+  if (mismatch) {
+    findings.push(blocker('PARSE_TREE_MISMATCH', 'suite', { path: 'index.md', ...mismatch }));
+    return done('blocked', {});
+  }
+
+  const body = parseable ? currentBody : '# Bundle\n';
+  return done('ok', {
+    written: true,
+    tree,
+    rendered: serialized + body,
+    expected: currentText,
+    file: indexPath,
+  });
+}
+
+// Post-write for `init` re-reads only the root declaration and confirms the saved
+// parse tree matches what was written; it is not a concept, so `postWrite`'s
+// concept-shaped checks (type, sources, links, upstreams) do not apply.
+function postWriteInit(bundleRoot, services, expectedTree) {
+  const findings = [];
+  try {
+    const current = readTree(path.join(bundleRoot, 'index.md'), services);
+    const comparison = parseTreeEqual(expectedTree, current.tree);
+    if (!comparison.equal) {
+      findings.push(blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: 'index.md', construct: comparison.path, reason: 'saved tree mismatch' }));
+    }
+    return { valid: !findings.some((finding) => finding.blocks), findings: sortFindings(findings) };
+  } catch (error) {
+    return { valid: false, findings: [blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: 'index.md', reason: error.message || 'read failed' })] };
+  }
+}
+
 function postWrite(bundleRoot, rel, services, expectedTree) {
   const findings = [];
   const file = path.resolve(bundleRoot, rel);
@@ -952,4 +1052,8 @@ function evaluateReview(request, services) {
   return { result, data, findings: sortFindings(findings) };
 }
 
-module.exports = { evaluate, evaluateCreate, evaluateReview, parseFrontmatter, parseYAML, serializeFrontmatter, postWrite, projectMode, validateRead };
+module.exports = {
+  evaluate, evaluateCreate, evaluateInit, evaluateReview,
+  parseFrontmatter, parseYAML, serializeFrontmatter,
+  postWrite, postWriteInit, projectMode, validateRead,
+};

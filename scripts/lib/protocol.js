@@ -8,6 +8,7 @@ const requiredPayload = new Map([
   ['machine-verify', ['cwd', 'bundle', 'concept']],
   ['sync', ['cwd', 'bundle', 'concept']],
   ['review', ['cwd', 'bundle', 'concept']],
+  ['init', ['cwd']],
   ['resolve', ['cwd']],
   ['read', ['cwd', 'target']],
   ['search', ['cwd', 'query']],

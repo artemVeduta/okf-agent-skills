@@ -5,18 +5,19 @@ const routing = require('./routing');
 const lifecycle = require('./lifecycle');
 const orientation = require('./orientation');
 
-const skills = new Set(['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review']);
+const skills = new Set(['okf', 'okf-read', 'okf-write', 'okf-lifecycle', 'okf-review', 'okf-setup']);
 const navigationResults = new Set(['ok', 'degraded', 'not-configured', 'unavailable']);
 const routerOwners = new Map([
   ['enumerate', 'okf-read'], ['search', 'okf-read'], ['read', 'okf-read'], ['validate', 'okf-read'],
   ['orient', 'okf-read'],
   ['create', 'okf-write'], ['revise', 'okf-write'], ['format', 'okf-write'], ['machine-verify', 'okf-write'],
   ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
+  ['init', 'okf-setup'],
 ]);
 
 const primaryEffects = new Map([
   ['create', 'concept-create'], ['revise', 'concept-revise'], ['format', 'format'],
-  ['relationship', 'relationship'], ['machine-verify', 'machine-verify'],
+  ['relationship', 'relationship'], ['machine-verify', 'machine-verify'], ['init', 'init'],
 ]);
 const derivedEffects = new Set(['index-maintenance', 'log-append']);
 const forbiddenEffectKeys = ['deprecate', 'move', 'rename', 'rewrite'];
@@ -84,6 +85,16 @@ function boundedEffects(operation, payload) {
   const valid = requested.includes(primary) && requested.every((effect) => effect === primary || derivedEffects.has(effect));
   if (!valid || new Set(requested).size !== requested.length) return { invalid: true, effects: requested };
   return { effects: [primary, ...requested.filter((effect) => effect !== primary)] };
+}
+
+// `init` is never combinable with a derived effect: an explicit `effects` array is
+// valid only when it names exactly `['init']`.
+function initEffects(payload) {
+  if (payload.effects === undefined) return { effects: ['init'] };
+  if (Array.isArray(payload.effects) && payload.effects.length === 1 && payload.effects[0] === 'init') {
+    return { effects: ['init'] };
+  }
+  return { invalid: true, effects: Array.isArray(payload.effects) ? payload.effects : [] };
 }
 
 function scopeFor(request, requireScope) {
@@ -254,6 +265,85 @@ function executeBounded(request, services, operation, requireScope = false) {
   return settle('applied', [...outcome.findings, ...checked.findings], { completed: completedEffects });
 }
 
+// `init` bootstraps the bundle root itself, so it cannot go through `executeBounded`:
+// there is no bundle-root precondition to check yet, no evidence to cite, and no
+// concept scope. Per #133/#134 it owns a slimmer admission of its own — ownership,
+// REACH, TRUST, ACCESS and the activation-marker gate (run by `run()` before this is
+// reached) — skipping PRESENCE (no bundle to find yet) and the evidence gate.
+function executeInit(request, services) {
+  const payload = request.payload;
+  const effectsResult = initEffects(payload);
+  const provisionalEffects = effectsResult.effects.length ? effectsResult.effects : ['init'];
+  const scope = request.scope || null;
+  const refuse = (code, detail, findings = [suiteFinding(code, detail)]) => writeResponse(request, {
+    result: 'blocked', effects: effectRecords(provisionalEffects, 'blocked'), evidence: [], findings, code, scope,
+  });
+  const settle = (result, findings, extra = {}) => writeResponse(request, {
+    result, effects: effectRecords(provisionalEffects, 'notice'), evidence: [], findings, scope,
+    completed: extra.completed, residue: extra.residue,
+  });
+
+  if (effectsResult.invalid) return refuse('UNSUPPORTED_INPUT', { gate: 'effects', operation: 'init' });
+  if (payload.project_mode !== undefined && payload.project_mode !== 'code-backed' && payload.project_mode !== 'knowledge-only') {
+    return refuse('UNSUPPORTED_INPUT', { gate: 'project mode', operation: 'init' });
+  }
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return refuse('UNSUPPORTED_INPUT', { gate: 'bundle', operation: 'init' });
+  }
+
+  const bundleRoot = path.resolve(payload.cwd, bundleName);
+  const activeRoot = services.gitRootOf(path.resolve(payload.cwd));
+  const targetRoot = services.gitRootOf(bundleRoot);
+  if (!activeRoot || !targetRoot) {
+    return refuse('WRITE_OWNERSHIP_UNKNOWN', { gate: 'ownership', reason: 'unknown_or_non_local' });
+  }
+  if (activeRoot !== targetRoot) return targetOutsideWorktreeBlocked({ ...request, scope }, provisionalEffects);
+
+  const admitted = admission.admitInit({ ...request, payload: {
+    ...payload,
+    candidates: [{
+      path: activeRoot,
+      bundle: path.relative(activeRoot, bundleRoot) || '.',
+      declared: true,
+      named_by_user: true,
+      requires_repository: true,
+    }],
+  } }, services);
+  const candidate = admitted.data.candidates && admitted.data.candidates.find((item) => item.state === 'active' && item.bundle_root === bundleRoot);
+  if (!candidate) return refuse('BUNDLE_NOT_ADMITTED', null, admitted.findings);
+
+  let outcome;
+  try {
+    outcome = validation.evaluateInit({ ...request, payload: { ...payload, bundle: bundleRoot } }, services);
+  } catch (error) {
+    return settle('failed/incomplete', [suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: error.message || 'write failed' })]);
+  }
+  if (outcome.result === 'blocked') return refuse(undefined, null, outcome.findings);
+  if (outcome.result === 'failed/incomplete') return settle('failed/incomplete', outcome.findings);
+  if (!outcome.data.written) return settle('no-op', outcome.findings);
+
+  const completedEffects = new Set();
+  try {
+    services.mkdir(bundleRoot);
+    services.publishFile(outcome.data.file, outcome.data.rendered, outcome.data.expected);
+    completedEffects.add('init');
+  } catch (error) {
+    if (error && error.code === 'TARGET_CHANGED') {
+      const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: 'index.md', reason: error.message });
+      return refuse('TARGET_CHANGED', null, [...outcome.findings, finding]);
+    }
+    const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: error.message || 'write failed' });
+    return settle('failed/incomplete', [...outcome.findings, finding], { completed: completedEffects });
+  }
+
+  const checked = validation.postWriteInit(bundleRoot, services, outcome.data.tree);
+  if (!checked.valid) {
+    return settle('failed/incomplete', [...outcome.findings, ...checked.findings], { completed: completedEffects });
+  }
+  return settle('applied', [...outcome.findings, ...checked.findings], { completed: completedEffects });
+}
+
 // Both routing operations admit first, then route the admitted data. redact() runs
 // on the admission half only; routing results carry authorized paths already.
 function admitAndRoute(request, services, router) {
@@ -295,7 +385,7 @@ function admitAndNavigate(request, services, router) {
 }
 
 function unknownOperation(request) {
-  if (request.skill === 'okf-write' || request.skill === 'okf-lifecycle' || request.skill === 'okf') {
+  if (request.skill === 'okf-write' || request.skill === 'okf-lifecycle' || request.skill === 'okf' || request.skill === 'okf-setup') {
     return writeResponse(request, { result: 'blocked', code: 'UNKNOWN_OPERATION' });
   }
   return respond(request, 'blocked', { code: 'UNKNOWN_OPERATION' }, []);
@@ -305,6 +395,7 @@ function automaticMutation(skill, request) {
   return request.invocation === 'automatic' && (
     (skill === 'okf-write' && primaryEffects.has(request.operation)) ||
     (skill === 'okf-lifecycle' && request.operation === 'sync') ||
+    (skill === 'okf-setup' && request.operation === 'init') ||
     (skill === 'okf' && (primaryEffects.has(request.operation) || request.operation === 'sync'))
   );
 }
@@ -397,7 +488,7 @@ function activationState(request, services) {
 }
 
 function isWriteOperation(skill, request) {
-  return (skill === 'okf-write' || skill === 'okf') && primaryEffects.has(request.operation);
+  return (skill === 'okf-write' || skill === 'okf' || skill === 'okf-setup') && primaryEffects.has(request.operation);
 }
 
 function routerRun(request, services) {
@@ -420,6 +511,10 @@ function runActive(skill, request, services) {
     return respond(request, outcome.result, admission.redact(outcome.data), outcome.findings);
   }
   if (skill === 'okf') return routerRun(request, services);
+  if (skill === 'okf-setup') {
+    if (request.operation !== 'init') return unknownOperation(request);
+    return executeInit(request, services);
+  }
   if (skill === 'okf-review') {
     if (request.operation === 'review') {
       const outcome = validation.evaluateReview(request, services);

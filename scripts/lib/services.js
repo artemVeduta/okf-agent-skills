@@ -82,6 +82,7 @@ module.exports = {
   isFile: (file) => fs.statSync(file).isFile(),
   isLink: (file) => { try { return fs.lstatSync(file).isSymbolicLink(); } catch { return false; } },
   access: (file) => { try { fs.accessSync(file, fs.constants.R_OK); return true; } catch { return false; } },
+  writable: (file) => { try { fs.accessSync(file, fs.constants.W_OK); return true; } catch { return false; } },
   listFiles,
   mkdir: (dir) => fs.mkdirSync(dir, { recursive: true }),
   remove: (file) => fs.rmSync(file, { force: true }),

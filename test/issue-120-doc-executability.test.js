@@ -42,9 +42,10 @@ function isPlaceholder(value) {
   return typeof value === 'string' && /^<.*>$/.test(value);
 }
 
-// `today` is documented as optional (skills/okf-review/SKILL.md); any other
-// placeholder this fixture can't fill is a doc/runtime mismatch, not something to hide.
-const OPTIONAL_PLACEHOLDER_KEYS = new Set(['today']);
+// `today` is documented as optional (skills/okf-review/SKILL.md), and so is
+// `project_mode` (skills/okf-setup/SKILL.md); any other placeholder this fixture
+// can't fill is a doc/runtime mismatch, not something to hide.
+const OPTIONAL_PLACEHOLDER_KEYS = new Set(['today', 'project_mode']);
 
 function fixtureRequest(example, fixture) {
   const payload = {};
