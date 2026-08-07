@@ -109,6 +109,14 @@ function derivativeLine(effect, operation, concept) {
 
 function appendDerivative(effect, operation, bundleRoot, concept, services) {
   const file = path.join(bundleRoot, effect === 'index-maintenance' ? 'index.md' : 'log.md');
+  // #151: same realpath re-check the concept writers apply, reused rather than
+  // copied, so a symlinked `index.md`/`log.md` cannot walk this append outside
+  // the bundle root before any write happens.
+  if (validation.escapesBundle(file, bundleRoot, services)) {
+    const error = new Error('symlink escape');
+    error.code = 'SYMLINK_ESCAPE';
+    throw error;
+  }
   if (!services.exists(file)) return { written: false };
   const current = services.readFile(file);
   const line = derivativeLine(effect, operation, concept);
@@ -216,6 +224,12 @@ function executeBounded(request, services, operation, requireScope = false) {
         completedEffects.add(effect);
       }
     } catch (error) {
+      if (error.code === 'SYMLINK_ESCAPE') {
+        const finding = suiteFinding('SYMLINK_ESCAPE', { gate: 'derivative', effect, path: payload.concept });
+        return settle('failed/incomplete', [...outcome.findings, ...checked.findings, finding], {
+          completed: completedEffects, residue: [{ effect, reason: 'symlink escape' }],
+        });
+      }
       const reason = error.message || 'derivative write failed';
       const finding = suiteFinding('DERIVATIVE_WRITE_FAILED', { gate: 'derivative', effect, reason });
       return settle('failed/incomplete', [...outcome.findings, ...checked.findings, finding], {

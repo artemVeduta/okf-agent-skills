@@ -124,4 +124,4 @@ function evaluate(candidate, context, services) {
   return result(null);
 }
 
-module.exports = { evaluate, inside, gateFinding };
+module.exports = { evaluate, inside, gateFinding, resolve };

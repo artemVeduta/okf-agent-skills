@@ -104,3 +104,83 @@ test('an existing file where the concept expects a directory refuses create with
     assert.equal(/\.tmp/.test(text), false);
   }
 });
+
+function trySymlink(target, linkPath) {
+  try {
+    fs.symlinkSync(target, linkPath, 'dir');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test('a concept reached through a symlink that escapes the bundle root refuses create with SYMLINK_ESCAPE', (t) => {
+  const root = bundle(t);
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-153-outside-')));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  if (!trySymlink(outside, path.join(root, 'escaped'))) {
+    t.skip('platform cannot create a symbolic link');
+    return;
+  }
+
+  const response = run(request(root, 'escaped/note.md'));
+
+  assert.equal(response.result, 'blocked');
+  assert.ok(response.findings.some((item) => item.code === 'SYMLINK_ESCAPE'));
+  assert.equal(fs.existsSync(path.join(root, 'escaped', 'note.md')), false);
+  assert.equal(fs.existsSync(path.join(outside, 'note.md')), false);
+});
+
+test('a concept reached through a symlink that escapes the bundle root refuses revise with SYMLINK_ESCAPE', (t) => {
+  const root = bundle(t);
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-153-outside-')));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  if (!trySymlink(outside, path.join(root, 'escaped'))) {
+    t.skip('platform cannot create a symbolic link');
+    return;
+  }
+  const targetFile = path.join(outside, 'note.md');
+  const original = '---\ntype: "Note"\ntitle: "Created"\nstatus: "draft"\n---\n# Created\n';
+  fs.writeFileSync(targetFile, original);
+
+  const revise = request(root, 'escaped/note.md', { set: { title: 'Revised' } });
+  revise.operation = 'revise';
+  const response = run(revise);
+
+  assert.equal(response.result, 'blocked');
+  assert.ok(response.findings.some((item) => item.code === 'SYMLINK_ESCAPE'));
+  assert.equal(fs.readFileSync(targetFile, 'utf8'), original);
+});
+
+test('a symlink that stays inside the bundle root is accepted', (t) => {
+  const root = bundle(t);
+  fs.mkdirSync(path.join(root, 'real-decisions'));
+  if (!trySymlink(path.join(root, 'real-decisions'), path.join(root, 'decisions'))) {
+    t.skip('platform cannot create a symbolic link');
+    return;
+  }
+
+  const response = run(request(root, 'decisions/first.md'));
+
+  assert.equal(response.result, 'applied');
+  assert.equal(fs.existsSync(path.join(root, 'real-decisions', 'first.md')), true);
+});
+
+test('the SYMLINK_ESCAPE refusal text contains no absolute path', (t) => {
+  const root = bundle(t);
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-153-outside-')));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  if (!trySymlink(outside, path.join(root, 'escaped'))) {
+    t.skip('platform cannot create a symbolic link');
+    return;
+  }
+
+  const response = run(request(root, 'escaped/note.md'));
+
+  assert.equal(response.result, 'blocked');
+  for (const finding of response.findings) {
+    const text = JSON.stringify(finding);
+    assert.equal(text.includes(root), false);
+    assert.equal(text.includes(outside), false);
+  }
+});

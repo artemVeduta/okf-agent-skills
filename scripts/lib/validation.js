@@ -15,7 +15,7 @@ undecided. Invented here, pending a decision:
 */
 
 const path = require('node:path');
-const { inside } = require('./reach');
+const { inside, resolve } = require('./reach');
 
 const NON_HUMAN_ACTORS = ['agent:', 'tool:'];
 
@@ -435,6 +435,20 @@ function projectMode(bundleRoot, services) {
   }
 }
 
+// #151: the lexical containment check above is cheap but can be fooled by a symlink
+// somewhere on the path. This re-checks the deepest existing ancestor's real path
+// against the bundle root's own real path -- `resolve` (reach.js) already walks up
+// past a missing tail, so it is reused rather than copied. Runs before any write and
+// before any directory is made, so an escape is refused before anything else is
+// examined.
+function escapesBundle(candidatePath, bundleRoot, services) {
+  try {
+    return !inside(resolve(candidatePath, services), services.realpath(bundleRoot));
+  } catch {
+    return true;
+  }
+}
+
 // Step 2: the concept must resolve inside the bundle root. `inside` comes from reach.js.
 
 function readConcept(file, rel, services) {
@@ -572,6 +586,10 @@ function evaluate(request, services) {
     findings.push(blocker('CONCEPT_OUTSIDE_BUNDLE', 'suite', { path: rel }));
     return done('blocked', { path: rel });
   }
+  if (escapesBundle(conceptPath, bundleRoot, services)) {
+    findings.push(blocker('SYMLINK_ESCAPE', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
 
   const current = readConcept(conceptPath, rel, services);
   if (current.finding) {
@@ -629,6 +647,10 @@ function evaluateCreate(request, services) {
   const conceptPath = path.resolve(bundleRoot, rel);
   if (!inside(conceptPath, bundleRoot) || conceptPath === bundleRoot) {
     findings.push(blocker('CONCEPT_OUTSIDE_BUNDLE', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
+  if (escapesBundle(conceptPath, bundleRoot, services)) {
+    findings.push(blocker('SYMLINK_ESCAPE', 'suite', { path: rel }));
     return done('blocked', { path: rel });
   }
   if (services.exists(conceptPath)) {
@@ -1167,6 +1189,7 @@ function evaluateReview(request, services) {
 
 module.exports = {
   evaluate, evaluateCreate, evaluateInit, evaluateReview,
+  escapesBundle,
   inspectIndex,
   parseFrontmatter, parseYAML, serializeFrontmatter,
   postWrite, postWriteInit, projectMode, validateRead,
