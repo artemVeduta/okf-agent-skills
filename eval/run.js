@@ -13,8 +13,9 @@ import { BlockedCase, runCase } from './lib/report.js';
 
 import { CASES as ACTIVATION_CASES, activationCaseModule } from './cases/activation.eval.js';
 import { CASE as wrapperContract } from './cases/wrapper-contract.eval.js';
+import { CASE as taskKindTopLevel } from './cases/wrapper-request-field-placement.eval.js';
 
-const CASES = [...ACTIVATION_CASES.map(activationCaseModule), wrapperContract];
+const CASES = [...ACTIVATION_CASES.map(activationCaseModule), wrapperContract, taskKindTopLevel];
 
 // A run that cannot get a model throws an OperationFailedError. Two
 // conditions are credential gaps, not defects of the OKF skills. The runtime
@@ -42,15 +43,24 @@ function failureReason(error) {
   return parts.filter((part) => typeof part === 'string').join(' | ');
 }
 
+// The pinned @flue/runtime's local() sandbox exposes exactly one shell tool
+// to the model: the pinned runtime's createBashTool names the tool "bash",
+// with a "command" parameter — so chunk.input.command below is the model's
+// literal shell command text. There is no second shell-ish tool name to
+// account for.
 async function dispatchAndCollect({ fixtureRoot, prompt }) {
   const activated = [];
+  const shellCommands = [];
   const handle = init(OkfEvalAgent, { id: `eval-${randomUUID()}` });
   try {
     const receipt = await handle.dispatch({ message: prompt, initialData: { cwd: fixtureRoot } });
     await handle.read(receipt, {
       onEvent: (chunk) => {
-        if (chunk.type === 'tool-input' && chunk.toolName === 'activate_skill' && chunk.input) {
+        if (chunk.type !== 'tool-input' || !chunk.input) return;
+        if (chunk.toolName === 'activate_skill') {
           if (typeof chunk.input.name === 'string') activated.push(chunk.input.name);
+        } else if (chunk.toolName === 'bash') {
+          if (typeof chunk.input.command === 'string') shellCommands.push(chunk.input.command);
         }
       },
     });
@@ -66,7 +76,7 @@ async function dispatchAndCollect({ fixtureRoot, prompt }) {
     // words are in `meta.reason`. Report both, or the record says nothing.
     throw new Error(reason || String(error), { cause: error });
   }
-  return { activated };
+  return { activated, shellCommands };
 }
 
 async function main() {
