@@ -11,6 +11,8 @@ const requiredPayload = new Map([
   ['init', ['cwd']],
   ['inspect', ['cwd']],
   ['repair', ['cwd']],
+  ['plan', ['cwd']],
+  ['aggregate', ['cwd']],
   ['resolve', ['cwd']],
   ['read', ['cwd', 'target']],
   ['search', ['cwd', 'query']],
@@ -78,6 +80,11 @@ function parseRequest(text, expectedSkill) {
   if (obj.operation === 'repair') {
     if (!Array.isArray(obj.payload.targets) || obj.payload.targets.length === 0) {
       throw new Error('Missing payload.targets');
+    }
+  }
+  if (obj.operation === 'aggregate') {
+    if (!Array.isArray(obj.payload.results) || obj.payload.results.length === 0) {
+      throw new Error('Missing payload.results');
     }
   }
   if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');

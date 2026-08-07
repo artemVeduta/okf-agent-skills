@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const validation = require('./validation');
 const admission = require('./admission');
 const manifest = require('./manifest');
+const monorepo = require('./monorepo');
 const routing = require('./routing');
 const lifecycle = require('./lifecycle');
 const orientation = require('./orientation');
@@ -15,7 +16,13 @@ const routerOwners = new Map([
   ['create', 'okf-write'], ['revise', 'okf-write'], ['format', 'okf-write'], ['machine-verify', 'okf-write'],
   ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
   ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
+  ['plan', 'okf-setup'], ['aggregate', 'okf-setup'],
 ]);
+
+// `inspect`, `repair`, `plan` and `aggregate` all report on or plan around state that
+// exists before or independently of the activation marker, so all four bypass the
+// shared activation gate the same way (#133/#138/#135).
+const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate']);
 
 const primaryEffects = new Map([
   ['create', 'concept-create'], ['revise', 'concept-revise'], ['format', 'format'],
@@ -453,6 +460,124 @@ function executeRepair(request, services) {
   return respond(request, wrote ? 'applied' : 'no-op', data, []);
 }
 
+// `/setup`'s monorepo package-boundary report (#135, open points 1 and 2). Read-only,
+// like `inspect`: it never writes, and it runs whether or not the workspace has a
+// manifest, an activation marker, or a bundle root yet. `data.packages`/`data.briefs`
+// are empty unless `monorepo.detect()` resolved a deterministic multi-package layout;
+// an unresolved layout is reported through `data.ambiguous` and `data.question` for
+// the user to settle, never guessed at by this function or its caller.
+function executePlan(request, services) {
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.project_mode !== undefined && payload.project_mode !== 'code-backed' && payload.project_mode !== 'knowledge-only') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.mappings !== undefined && !Array.isArray(payload.mappings)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  const detected = monorepo.detect(gitRoot, services);
+  if (!detected.monorepo) {
+    const packages = detected.packages.map((pkg) => ({ package: pkg.alias, path: pkg.path, separate_repo: pkg.separateRepo }));
+    return respond(request, 'ok', { monorepo: false, ambiguous: false, signals: detected.signals, packages, briefs: [] }, []);
+  }
+  if (detected.ambiguous) {
+    return respond(request, 'ok', {
+      monorepo: true, ambiguous: true, signals: detected.signals, reason: detected.reason,
+      question: 'Package boundaries could not be determined from workspace configuration. Name each package root explicitly.',
+      packages: [], briefs: [],
+    }, []);
+  }
+  const briefs = monorepo.buildBriefs(detected.packages, gitRoot, {
+    bundleName, projectMode: payload.project_mode, mappings: payload.mappings,
+  });
+  return respond(request, 'ok', {
+    monorepo: true,
+    ambiguous: false,
+    signals: detected.signals,
+    packages: detected.packages.map((pkg) => ({ package: pkg.alias, path: pkg.path, separate_repo: pkg.separateRepo })),
+    briefs,
+  }, []);
+}
+
+// `/setup`'s per-package result aggregation and shared-manifest generation (#135,
+// open points 3, 4, 5 and 6). Read-only: it never writes the manifest itself — the
+// caller passes `data.manifest` on to `repair`'s existing `targets: ["manifest"]`
+// path, the one place a manifest is ever written, once, after every worker has
+// finished (open point 3: workers write only inside their own package bundle; the
+// coordinator alone writes the shared root manifest). `payload.results` must name
+// every package `monorepo.detect()` still reports and nothing else, so a failed
+// package can never be silently dropped from the report (open point 5); `data.status`
+// is `"complete"` only when every named package succeeded, `"partial"` otherwise —
+// this function never reports overall success while a package failed.
+function validResults(results) {
+  if (!Array.isArray(results) || results.length === 0) return false;
+  const seen = new Set();
+  return results.every((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+    if (typeof item.package !== 'string' || item.package === '' || seen.has(item.package)) return false;
+    seen.add(item.package);
+    if (item.status !== 'ok' && item.status !== 'failed') return false;
+    if (item.status === 'failed' && (typeof item.reason !== 'string' || item.reason === '')) return false;
+    if (item.status === 'ok' && item.reason !== undefined) return false;
+    if (item.warnings !== undefined && (!Array.isArray(item.warnings) || item.warnings.some((w) => typeof w !== 'string'))) return false;
+    return true;
+  });
+}
+
+function executeAggregate(request, services) {
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!validResults(payload.results)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.workspace_id !== undefined && typeof payload.workspace_id !== 'string') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  const detected = monorepo.detect(gitRoot, services);
+  if (!detected.monorepo || detected.ambiguous) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const byAlias = new Map(detected.packages.map((pkg) => [pkg.alias, pkg]));
+  const named = new Set(payload.results.map((item) => item.package));
+  const coversExactly = detected.packages.every((pkg) => named.has(pkg.alias)) &&
+    payload.results.every((item) => byAlias.has(item.package));
+  if (!coversExactly) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+
+  const ordered = detected.packages.map((pkg) => payload.results.find((item) => item.package === pkg.alias));
+  const failed = ordered.filter((item) => item.status === 'failed').map((item) => item.package);
+  const status = failed.length === 0 ? 'complete' : 'partial';
+
+  const manifestContent = manifest.template({
+    repoName: path.basename(gitRoot),
+    bundleName,
+    workspaceId: payload.workspace_id || crypto.randomUUID(),
+    packages: detected.packages,
+  });
+  const finding = manifest.validate(manifestContent);
+  if (finding) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [finding]);
+
+  return respond(request, 'ok', {
+    status,
+    packages: ordered.map((item) => ({ package: item.package, status: item.status, reason: item.reason ?? null, warnings: item.warnings || [] })),
+    failed,
+    manifest: manifestContent,
+  }, []);
+}
+
 // Both routing operations admit first, then route the admitted data. redact() runs
 // on the admission half only; routing results carry authorized paths already.
 function admitAndRoute(request, services, router) {
@@ -624,6 +749,8 @@ function runActive(skill, request, services) {
     if (request.operation === 'init') return executeInit(request, services);
     if (request.operation === 'inspect') return executeInspect(request, services);
     if (request.operation === 'repair') return executeRepair(request, services);
+    if (request.operation === 'plan') return executePlan(request, services);
+    if (request.operation === 'aggregate') return executeAggregate(request, services);
     return unknownOperation(request);
   }
   if (skill === 'okf-review') {
@@ -664,12 +791,13 @@ function runActive(skill, request, services) {
 function run(skill, request, services) {
   if (!skills.has(skill)) return respond(request, 'blocked', { code: 'UNKNOWN_SKILL' }, []);
 
-  // `inspect` and `repair` report and fix the activation marker itself, so they run
-  // ahead of the shared activation gate below rather than being gated behind it,
-  // whether reached directly through `okf-setup` or through the `okf` router; an
-  // automatic caller still gets silence, matching every other operation's automatic
-  // behavior when OKF is not yet active here (#138).
-  if (request.operation === 'inspect' || request.operation === 'repair') {
+  // `inspect` and `repair` report and fix the activation marker itself, and `plan`
+  // and `aggregate` plan and report around a workspace that may not have one yet, so
+  // all four run ahead of the shared activation gate below rather than being gated
+  // behind it, whether reached directly through `okf-setup` or through the `okf`
+  // router; an automatic caller still gets silence, matching every other operation's
+  // automatic behavior when OKF is not yet active here (#138/#135).
+  if (activationBypassOperations.has(request.operation)) {
     if (skill === 'okf-setup') {
       if (request.invocation === 'automatic') return null;
       return runActive(skill, request, services);

@@ -43,10 +43,10 @@ function isPlaceholder(value) {
 }
 
 // `today` is documented as optional (skills/okf-review/SKILL.md), and so are
-// `project_mode`, `manifest`, and `workspace_id` (skills/okf-setup/SKILL.md); any
-// other placeholder this fixture can't fill is a doc/runtime mismatch, not
+// `project_mode`, `manifest`, `workspace_id`, and `mappings` (skills/okf-setup/SKILL.md);
+// any other placeholder this fixture can't fill is a doc/runtime mismatch, not
 // something to hide.
-const OPTIONAL_PLACEHOLDER_KEYS = new Set(['today', 'project_mode', 'manifest', 'workspace_id']);
+const OPTIONAL_PLACEHOLDER_KEYS = new Set(['today', 'project_mode', 'manifest', 'workspace_id', 'mappings']);
 
 function fixtureRequest(example, fixture) {
   const payload = {};
@@ -105,8 +105,9 @@ test('every skill doc is accounted for: which carry a request example and which 
 });
 
 // Most skills document exactly one operation with one example. `okf-setup` owns
-// three (#138: `init`, `inspect`, `repair`), each with its own example, so this
-// runs once per documented example rather than assuming one example per skill.
+// five (#138: `init`, `inspect`, `repair`; #135: `plan`, `aggregate`), each with its
+// own example, so this runs once per documented example rather than assuming one
+// example per skill.
 for (const name of skills) {
   const examples = wrapperExamples(skillDoc(name));
   const operations = examples.map((example) => example.operation);
