@@ -636,6 +636,16 @@ function evaluateCreate(request, services) {
     return done('blocked', { path: rel });
   }
 
+  const nearestParent = nearestExistingDir(path.dirname(conceptPath), services);
+  if (services.isFile(nearestParent)) {
+    findings.push(blocker('CONCEPT_PARENT_NOT_A_DIRECTORY', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
+  if (!services.writable(nearestParent)) {
+    findings.push(blocker('PARENT_DIRECTORY_NOT_WRITABLE', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
+
   const tree = { ...(request.payload.set || {}), status: 'draft' };
   if (Object.hasOwn(tree, 'trust_tier')) {
     findings.push(blocker('WRITTEN_TRUST_TIER', 'suite', { path: rel }));

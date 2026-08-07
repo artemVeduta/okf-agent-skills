@@ -177,9 +177,20 @@ test('no-op, abstained, and failed bounded outcomes do not hide their state', (t
   delete noScope.scope;
   assert.equal(run(noScope).data.code, 'INVALID_SCOPE');
 
-  const failed = request(root, 'okf-write', 'create', { concept: 'missing/note.md', set: { type: 'Note' } });
-  failed.scope = { concepts: ['missing/note.md'] };
-  assert.equal(run(failed).result, 'failed/incomplete');
+  if (process.getuid && process.getuid() === 0) {
+    t.skip('root can write through a read-only directory');
+  } else {
+    fs.chmodSync(root, 0o555);
+    try {
+      const failed = request(root, 'okf-write', 'create', { concept: 'missing/note.md', set: { type: 'Note' } });
+      failed.scope = { concepts: ['missing/note.md'] };
+      const response = run(failed);
+      assert.equal(response.result, 'blocked');
+      assert.ok(response.findings.some((item) => item.code === 'PARENT_DIRECTORY_NOT_WRITABLE'));
+    } finally {
+      fs.chmodSync(root, 0o755);
+    }
+  }
 });
 
 test('mode, scope, ownership, evidence, and semantic gates block only the request', (t) => {
