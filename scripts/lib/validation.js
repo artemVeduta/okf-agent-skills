@@ -92,22 +92,86 @@ function parseYAML(text) {
     return fail(line, 'unterminated quoted scalar');
   }
 
+  // YAML 1.2 Core Schema tag resolution (spec 1.2.2 section 10.3.2): only these
+  // exact-case words are null/bool; every other capitalization (`Yes`, `on`, ...)
+  // is a plain string, and is returned as one below.
+  const NULL_WORDS = new Set(['~', 'null', 'Null', 'NULL']);
+  const TRUE_WORDS = new Set(['true', 'True', 'TRUE']);
+  const FALSE_WORDS = new Set(['false', 'False', 'FALSE']);
+
+  // Core Schema double-quote escapes this reader supports. Anything else
+  // (`\xNN`, `\uNNNN`, `\a`, `\N`, ...) is refused rather than silently
+  // stripped of its backslash, which would change the string's meaning.
+  const DOUBLE_QUOTE_ESCAPES = { '\\': '\\', '"': '"', n: '\n', t: '\t', r: '\r', '0': '\0' };
+
+  function decodeDoubleQuoted(body, line) {
+    let out = '';
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i];
+      if (c !== '\\') { out += c; continue; }
+      i += 1;
+      const esc = body[i];
+      if (esc === undefined) fail(line, 'unterminated escape sequence in a double-quoted scalar');
+      if (!Object.hasOwn(DOUBLE_QUOTE_ESCAPES, esc)) fail(line, `unsupported escape sequence '\\${esc}' in a double-quoted scalar`);
+      out += DOUBLE_QUOTE_ESCAPES[esc];
+    }
+    return out;
+  }
+
+  // Splits the inside of a single-line `[ ... ]` flow sequence on top-level
+  // commas, respecting quotes. A nested `[` or `{` is refused rather than
+  // partially parsed, since this reader supports flow sequences of scalars
+  // only (the OKF v0.2 frontmatter model uses them only for lists like
+  // `tags: [architecture]`).
+  function splitFlowSeq(inner, line) {
+    const items = [];
+    let cur = '';
+    let quote = null;
+    for (let i = 0; i < inner.length; i++) {
+      const c = inner[i];
+      if (quote) {
+        cur += c;
+        if (quote === '"' && c === '\\') { i += 1; cur += inner[i] ?? ''; }
+        else if (c === quote) quote = null;
+        continue;
+      }
+      if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+      if (c === '[' || c === '{') fail(line, 'a nested flow collection is not supported');
+      if (c === ',') { items.push(cur.trim()); cur = ''; continue; }
+      cur += c;
+    }
+    if (quote) fail(line, 'unterminated quoted scalar in a flow sequence');
+    items.push(cur.trim());
+    if (items.some((item) => item === '')) fail(line, 'a flow sequence item is empty');
+    return items;
+  }
+
   function decode(t, line) {
-    if (t === '' || t === '~' || t === 'null') return null;
-    if (t === 'true') return true;
-    if (t === 'false') return false;
+    if (NULL_WORDS.has(t) || t === '') return null;
+    if (TRUE_WORDS.has(t)) return true;
+    if (FALSE_WORDS.has(t)) return false;
     if (t === '[]') return [];
     if (t === '{}') return {};
     if (t[0] === '"' || t[0] === "'") {
       if (quoteEnd(t, line) !== t.length - 1) fail(line, 'unexpected text after a quoted scalar');
       const body = t.slice(1, -1);
-      return t[0] === '"' ? body.replace(/\\(.)/g, (m, c) => (c === 'n' ? '\n' : c)) : body.replace(/''/g, "'");
+      return t[0] === '"' ? decodeDoubleQuoted(body, line) : body.replace(/''/g, "'");
     }
     if (isSeqText(t)) fail(line, 'nested sequences are not supported');
     if ('|>'.includes(t[0])) fail(line, 'block scalars are not supported');
-    if ('[{'.includes(t[0])) fail(line, 'flow collections are not supported');
+    if (t[0] === '[') {
+      if (t[t.length - 1] !== ']') fail(line, 'a flow sequence must open and close on the same line');
+      return splitFlowSeq(t.slice(1, -1), line).map((item) => decode(item, line));
+    }
+    if (t[0] === '{') fail(line, 'flow mappings are not supported');
     if ('&*!%@`'.includes(t[0])) fail(line, `unsupported construct: ${t[0]}`);
-    if (/^-?\d+(\.\d+)?$/.test(t) && String(Number(t)) === t) return Number(t);
+    if (/^[-+]?0[xX][0-9a-fA-F]+$/.test(t) || /^[-+]?0[oO][0-7]+$/.test(t)) {
+      fail(line, `numeric literal '${t}' is not supported; quote it as a string`);
+    }
+    if (/^[+-]?\d+(\.\d+)?$/.test(t)) {
+      if (String(Number(t)) === t) return Number(t);
+      fail(line, `numeric literal '${t}' cannot be represented exactly; quote it as a string`);
+    }
     return t;
   }
 
@@ -190,6 +254,7 @@ function parseYAML(text) {
       if (ind < indent || isSeqText(lines[idx].trim())) break;
       const line = stripComment(lines[idx]).trim();
       idx += 1;
+      if (line === '...') fail(idx, 'multi-document markers are not supported in frontmatter');
       const kv = splitKey(line, idx);
       if (!kv) fail(idx, 'expected "key: value"');
       assign(obj, seen, kv, indent, idx);
