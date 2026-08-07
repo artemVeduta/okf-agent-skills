@@ -19,6 +19,7 @@ const requiredPayload = new Map([
   ['partition', ['cwd']],
   ['assemble', ['cwd']],
   ['migration-validate', ['cwd']],
+  ['publish', ['cwd']],
   ['resolve', ['cwd']],
   ['read', ['cwd', 'target']],
   ['search', ['cwd', 'query']],
@@ -104,6 +105,11 @@ function parseRequest(text, expectedSkill) {
     }
     if (!Array.isArray(obj.payload.shards) || obj.payload.shards.length === 0) {
       throw new Error('Missing payload.shards');
+    }
+  }
+  if (obj.operation === 'publish') {
+    if (!Array.isArray(obj.payload.staged) || obj.payload.staged.length === 0) {
+      throw new Error('Missing payload.staged');
     }
   }
   if (obj.operation === 'resolve' && typeof obj.payload.target !== 'string') throw new Error('Missing payload.target');

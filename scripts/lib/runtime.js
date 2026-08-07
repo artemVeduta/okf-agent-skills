@@ -1,5 +1,6 @@
 const path = require('node:path');
 const crypto = require('node:crypto');
+const childProcess = require('node:child_process');
 const validation = require('./validation');
 const admission = require('./admission');
 const manifest = require('./manifest');
@@ -22,14 +23,23 @@ const routerOwners = new Map([
   ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
   ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
   ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'], ['partition', 'okf-setup'],
-  ['assemble', 'okf-setup'], ['migration-validate', 'okf-setup'],
+  ['assemble', 'okf-setup'], ['migration-validate', 'okf-setup'], ['publish', 'okf-setup'],
 ]);
 
-// `inspect`, `repair`, `plan`, `aggregate`, `report`, `partition`, and `assemble` all
-// report on or compute around state that exists before or independently of the
-// activation marker, so all seven bypass the shared activation gate the same way
-// (#133/#138/#135/#136/#146/#147). `discover` (#142) and `migration-plan` (#144)
-// deliberately do NOT: unlike those seven, each needs a bundle root to already exist
+// #149: the one process boundary `publish` invokes as a caller (never a target --
+// `okf-setup` still carries no role in `scripts/lib/delegation.js`'s `ROLES` map and
+// still is not in any adapter manifest's `bridge.skills`, see `executePublish` below).
+// Spawning the sibling delegation wrapper from a `scripts/lib/*` module already has a
+// precedent: `scripts/lib/adapters.js` spawns `okf-read.js` the same way, for the same
+// reason -- reuse the one shared contract seam instead of re-deriving admission,
+// evidence, or write-gate logic here a second time.
+const DELEGATE_WRAPPER = path.join(__dirname, '..', 'okf-delegate.js');
+
+// `inspect`, `repair`, `plan`, `aggregate`, `report`, `partition`, `assemble`, and
+// `publish` all report on or compute around state that exists before or independently
+// of the activation marker, so all eight bypass the shared activation gate the same way
+// (#133/#138/#135/#136/#146/#147/#149). `discover` (#142) and `migration-plan` (#144)
+// deliberately do NOT: unlike those eight, each needs a bundle root to already exist
 // -- `discover` to exclude it from the scan, `migration-plan` to check a candidate
 // target path for a collision -- and each runs as a step of an already-active setup
 // session rather than something that inspects or repairs the marker itself.
@@ -40,10 +50,16 @@ const routerOwners = new Map([
 // staging area alongside the bundle, never the bundle itself, so it shares the same
 // bypass for the same reason. `migration-validate` (#148) only ever reads that same
 // staging area back, never the bundle itself either, so it bypasses for the identical
-// reason `assemble` does. An automatic caller gets the same silence every other
+// reason `assemble` does. `publish` (#149) never touches the bundle directly either --
+// every real mutation it causes happens one level down, inside a delegated `okf-write`
+// `create` call that runs its own full admission (REACH/TRUST/ACCESS/PRESENCE),
+// evidence gate, and write gate exactly as any other caller of that seam would; gating
+// `publish` itself a second time at this outer level would only duplicate that check
+// with weaker information (no per-concept evidence, no per-concept task kind) than the
+// delegated call already has. An automatic caller gets the same silence every other
 // operation on an inactive bundle gets; only an explicit call after `init`/`repair`
 // have run reaches `discover`/`migration-plan`.
-const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report', 'partition', 'assemble', 'migration-validate']);
+const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report', 'partition', 'assemble', 'migration-validate', 'publish']);
 
 const primaryEffects = new Map([
   ['create', 'concept-create'], ['revise', 'concept-revise'], ['format', 'format'],
@@ -1277,6 +1293,20 @@ function executeAssemble(request, services) {
  *     unless a human review was actually declared. This operation never
  *     recomputes `report`'s own summary statistics; a caller who wants those
  *     still calls `report` itself, separately, once this gate is satisfied.
+ *
+ * #149 audit note: this in-process call to `validation.validateRead` is not the
+ * private read path the audit was looking for. `okf-read`'s own `validate`
+ * operation (see `validateRead(request, services)` below, the router-level
+ * function of the same name) calls the exact same shared function against the
+ * live bundle; this operation calls it against the staging directory instead,
+ * because staging is not an admitted OKF bundle at all -- it carries no
+ * activation marker and sits beside the bundle, not inside it, so `okf-read`'s
+ * own admission could never resolve it as a candidate in the first place.
+ * Delegating this read through `okf-read` is therefore not merely unneeded
+ * here, it is impossible without first admitting staging as a bundle, which it
+ * deliberately is not (#131, #147). One implementation, two callers, one of
+ * them reachable only in-process because its target is outside what the
+ * bundle-shaped seam can even name.
  */
 function validSelectedPath(item) {
   return typeof item === 'string' && item !== '';
@@ -1327,6 +1357,190 @@ function executeMigrationValidate(request, services) {
     missing_disposition: missingDisposition,
     concepts_checked: structural.data.concepts.map((item) => item.path),
     semantic_fidelity: { assessed },
+  }, findings);
+}
+
+function validPublishStagedRef(item) {
+  return !!item && typeof item === 'object' && !Array.isArray(item) &&
+    typeof item.concept === 'string' && item.concept !== '' &&
+    typeof item.file === 'string' && item.file !== '';
+}
+
+function dispatchBrief(brief) {
+  const result = childProcess.spawnSync(process.execPath, [DELEGATE_WRAPPER], {
+    input: JSON.stringify(brief), encoding: 'utf8',
+  });
+  try {
+    const parsed = JSON.parse(result.stdout);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function dispatchFailure(role) {
+  return { status: 'indeterminate', findings: [suiteFinding('PUBLISH_DISPATCH_FAILED', { gate: 'publish', role })] };
+}
+
+// #149: the one delegation brief `publish` issues as a *reader*, a fail-fast
+// recheck of the target bundle's own current state through the identical
+// seam a delegated write already uses (#132: read delegation is the same
+// model as write), rather than a second, private admission implementation
+// inside this operation. No concept-level data is requested or needed:
+// `scripts/lib/delegation.js`'s own receipt shape deliberately never forwards
+// an operation's `data` back to a caller (only `evidence`, `validation`,
+// `residue`, and `actual_effects` -- see `delegation.receipt`), so this
+// call's only usable signal is `status`/`findings`, which is exactly enough
+// to answer the one question this step needs answered: is the target bundle
+// currently in a state `okf-write` could actually create into.
+function publishPrecheckBrief(cwd, bundle, taskKind) {
+  return {
+    role: 'okf-reader',
+    task_kind: taskKind,
+    operation_class: 'validate',
+    cwd,
+    bundle,
+    paths: [bundle],
+    allowed_effects: [],
+    forbidden_effects: ['concept-create', 'concept-revise', 'format', 'relationship', 'machine-verify'],
+    evidence: ['index.md'],
+    required_checks: ['runtime-preflight'],
+    settings: { read_execution: 'delegated', write_execution: 'delegated' },
+    expected_result: `${bundle} current bundle state confirmed before publish`,
+  };
+}
+
+// The one delegation brief `publish` issues as a *writer*, once per staged
+// concept: a `create` brief carrying the staged frontmatter tree (`status`
+// stripped -- the write gate assigns its own `status: "draft"` and refuses a
+// `set` that already names one, see `unsupportedPayload`) and the staged
+// Markdown body, forwarded through the #149 extension to `buildRequest` in
+// `scripts/lib/delegation.js`.
+function publishWriteBrief(cwd, bundle, taskKind, concept, tree, body) {
+  return {
+    role: 'okf-writer',
+    task_kind: taskKind,
+    operation_class: 'create',
+    cwd,
+    bundle,
+    paths: [`${concept}.md`],
+    changes: tree,
+    body,
+    allowed_effects: ['concept-create'],
+    forbidden_effects: ['concept-revise', 'format', 'relationship', 'machine-verify'],
+    evidence: ['index.md'],
+    required_checks: ['runtime-preflight'],
+    settings: { read_execution: 'delegated', write_execution: 'delegated' },
+    expected_result: `${concept}.md created from staged migration content`,
+  };
+}
+
+// A staged file's own frontmatter tree, minus `status` (see `publishWriteBrief`
+// above), plus its body. Reuses the exact reader `readTree`/`validateRead`
+// already use internally (`parseFrontmatter` + `parseYAML`), never a second
+// parser for the same staged shape `assembly.js`'s own `renderConcept` wrote.
+function stagedConceptContent(text) {
+  const extracted = validation.parseFrontmatter(text);
+  const tree = validation.parseYAML(extracted.frontmatter);
+  delete tree.status;
+  return { tree, body: extracted.body };
+}
+
+/*
+ * #149: the publication step -- staged concepts becoming real bundle concepts
+ * -- through the write gate, never around it. `assemble` (#147) already
+ * staged one Markdown file per concept outside the bundle; `publish` is the
+ * only thing allowed to promote that staged content into the bundle itself,
+ * and it does so exactly the way any other caller would: by building an
+ * `okf-writer` delegation brief per concept and dispatching it through
+ * `scripts/okf-delegate.js`, the identical process boundary a delegated
+ * sub-agent's own `create` call would use (`agents/okf-writer.md`). `publish`
+ * never calls `validation.evaluateCreate` itself, never calls
+ * `services.publishFile` itself, and never requires `scripts/lib/delegation`
+ * directly -- that would be a real circular require, since `delegation.js`
+ * already requires this file for `primaryEffects`/`routerOwners`. It only
+ * knows how to build a brief object and hand it to the one process that
+ * already validates, admits, and writes with authority; see `DELEGATE_WRAPPER`
+ * above for why spawning that sibling wrapper from here has precedent.
+ *
+ * `okf-setup` gains no role in `scripts/lib/delegation.js`'s `ROLES` map and
+ * no entry in any adapter manifest's `bridge.skills` by doing this: it is
+ * invoking the delegation bridge as a caller, the same way a human or an
+ * agent typing `node scripts/okf-delegate.js` would, never registering itself
+ * as a delegation target another caller could address. `okf-setup` still
+ * accepts no delegation brief of its own (#134).
+ *
+ * `publish` is in `activationBypassOperations` above (it never touches the
+ * bundle directly, so the outer activation gate has nothing of its own to
+ * check), which means the one delegated `okf-reader` `validate` precheck
+ * below is not optional defense-in-depth on top of some other admission --
+ * it is the only thing standing between an explicit `publish` call and an
+ * entirely inactive or invalid bundle. Its `okf-read` dispatch runs the
+ * ordinary activation gate on its own copy of the request (`cwd`/`bundle`
+ * unchanged), so an absent or invalid marker is caught there, honestly,
+ * before any per-concept `create` is even attempted.
+ */
+function executePublish(request, services) {
+  const payload = request.payload;
+  const gitRoot = services.gitRootOf(path.resolve(payload.cwd));
+  if (!gitRoot) return respond(request, 'not-configured', {}, []);
+
+  const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
+  if (typeof bundleName !== 'string' || bundleName === '') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!lifecycle.isWritableTaskKind(payload.task_kind)) {
+    return respond(request, 'blocked', { code: 'TASK_KIND_NOT_WRITE_ELIGIBLE' }, []);
+  }
+  if (!Array.isArray(payload.staged) || payload.staged.length === 0 || !payload.staged.every(validPublishStagedRef)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (new Set(payload.staged.map((item) => item.concept)).size !== payload.staged.length) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  const cwd = payload.cwd;
+  const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
+
+  const precheck = dispatchBrief(publishPrecheckBrief(cwd, bundleName, payload.task_kind)) || dispatchFailure('okf-reader');
+  if (precheck.status !== 'ok') {
+    return respond(request, 'blocked', { code: 'PUBLISH_PRECHECK_FAILED' }, precheck.findings || []);
+  }
+
+  const results = payload.staged.map((item) => {
+    const rel = monorepo.normalizeRelative(item.file);
+    const resolved = rel ? path.resolve(gitRoot, rel) : null;
+    if (!resolved || !inside(stagingRoot, resolved)) {
+      return { concept: item.concept, status: 'blocked: staged-file-outside-staging', findings: [] };
+    }
+    let text;
+    try {
+      text = services.readFile(resolved);
+    } catch {
+      return { concept: item.concept, status: 'blocked: staged-file-unreadable', findings: [] };
+    }
+    let parsed;
+    try {
+      parsed = stagedConceptContent(text);
+    } catch {
+      return { concept: item.concept, status: 'blocked: staged-file-unparseable', findings: [] };
+    }
+    const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, parsed.tree, parsed.body);
+    const outcome = dispatchBrief(brief) || dispatchFailure('okf-writer');
+    return { concept: item.concept, status: outcome.status, findings: outcome.findings || [] };
+  });
+
+  const published = results.filter((item) => item.status === 'clean').map((item) => item.concept);
+  const failed = results.filter((item) => item.status !== 'clean');
+  const findings = failed.flatMap((item) => item.findings.map((finding) => (
+    { ...finding, detail: { ...finding.detail, concept: item.concept } }
+  )));
+
+  return respond(request, 'ok', {
+    status: failed.length === 0 ? 'complete' : 'partial',
+    published,
+    failed: failed.map((item) => ({ concept: item.concept, status: item.status })),
+    results,
   }, findings);
 }
 
@@ -1509,6 +1723,7 @@ function runActive(skill, request, services) {
     if (request.operation === 'partition') return executePartition(request, services);
     if (request.operation === 'assemble') return executeAssemble(request, services);
     if (request.operation === 'migration-validate') return executeMigrationValidate(request, services);
+    if (request.operation === 'publish') return executePublish(request, services);
     return unknownOperation(request);
   }
   if (skill === 'okf-review') {

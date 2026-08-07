@@ -26,8 +26,9 @@ description: Routes OKF requests to the owning skill when a user selects an oper
 | `partition` | `okf-setup` |
 | `assemble` | `okf-setup` |
 | `migration-validate` | `okf-setup` |
+| `publish` | `okf-setup` |
 
-This table is coarser than the runtime's: fifteen user-facing categories, mapped to the skill that owns each. It is a map for a human or agent choosing which skill to reach for, not the authorization mechanism itself.
+This table is coarser than the runtime's: sixteen user-facing categories, mapped to the skill that owns each. It is a map for a human or agent choosing which skill to reach for, not the authorization mechanism itself.
 
 ## Wrapper invocation
 
