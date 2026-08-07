@@ -1,0 +1,29 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - run: node --test "test/*.test.js"
+      - name: Bump version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          node -e "
+            const pkg = require('./packages/opencode/package.json');
+            pkg.version = '$TAG';
+            require('fs').writeFileSync('./packages/opencode/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+      - run: npm publish --access public
+        working-directory: packages/opencode
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
