@@ -22,12 +22,19 @@ clarifies domain language, intent, rationale, constraints, invariants, or
 workflows without duplicating implementation.
 _Avoid_: Documentation of the code, prose mirror
 
+**OKF-native documentation**:
+A project documentation policy in which all durable project documentation
+lives as OKF concepts and indexes. It does not change project mode: in a
+code-backed project, code, configuration, and tests remain authoritative for
+executable behavior.
+_Avoid_: Third project mode, code mirror
+
 **Automatic lifecycle**:
 The recurring behavior through which an agent consults relevant OKF knowledge
-and maintains small, evidence-backed documentation changes while doing normal
-project work. This behavior reaches the wrapper as an explicit invocation,
-never an automatic invocation: the agent, not an adapter or hook, sends the
-request.
+and proposes small, evidence-backed documentation changes while doing normal
+project work. A mutation follows acceptance of an OKF change proposal. This
+behavior reaches the wrapper as an explicit invocation, never an automatic
+invocation: the agent, not an adapter or hook, sends the request.
 _Avoid_: Automatic full sync, automatic invocation
 
 **Explicit invocation**:
@@ -72,11 +79,32 @@ adopted evidence, clear ownership, and post-write validation. It does not
 automatically alter trust, status, freshness, or review baselines.
 _Avoid_: Source change, automatic repair, documentation mirror
 
+**OKF change proposal**:
+A bounded, read-only list of intended concept changes and their evidence,
+presented for one user decision before any listed write. Acceptance applies
+only to the listed changes, and each concept remains an independently validated
+write.
+_Avoid_: Draft concept, write approval per concept, automatic mutation
+
+**Domain-from-code proposal**:
+An OKF change proposal for a user-selected domain scope, based on existing OKF
+knowledge and observed project or external evidence. It contains curated
+language, intent, rationale, constraints, invariants, ownership, navigation, or
+workflows that code cannot explain adequately; it is not a description of the
+implementation.
+_Avoid_: Code import, generated API reference, prose mirror
+
 **Scoped synchronization**:
 Reconciliation of authoritative evidence and durable context within an
 explicit scope. Incremental, diff-scoped, and full-project synchronization
 have different safeguards; synchronization is not mirroring.
 _Avoid_: Automatic full sync, bidirectional replication
+
+**Whole-workspace synchronization**:
+Explicit reconciliation of all admitted bundles in the active workspace. It
+collects read-only findings before one complete proposal and keeps each
+bundle's authority and validation boundaries during approved writes.
+_Avoid_: Scheduled synchronization, automatic workspace write, bundle merge
 
 **Trust tier**:
 An advisory classification of the verification evidence recorded for a
