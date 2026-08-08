@@ -7,7 +7,7 @@ const lifecycle = require('./lifecycle');
 const orientation = require('./orientation');
 const setup = require('./setup');
 const {
-  respond, suiteFinding, writeResponse, effectRecords, targetOutsideWorktreeBlocked,
+  respond, suiteFinding, writeFailureReason, writeResponse, effectRecords, targetOutsideWorktreeBlocked,
   primaryEffects, derivedEffects,
 } = require('./response');
 
@@ -109,6 +109,14 @@ function derivativeLine(effect, operation, concept) {
 
 function appendDerivative(effect, operation, bundleRoot, concept, services) {
   const file = path.join(bundleRoot, effect === 'index-maintenance' ? 'index.md' : 'log.md');
+  // #151: same realpath re-check the concept writers apply, reused rather than
+  // copied, so a symlinked `index.md`/`log.md` cannot walk this append outside
+  // the bundle root before any write happens.
+  if (validation.escapesBundle(file, bundleRoot, services)) {
+    const error = new Error('symlink escape');
+    error.code = 'SYMLINK_ESCAPE';
+    throw error;
+  }
   if (!services.exists(file)) return { written: false };
   const current = services.readFile(file);
   const line = derivativeLine(effect, operation, concept);
@@ -188,7 +196,7 @@ function executeBounded(request, services, operation, requireScope = false) {
     const writerRequest = { ...request, scope: scoped.scope, payload: { ...payload, bundle: bundleRoot } };
     outcome = operation === 'create' ? validation.evaluateCreate(writerRequest, services) : validation.evaluate(writerRequest, services);
   } catch (error) {
-    const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: error.message || 'write failed' });
+    const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: writeFailureReason(error) });
     return settle('failed/incomplete', [finding]);
   }
   if (outcome.result === 'blocked') return refuse(undefined, null, outcome.findings);
@@ -200,10 +208,10 @@ function executeBounded(request, services, operation, requireScope = false) {
     completedEffects.add(primaryEffects.get(operation));
   } catch (error) {
     if (error && error.code === 'TARGET_CHANGED') {
-      const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: payload.concept, reason: error.message });
+      const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: payload.concept, reason: writeFailureReason(error, 'target changed') });
       return refuse('TARGET_CHANGED', null, [...outcome.findings, finding]);
     }
-    const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: error.message || 'write failed' });
+    const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: writeFailureReason(error) });
     return settle('failed/incomplete', [...outcome.findings, finding], { completed: completedEffects });
   }
   const checked = validation.postWrite(bundleRoot, payload.concept, services, outcome.data.tree);
@@ -216,7 +224,13 @@ function executeBounded(request, services, operation, requireScope = false) {
         completedEffects.add(effect);
       }
     } catch (error) {
-      const reason = error.message || 'derivative write failed';
+      if (error.code === 'SYMLINK_ESCAPE') {
+        const finding = suiteFinding('SYMLINK_ESCAPE', { gate: 'derivative', effect, path: payload.concept });
+        return settle('failed/incomplete', [...outcome.findings, ...checked.findings, finding], {
+          completed: completedEffects, residue: [{ effect, reason: 'symlink escape' }],
+        });
+      }
+      const reason = writeFailureReason(error, 'derivative write failed');
       const finding = suiteFinding('DERIVATIVE_WRITE_FAILED', { gate: 'derivative', effect, reason });
       return settle('failed/incomplete', [...outcome.findings, ...checked.findings, finding], {
         completed: completedEffects, residue: [{ effect, reason }],

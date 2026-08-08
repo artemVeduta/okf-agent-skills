@@ -14,8 +14,13 @@ function targetChanged() {
   return error;
 }
 
+function mkdir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
 function publishFile(file, bytes, expected) {
   const directory = path.dirname(file);
+  mkdir(directory);
   const temporary = path.join(directory, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
   try {
     fs.writeFileSync(temporary, bytes);
@@ -96,7 +101,7 @@ module.exports = {
   access: (file) => { try { fs.accessSync(file, fs.constants.R_OK); return true; } catch { return false; } },
   writable: (file) => { try { fs.accessSync(file, fs.constants.W_OK); return true; } catch { return false; } },
   listFiles,
-  mkdir: (dir) => fs.mkdirSync(dir, { recursive: true }),
+  mkdir,
   remove: (file) => fs.rmSync(file, { force: true }),
   readdir: (dir) => fs.readdirSync(dir),
   removeEmptyDir: (dir) => { try { fs.rmdirSync(dir); return true; } catch { return false; } },

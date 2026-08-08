@@ -27,6 +27,17 @@ function suiteFinding(code, detail) {
   return { code, origin: 'suite', severity: 'error', blocks: true, detail };
 }
 
+// Node system errors put absolute paths and temp names in `.message`. Prefer the
+// stable `.code` token; keep a path-free synthetic message; otherwise a fixed fallback.
+function writeFailureReason(error, fallback = 'write failed') {
+  if (error && typeof error.code === 'string' && /^[A-Z][A-Z0-9_]+$/.test(error.code)) return error.code;
+  if (error && typeof error.message === 'string' && error.message !== ''
+    && !/[\\/]/.test(error.message) && !/\.tmp/.test(error.message)) {
+    return error.message;
+  }
+  return fallback;
+}
+
 // A write result determines its own authorization and validation state, so callers
 // name the result only and cannot desynchronise the trio.
 const authorizationByResult = new Map([
@@ -78,6 +89,6 @@ function targetOutsideWorktreeBlocked(request, effects) {
 }
 
 module.exports = {
-  respond, suiteFinding, effectRecords, writeResponse, targetOutsideWorktreeBlocked,
+  respond, suiteFinding, writeFailureReason, effectRecords, writeResponse, targetOutsideWorktreeBlocked,
   primaryEffects, derivedEffects, writeLimits,
 };

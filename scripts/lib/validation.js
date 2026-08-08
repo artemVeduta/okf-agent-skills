@@ -8,14 +8,15 @@ undecided. Invented here, pending a decision:
   - the finding codes ROOT_DECLARATION_NOT_EXACT, FRONTMATTER_UNPARSEABLE,
     TYPE_MISSING, BUNDLE_FILES_NONCONFORMING, SOURCE_RESOURCE_MISSING,
     GENERATED_BY_MISSING, RUNTIME_MISSING, HUMAN_PREFIX_MISSING,
-    PARSE_TREE_MISMATCH, DEPENDS_ON_BLOCKED_CONCEPT, and the two added in this pass,
-    CONCEPT_OUTSIDE_BUNDLE (blocking) and UNRESOLVED_INTERNAL_LINK (non-blocking)
+    PARSE_TREE_MISMATCH, DEPENDS_ON_BLOCKED_CONCEPT, and the three added in this pass,
+    CONCEPT_OUTSIDE_BUNDLE (blocking), UNRESOLVED_INTERNAL_LINK (non-blocking), and
+    CONCEPT_PARENT_NOT_A_DIRECTORY (blocking)
   - the set of recognized non-human actor prefixes (NON_HUMAN_ACTORS below)
   - upstream findings propagate one level only; cycles are therefore not walked
 */
 
 const path = require('node:path');
-const { inside } = require('./reach');
+const { inside, resolve } = require('./reach');
 
 const NON_HUMAN_ACTORS = ['agent:', 'tool:'];
 
@@ -435,6 +436,24 @@ function projectMode(bundleRoot, services) {
   }
 }
 
+// #151: the lexical containment check above is cheap but can be fooled by a symlink
+// somewhere on the path. This re-checks the deepest existing ancestor's real path
+// against the bundle root's own real path -- `resolve` (reach.js) already walks up
+// past a missing tail, so it is reused rather than copied. Runs before any write and
+// before any directory is made, so an escape is refused before anything else is
+// examined.
+function escapesBundle(candidatePath, bundleRoot, services) {
+  try {
+    return !inside(resolve(candidatePath, services), services.realpath(bundleRoot));
+  } catch (error) {
+    // Permission and I/O failures are not escapes; surface them as write failures.
+    if (error && (error.code === 'EACCES' || error.code === 'EPERM' || error.code === 'EROFS' || error.code === 'EIO')) {
+      throw error;
+    }
+    return true;
+  }
+}
+
 // Step 2: the concept must resolve inside the bundle root. `inside` comes from reach.js.
 
 function readConcept(file, rel, services) {
@@ -572,6 +591,10 @@ function evaluate(request, services) {
     findings.push(blocker('CONCEPT_OUTSIDE_BUNDLE', 'suite', { path: rel }));
     return done('blocked', { path: rel });
   }
+  if (escapesBundle(conceptPath, bundleRoot, services)) {
+    findings.push(blocker('SYMLINK_ESCAPE', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
 
   const current = readConcept(conceptPath, rel, services);
   if (current.finding) {
@@ -631,8 +654,22 @@ function evaluateCreate(request, services) {
     findings.push(blocker('CONCEPT_OUTSIDE_BUNDLE', 'suite', { path: rel }));
     return done('blocked', { path: rel });
   }
+  if (escapesBundle(conceptPath, bundleRoot, services)) {
+    findings.push(blocker('SYMLINK_ESCAPE', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
   if (services.exists(conceptPath)) {
     findings.push(blocker('CONCEPT_ALREADY_EXISTS', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
+
+  const nearestParent = nearestExistingDir(path.dirname(conceptPath), services);
+  if (services.isFile(nearestParent)) {
+    findings.push(blocker('CONCEPT_PARENT_NOT_A_DIRECTORY', 'suite', { path: rel }));
+    return done('blocked', { path: rel });
+  }
+  if (!services.writable(nearestParent)) {
+    findings.push(blocker('PARENT_DIRECTORY_NOT_WRITABLE', 'suite', { path: rel }));
     return done('blocked', { path: rel });
   }
 
@@ -1157,6 +1194,7 @@ function evaluateReview(request, services) {
 
 module.exports = {
   evaluate, evaluateCreate, evaluateInit, evaluateReview,
+  escapesBundle,
   inspectIndex,
   parseFrontmatter, parseYAML, serializeFrontmatter,
   postWrite, postWriteInit, projectMode, validateRead,

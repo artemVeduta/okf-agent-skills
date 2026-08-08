@@ -16,7 +16,7 @@ const assembly = require('./assembly');
 const lifecycle = require('./lifecycle');
 const { inside } = require('./paths');
 const {
-  respond, suiteFinding, writeResponse, effectRecords, targetOutsideWorktreeBlocked,
+  respond, suiteFinding, writeFailureReason, writeResponse, effectRecords, targetOutsideWorktreeBlocked,
 } = require('./response');
 
 // #149: the one process boundary `publish` invokes as a caller (never a target --
@@ -90,7 +90,7 @@ function executeInit(request, services) {
   try {
     outcome = validation.evaluateInit({ ...request, payload: { ...payload, bundle: bundleRoot } }, services);
   } catch (error) {
-    return settle('failed/incomplete', [suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: error.message || 'write failed' })]);
+    return settle('failed/incomplete', [suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: writeFailureReason(error) })]);
   }
   if (outcome.result === 'blocked') return refuse(undefined, null, outcome.findings);
   if (outcome.result === 'failed/incomplete') return settle('failed/incomplete', outcome.findings);
@@ -98,15 +98,15 @@ function executeInit(request, services) {
 
   const completedEffects = new Set();
   try {
-    services.mkdir(bundleRoot);
+    // publishFile already mkdir's the parent of index.md (the bundle root).
     services.publishFile(outcome.data.file, outcome.data.rendered, outcome.data.expected);
     completedEffects.add('init');
   } catch (error) {
     if (error && error.code === 'TARGET_CHANGED') {
-      const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: 'index.md', reason: error.message });
+      const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: 'index.md', reason: writeFailureReason(error, 'target changed') });
       return refuse('TARGET_CHANGED', null, [...outcome.findings, finding]);
     }
-    const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: error.message || 'write failed' });
+    const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: writeFailureReason(error) });
     return settle('failed/incomplete', [...outcome.findings, finding], { completed: completedEffects });
   }
 
