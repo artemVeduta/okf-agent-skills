@@ -8,8 +8,9 @@ undecided. Invented here, pending a decision:
   - the finding codes ROOT_DECLARATION_NOT_EXACT, FRONTMATTER_UNPARSEABLE,
     TYPE_MISSING, BUNDLE_FILES_NONCONFORMING, SOURCE_RESOURCE_MISSING,
     GENERATED_BY_MISSING, RUNTIME_MISSING, HUMAN_PREFIX_MISSING,
-    PARSE_TREE_MISMATCH, DEPENDS_ON_BLOCKED_CONCEPT, and the two added in this pass,
-    CONCEPT_OUTSIDE_BUNDLE (blocking) and UNRESOLVED_INTERNAL_LINK (non-blocking)
+    PARSE_TREE_MISMATCH, DEPENDS_ON_BLOCKED_CONCEPT, and the three added in this pass,
+    CONCEPT_OUTSIDE_BUNDLE (blocking), UNRESOLVED_INTERNAL_LINK (non-blocking), and
+    CONCEPT_PARENT_NOT_A_DIRECTORY (blocking)
   - the set of recognized non-human actor prefixes (NON_HUMAN_ACTORS below)
   - upstream findings propagate one level only; cycles are therefore not walked
 */
@@ -444,7 +445,11 @@ function projectMode(bundleRoot, services) {
 function escapesBundle(candidatePath, bundleRoot, services) {
   try {
     return !inside(resolve(candidatePath, services), services.realpath(bundleRoot));
-  } catch {
+  } catch (error) {
+    // Permission and I/O failures are not escapes; surface them as write failures.
+    if (error && (error.code === 'EACCES' || error.code === 'EPERM' || error.code === 'EROFS' || error.code === 'EIO')) {
+      throw error;
+    }
     return true;
   }
 }

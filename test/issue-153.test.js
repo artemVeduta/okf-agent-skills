@@ -184,3 +184,34 @@ test('the SYMLINK_ESCAPE refusal text contains no absolute path', (t) => {
     assert.equal(text.includes(outside), false);
   }
 });
+
+test('a symlinked index.md that escapes the bundle refuses derivative append with SYMLINK_ESCAPE', (t) => {
+  const root = bundle(t);
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-153-outside-')));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: "Note"\ntitle: "Before"\nstatus: "draft"\n---\n# Before\n');
+  fs.writeFileSync(path.join(outside, 'index.md'), fs.readFileSync(path.join(root, 'index.md')));
+  fs.unlinkSync(path.join(root, 'index.md'));
+  if (!trySymlink(path.join(outside, 'index.md'), path.join(root, 'index.md'))) {
+    t.skip('platform cannot create a symbolic link');
+    return;
+  }
+
+  const revise = request(root, 'note.md', {
+    set: { title: 'After' },
+    effects: ['concept-revise', 'index-maintenance'],
+  });
+  revise.operation = 'revise';
+  const response = run(revise);
+
+  assert.equal(response.result, 'failed/incomplete');
+  assert.ok(response.findings.some((item) => item.code === 'SYMLINK_ESCAPE'));
+  assert.deepEqual(response.data.actual_effects.map((item) => item.effect), ['concept-revise']);
+  assert.ok(response.data.residue.some((item) => item.effect === 'index-maintenance'));
+  assert.equal(fs.readFileSync(path.join(outside, 'index.md'), 'utf8').includes('note.md'), false);
+  for (const finding of response.findings) {
+    const text = JSON.stringify(finding);
+    assert.equal(text.includes(root), false);
+    assert.equal(text.includes(outside), false);
+  }
+});

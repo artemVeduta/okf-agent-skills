@@ -161,7 +161,7 @@ test('bounded primary effects create, format, relate, and machine-verify through
   })).result, 'applied');
 });
 
-test('no-op, abstained, and failed bounded outcomes do not hide their state', (t) => {
+test('no-op, abstained, and blocked bounded outcomes do not hide their state', (t) => {
   const root = bundle(t);
   concept(root);
   const revise = request(root, 'okf-write', 'revise');
