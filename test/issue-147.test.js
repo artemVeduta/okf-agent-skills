@@ -106,6 +106,26 @@ function stagingRoot(root, bundle = 'okf') {
   return path.join(root, '.okf-staging', bundle);
 }
 
+// #174: every staged entry carries the observation binding `publish` cites --
+// the concept's own source file and the SHA-256 of its exact bytes -- so the
+// documented flow (assemble's `data.staged` handed to `publish` unmodified)
+// binds a real source, never filler.
+test('staged entries bind each concept to its own source file identity', (t) => {
+  const root = repo(t);
+  write(root, 'docs/payments/refunds.md', '---\ntype: Decision\n---\n# Refunds\n');
+  const planData = derivedPlan(root);
+
+  const { response } = assembleFixture(root, planData);
+  assert.equal(response.result, 'ok');
+  assert.ok(response.data.staged.length > 0);
+
+  for (const item of response.data.staged) {
+    const digest = require('node:crypto').createHash('sha256')
+      .update(fs.readFileSync(path.join(root, item.path))).digest('hex');
+    assert.deepEqual(item.sources, [{ path: item.path, sha256: digest }], item.concept);
+  }
+});
+
 // ------------------------------------------------------------- clean assembly
 
 test('N shards assemble cleanly into one staged file per concept', (t) => {

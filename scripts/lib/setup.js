@@ -877,6 +877,25 @@ function assemblyShardCoverage(partitionShards, gathered) {
 // itself, only the staging area beside it, so the shared bypass block in
 // `run()` already turns an automatic invocation into silence before this
 // ever runs.
+// #174: the observation binding a staged concept carries into `publish`. The
+// concept's own accepted source file (`item.path`, the path the mapping was
+// approved for) with the SHA-256 of its exact current bytes -- never `index.md`
+// filler. One source hashed once serves every concept split out of it; an
+// unreadable source yields no binding at all rather than an invented one.
+function sourceBinding(gitRoot, sourcePath, identities, services) {
+  const rel = monorepo.normalizeRelative(sourcePath);
+  if (!rel) return [];
+  if (!identities.has(rel)) {
+    let digest = null;
+    try {
+      digest = crypto.createHash('sha256').update(services.readBuffer(path.join(gitRoot, rel))).digest('hex');
+    } catch { digest = null; }
+    identities.set(rel, digest);
+  }
+  const sha256 = identities.get(rel);
+  return sha256 ? [{ path: rel, sha256 }] : [];
+}
+
 function executeAssemble(request, services) {
   const payload = request.payload;
   const context = setupContext(request, services);
@@ -944,11 +963,16 @@ function executeAssemble(request, services) {
   ];
 
   const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
+  const identities = new Map();
   const staged = outcome.concepts.map((item) => {
     const file = path.join(stagingRoot, `${item.concept}.md`);
     services.mkdir(path.dirname(file));
     services.writeFile(file, item.rendered);
-    return { path: item.path, concept: item.concept, type: item.type, shard: item.shard, file: path.relative(gitRoot, file) };
+    return {
+      path: item.path, concept: item.concept, type: item.type, shard: item.shard,
+      file: path.relative(gitRoot, file),
+      sources: sourceBinding(gitRoot, item.path, identities, services),
+    };
   });
 
   return respond(request, 'ok', {
