@@ -171,6 +171,13 @@ the points below.
   on a valid one. It runs ownership, REACH, TRUST, and ACCESS, and skips PRESENCE and the evidence
   gate, because there is no bundle to find yet and nothing to cite. The write gate keeps exactly
   one rule for every other mutation.
+- **The exception covers the activation marker too (#166, implemented by #173).** An explicit
+  `init` runs while `.okf-active` is absent, because there is no bundle yet for a marker to
+  declare active and the setup order `inspect -> consent -> init -> repair activation -> repair
+  manifest -> discover` would otherwise be unreachable on a clean repository. An automatic caller
+  still gets silence, an *invalid* marker still blocks with `ACTIVATION_MARKER_INVALID`, a Git
+  repository is still required, and `init` still never creates or repairs `.okf-active` or
+  `.okf-workspace.json` — marker creation stays a separate, explicit `repair`.
 - **`init` moves off `okf-lifecycle`.** Pinned-spec line 2748 is superseded on `init` alone.
   `sync` and `compact` are unchanged, and `compact` still takes the unknown-operation result.
 - **Migration is a phase, not an operation.** There is no user-facing `migrate`, and no

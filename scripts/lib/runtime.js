@@ -456,6 +456,18 @@ function run(skill, request, services) {
   const activation = activationState(request, services);
   if (activation === 'absent') {
     if (request.invocation === 'automatic') return null;
+    // The bootstrap exception (#166/#173): an explicit `init` runs while the marker is
+    // *absent*, because there is no bundle yet for a marker to declare active, and the
+    // documented order `inspect -> consent -> init -> repair activation -> ...` would
+    // otherwise be unreachable on a clean repository. It is narrower than the bypass set
+    // above: an invalid marker still blocks below, `init` still creates only the bundle
+    // root, and marker creation stays a separate explicit `repair`.
+    // A Git repository is still the precondition every operation shares: outside one,
+    // `init` keeps answering `not-configured` rather than reaching ownership.
+    if (request.operation === 'init' && (skill === 'okf-setup' || skill === 'okf') &&
+      services.gitRootOf(request.payload.cwd)) {
+      return skill === 'okf' ? routerRun(request, services) : runActive(skill, request, services);
+    }
     if (request.operation === 'orient') return orientRespond(request, services, 'absent');
     if (request.operation === 'read' || request.operation === 'search') {
       return respond(request, 'not-configured', routing.notConfiguredData(request.operation), []);
