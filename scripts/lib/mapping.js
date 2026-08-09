@@ -40,7 +40,6 @@ function dirSegments(sourcePath) {
 
 const ADR_FILENAME = /^adr[-_]?\d+/i;
 const RELEASE_FILENAME = /^v?\d+\.\d+\.\d+\.md$/i;
-const GLOSSARY_TERM_LINE = /^\*\*[^*\n]+\*\*:[ \t]*\S/;
 
 // Michael Nygard's ADR template's own four headings, exactly as documented in
 // #130's research (`docs/spec` migration mapping). All four, as their own heading
@@ -54,14 +53,6 @@ function hasHeading(strippedBody, text) {
 
 function isAdrTemplate(strippedBody) {
   return ADR_HEADINGS.every((heading) => hasHeading(strippedBody, heading));
-}
-
-// #130's documented Glossary authoring format: `**Term**: definition.` lines.
-// Two or more is a structural signature; one bold-colon line alone is too weak
-// (ordinary prose uses that construct too) to count as evidence on its own.
-function isGlossaryTemplate(strippedBody) {
-  const matches = strippedBody.match(new RegExp(GLOSSARY_TERM_LINE.source, 'gm'));
-  return Boolean(matches) && matches.length >= 2;
 }
 
 function hasRuntimeField(tree) {
@@ -82,7 +73,7 @@ function inferType(sourcePath, tree, body) {
   if (dirs.includes('adr') || dirs.includes('decisions') || ADR_FILENAME.test(base) || isAdrTemplate(stripped)) {
     return 'Decision';
   }
-  if (dirs.includes('glossary') || base.toLowerCase() === 'glossary.md' || base === 'CONTEXT.md' || isGlossaryTemplate(stripped)) {
+  if (dirs.includes('glossary') || base.toLowerCase() === 'glossary.md' || base === 'CONTEXT.md') {
     return 'Glossary';
   }
   if (dirs.includes('constraints') || dirs.includes('constraint')) return 'Constraint';
