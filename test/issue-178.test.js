@@ -456,6 +456,24 @@ test('publish refuses a navigation target that appeared since the proposal was a
   assert.equal(fs.readFileSync(path.join(root, 'okf', 'payments', 'index.md'), 'utf8'), '# Someone else got here first\n');
 });
 
+test('a source filename that is not a usable concept name is asked about, never rewritten', (t) => {
+  const root = repo(t);
+  write(root, 'docs/-2024 notes.md', '---\ntype: Reference\n---\n# Notes\n');
+  const sources = discoverSources(root);
+  const plan = planned(root, sources);
+
+  const asked = propose(root, plan.plan, sources, { decision: 'accept' });
+  assert.equal(asked.data.code, 'PROPOSAL_NOT_ACCEPTABLE');
+  assert.deepEqual(asked.data.questions.map((item) => item.kind), ['target_invalid']);
+
+  const named = propose(root, plan.plan, sources, {
+    revision: { placements: { 'docs/-2024 notes.md': { name: 'release-notes' } } },
+    decision: 'accept',
+  });
+  assert.equal(named.data.status, 'accepted');
+  assert.equal(outputFor(named, 'release-notes').target_path, 'release-notes.md');
+});
+
 // ------------------------------------------------------------ malformed revisions
 
 test('an ill-formed revision is refused before anything is derived', (t) => {

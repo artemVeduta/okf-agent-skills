@@ -267,6 +267,17 @@ function buildGroups(outputs, revision, questions) {
 // ------------------------------------------------------------------- collisions
 
 function collisionQuestions(outputs, navigation, bundleRoot, services, questions) {
+  // A default basename comes from a source filename, which may not be a usable
+  // concept name at all. That is asked about, never silently rewritten.
+  for (const output of outputs) {
+    if (CONCEPT_NAME.test(output.name)) continue;
+    questions.push(question(
+      `name:${output.id}`,
+      'target_invalid',
+      `"${output.name}" is not a usable concept name for ${output.source || output.target_path}. Name the concept explicitly.`,
+    ));
+  }
+
   const claims = new Map();
   for (const item of [...outputs.map((o) => ({ path: o.target_path, by: o.id })), ...navigation.map((n) => ({ path: n.path, by: n.origin }))]) {
     if (!claims.has(item.path)) claims.set(item.path, []);
