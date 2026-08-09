@@ -280,6 +280,7 @@ function buildBrief(shardId, sources, mapping, references, neighbors, options) {
 
 const SHARD_FIELDS = new Set(['shard', 'concepts', 'references', 'warnings', 'blockers']);
 
+
 function invalid(code, detail) {
   return { ok: false, code, detail };
 }
@@ -327,7 +328,7 @@ function validateShard(brief, shard) {
       return invalid('SHARD_CONCEPT_MISMATCH', { path: item.path, expected: assignedSource.concept, actual: item.concept });
     }
     if (item.type !== approved.type) {
-      return invalid('SHARD_CONCEPT_MISMATCH', { path: item.path, expected: approved.concept, actual: item.concept });
+      return invalid('SHARD_CONCEPT_MISMATCH', { path: item.path, concept: item.concept, expected: approved.type, actual: item.type });
     }
     if (concepts.has(key)) return invalid('SHARD_DUPLICATE_ENTRY', { path: item.path });
     concepts.add(key);
@@ -352,6 +353,14 @@ function validateShard(brief, shard) {
     return invalid('SHARD_MALFORMED', { field: 'warnings' });
   }
 
+  // A blocker excuses exactly what it names. A source split into several outputs
+  // (#156) must name the `concept` it could not author, so blocking one part
+  // never silently excuses the others; a source with one output, and a residue
+  // source, have nothing to name and are excused by path alone.
+  const outputsPerSource = new Map();
+  for (const approved of assignedMapping.values()) {
+    outputsPerSource.set(approved.path, (outputsPerSource.get(approved.path) || 0) + 1);
+  }
   if (!Array.isArray(shard.blockers)) return invalid('SHARD_MALFORMED', { field: 'blockers' });
   const blocked = new Set();
   for (const item of shard.blockers) {
@@ -359,11 +368,22 @@ function validateShard(brief, shard) {
       return invalid('SHARD_MALFORMED', { field: 'blockers', path: item && item.path });
     }
     if (!assignedSources.has(item.path)) return invalid('SHARD_SOURCE_NOT_ASSIGNED', { path: item.path });
+    if (item.concept !== undefined) {
+      if (!assignedMapping.has(outputKey(item.path, item.concept))) {
+        return invalid('SHARD_SOURCE_NOT_ASSIGNED', { path: item.path, concept: item.concept });
+      }
+      blocked.add(outputKey(item.path, item.concept));
+      continue;
+    }
+    if ((outputsPerSource.get(item.path) || 0) > 1) {
+      return invalid('SHARD_BLOCKER_AMBIGUOUS', { path: item.path });
+    }
     blocked.add(item.path);
+    for (const [key, approved] of assignedMapping) if (approved.path === item.path) blocked.add(key);
   }
 
   for (const [key, approved] of assignedMapping) {
-    if (!concepts.has(key) && !blocked.has(approved.path)) return invalid('SHARD_INCOMPLETE', { path: approved.path });
+    if (!concepts.has(key) && !blocked.has(key)) return invalid('SHARD_INCOMPLETE', { path: approved.path, concept: approved.concept });
   }
   for (const sourcePath of assignedReferences.keys()) {
     if (!refs.has(sourcePath) && !blocked.has(sourcePath)) return invalid('SHARD_INCOMPLETE', { path: sourcePath });

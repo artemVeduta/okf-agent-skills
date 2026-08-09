@@ -371,18 +371,190 @@ test('context files supply cited hints, never a group and never an authority', (
   assert.equal(facts.filter((item) => item.id === widget.id).length, 1);
 });
 
-test('conflicting context evidence returns a question rather than a chosen structure', (t) => {
+test('evidence advisories are reported beside the proposal and never gate acceptance', (t) => {
   const root = repo(t);
+  // Two map entries name one label but two different targets: a real disagreement
+  // between parsed values. A context file this parser cannot read is incomplete.
   write(root, 'CONTEXT-MAP.md', '# Map\n\n- [payments](docs/a/CONTEXT.md)\n- [payments](docs/b/CONTEXT.md)\n');
+  write(root, 'CONTEXT.md', 'Written as prose, not as bold term entries.\n');
   write(root, 'docs/a/CONTEXT.md', '**Invoice**: one meaning.\n');
   write(root, 'docs/b/CONTEXT.md', '**Invoice**: another meaning.\n');
+  const sources = discoverSources(root);
+  const plan = planned(root, sources, { 'CONTEXT-MAP.md': 'Reference' });
+  // Three glossary-shaped sources would otherwise collide at one target path;
+  // naming them is an ordinary placement decision, not an evidence one.
+  const placements = {
+    'docs/a/CONTEXT.md': { name: 'glossary-a' },
+    'docs/b/CONTEXT.md': { name: 'glossary-b' },
+  };
+
+  const response = propose(root, plan.plan, sources, { revision: { placements }, decision: 'accept' });
+
+  assert.deepEqual(
+    response.data.evidence_advisories.map((item) => [item.id, item.kind]),
+    [['evidence:group_suggestion:payments', 'evidence_conflict'], ['evidence:unparsed:CONTEXT.md', 'evidence_incomplete']],
+  );
+  // Non-authoritative evidence cannot block a decision the user is entitled to make.
+  assert.deepEqual(response.data.questions, []);
+  assert.equal(response.data.status, 'accepted');
+  assert.ok(response.findings.some((item) => item.code === 'proposal_evidence_advisory' && item.blocks === false));
+  assert.ok(response.findings.every((item) => item.code !== 'proposal_question_open'));
+});
+
+test('two files defining one term is not a conflict: their definitions were never compared', (t) => {
+  const root = repo(t);
+  write(root, 'CONTEXT.md', '**Invoice**: one meaning.\n');
+  write(root, 'CONTEXT-MAP.md', '# Map\n\n- [billing](docs/billing/CONTEXT.md)\n');
+  write(root, 'docs/billing/CONTEXT.md', '**Invoice**: another meaning.\n');
   const sources = discoverSources(root);
   const plan = planned(root, sources, { 'CONTEXT-MAP.md': 'Reference' });
 
   const response = propose(root, plan.plan, sources);
 
-  assert.ok(response.data.questions.some((item) => item.kind === 'evidence_conflict' && item.id === 'evidence:group_suggestion:payments'));
-  assert.equal(response.data.acceptable, false);
+  assert.deepEqual(response.data.evidence_advisories, []);
+  assert.equal(response.data.evidence.filter((item) => item.term === 'Invoice').length, 2);
+});
+
+// ------------------------------------------------- an accepted split, end to end
+
+// One shard object per brief, authored the way a fresh-context worker would: each
+// assigned output converted to its own body, bounded by the content scope the
+// accepted proposal gave it.
+function convertShard(brief) {
+  return {
+    shard: brief.shard,
+    concepts: brief.mapping.map((item) => ({
+      path: item.path,
+      concept: item.concept,
+      type: item.type,
+      body: `# ${item.concept}\n\nAuthored from ${item.content_scope}.\n`,
+    })),
+    references: brief.references.map((item) => ({ path: item.path, reference_path: item.reference_path })),
+    warnings: [],
+    blockers: [],
+  };
+}
+
+test('an accepted split reaches workers as two bounded outputs and assembles into two concepts', (t) => {
+  const root = repo(t);
+  write(root, 'docs/handbook.md', [
+    '---', 'type: Reference', '---', '# Handbook', '', '## Billing', '', 'Billing prose.', '', '## Refunds', '', 'Refund prose.', '',
+  ].join('\n'));
+  const sources = discoverSources(root);
+  const plan = planned(root, sources);
+
+  const accepted = propose(root, plan.plan, sources, {
+    revision: {
+      groups: [{ group: 'payments', purpose: 'Money.' }],
+      splits: {
+        'docs/handbook.md': [
+          { name: 'billing', type: 'Reference', content_scope: 'the Billing section', anchor: '## Billing', group: 'payments' },
+          { name: 'refunds', type: 'Reference', content_scope: 'the Refunds section', anchor: '## Refunds', group: 'payments' },
+        ],
+      },
+    },
+    decision: 'accept',
+  }).data;
+  assert.equal(accepted.status, 'accepted');
+
+  const partitioned = run({
+    protocol: 'okf-wrapper/1',
+    skill: 'okf-setup',
+    operation: 'partition',
+    payload: { cwd: root, plan: accepted.plan, mapping: accepted.mapping, references: accepted.references },
+  });
+  assert.equal(partitioned.result, 'ok', JSON.stringify(partitioned.findings));
+
+  // Each part reaches its worker with its own accepted content boundary, so two
+  // outputs of one source are never authored from the identical whole body.
+  const brief = partitioned.data.shards[0].brief;
+  assert.deepEqual(
+    brief.mapping.map((item) => [item.concept, item.content_scope, item.source_anchors]),
+    [['payments/billing', 'the Billing section', ['## Billing']], ['payments/refunds', 'the Refunds section', ['## Refunds']]],
+  );
+
+  const shardFiles = partitioned.data.shards.map((shard) => {
+    const converted = convertShard(shard.brief);
+    const validated = run({
+      protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'partition',
+      payload: { cwd: root, brief: shard.brief, shard: converted },
+    });
+    assert.equal(validated.data.valid, true, JSON.stringify(validated.findings));
+    const file = path.join(root, '.okf-staging', 'okf', 'shards', `${shard.shard.replace(/\W/g, '-')}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(converted));
+    return { shard: shard.shard, path: path.relative(root, file) };
+  });
+
+  const assembled = run({
+    protocol: 'okf-wrapper/1',
+    skill: 'okf-setup',
+    operation: 'assemble',
+    payload: {
+      cwd: root,
+      partition: { shards: partitioned.data.shards, cross_shard_links: partitioned.data.cross_shard_links },
+      shards: shardFiles,
+    },
+  });
+
+  assert.equal(assembled.data.status, 'complete', JSON.stringify(assembled.findings));
+  assert.deepEqual(assembled.data.staged.map((item) => item.concept).sort(), ['payments/billing', 'payments/refunds']);
+  // Both outputs share one source, and each carries its own distinct body.
+  assert.deepEqual([...new Set(assembled.data.staged.map((item) => item.path))], ['docs/handbook.md']);
+  assert.deepEqual([...new Set(assembled.data.staged.map((item) => item.sources[0].path))], ['docs/handbook.md']);
+  const billing = fs.readFileSync(path.join(root, '.okf-staging', 'okf', 'payments', 'billing.md'), 'utf8');
+  const refunds = fs.readFileSync(path.join(root, '.okf-staging', 'okf', 'payments', 'refunds.md'), 'utf8');
+  assert.match(billing, /Authored from the Billing section\./);
+  assert.match(refunds, /Authored from the Refunds section\./);
+  assert.notEqual(billing, refunds);
+});
+
+test('a blocker on a split source must name the output it blocks', (t) => {
+  const root = repo(t);
+  write(root, 'docs/handbook.md', '---\ntype: Reference\n---\n# Handbook\n');
+  const sources = discoverSources(root);
+  const plan = planned(root, sources);
+  const accepted = propose(root, plan.plan, sources, {
+    revision: {
+      splits: {
+        'docs/handbook.md': [
+          { name: 'billing', type: 'Reference', content_scope: 'billing half' },
+          { name: 'refunds', type: 'Reference', content_scope: 'refunds half' },
+        ],
+      },
+    },
+    decision: 'accept',
+  }).data;
+
+  const partitioned = run({
+    protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'partition',
+    payload: { cwd: root, plan: accepted.plan, mapping: accepted.mapping, references: accepted.references },
+  });
+  const brief = partitioned.data.shards[0].brief;
+  const validate = (shard) => run({
+    protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'partition', payload: { cwd: root, brief, shard },
+  });
+
+  // A bare source-path blocker would otherwise excuse both outputs at once.
+  const bare = validate({ shard: brief.shard, concepts: [], references: [], warnings: [], blockers: [{ path: 'docs/handbook.md', reason: 'unclear' }] });
+  assert.equal(bare.result, 'blocked');
+  assert.ok(bare.findings.some((item) => item.code === 'SHARD_BLOCKER_AMBIGUOUS'));
+
+  // Naming one output leaves the other still owed.
+  const partial = validate({
+    shard: brief.shard, concepts: [], references: [], warnings: [],
+    blockers: [{ path: 'docs/handbook.md', concept: 'billing', reason: 'unclear' }],
+  });
+  assert.ok(partial.findings.some((item) => item.code === 'SHARD_INCOMPLETE' && item.detail.concept === 'refunds'));
+
+  const complete = validate({
+    shard: brief.shard,
+    concepts: [{ path: 'docs/handbook.md', concept: 'billing', type: 'Reference', body: '# Billing\n' }],
+    references: [],
+    warnings: [],
+    blockers: [{ path: 'docs/handbook.md', concept: 'refunds', reason: 'unclear' }],
+  });
+  assert.equal(complete.data.valid, true, JSON.stringify(complete.findings));
 });
 
 // ------------------------------------------ existing-bundle connector publication

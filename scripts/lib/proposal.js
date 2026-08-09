@@ -449,9 +449,10 @@ function build({ plan, selected, references, revision = {}, gitRoot, bundleRoot,
   const groupIndexes = navigation.filter((item) => item.origin.startsWith('group:'));
   collisionQuestions([...outputs, ...connectorRows], groupIndexes, bundleRoot, services, questions);
 
+  // Evidence is non-authoritative (#176), so its advisories are reported beside
+  // the proposal and never gate acceptance of it.
   const structural = evidence.collect(gitRoot, selected, migratingPaths, services);
   bindEvidence(structural.facts, outputs);
-  questions.push(...structural.questions);
 
   const sources = entries.map((item) => ({
     path: item.path,
@@ -480,6 +481,11 @@ function build({ plan, selected, references, revision = {}, gitRoot, bundleRoot,
       concept: output.concept,
       type: output.type,
       sources: output.provenance,
+      // The accepted content boundary, carried to the worker that authors this
+      // output. Without it a split's parts would reach two fresh-context workers
+      // with the identical whole body and produce two duplicate concepts.
+      content_scope: output.content_scope,
+      source_anchors: output.source_anchors,
       body: mapping.rewriteLinks(output.source, read(output.source).body, conceptOf),
     };
   });
@@ -490,6 +496,7 @@ function build({ plan, selected, references, revision = {}, gitRoot, bundleRoot,
     tree: buildTree([...outputs, ...connectorRows].map((item) => item.target_path).concat(navigation.map((item) => item.path))),
     navigation,
     evidence: structural.facts,
+    evidence_advisories: structural.advisories,
     questions,
     acceptable,
     plan: { entries: projectedEntries, executable: acceptable },

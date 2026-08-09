@@ -726,7 +726,10 @@ function executePropose(request, services) {
   const { gitRoot, bundleRoot } = context;
 
   if (!validPartitionPlan(payload.plan)) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
-  const selected = payload.selected === undefined ? [] : payload.selected;
+  // Required, never defaulted: the accepted source scope is what the
+  // source-disposition completeness gate is checked against, so an omitted
+  // `selected` would quietly turn that gate off.
+  const selected = payload.selected;
   if (!Array.isArray(selected) || !selected.every(validPlanSource)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
@@ -760,6 +763,7 @@ function executePropose(request, services) {
       proposal: built.proposal,
       tree: built.tree,
       evidence: built.evidence,
+      evidence_advisories: built.evidence_advisories,
       questions: built.questions,
       navigation: [],
       plan: { entries: built.plan.entries, executable: false },
@@ -768,13 +772,20 @@ function executePropose(request, services) {
     }, []);
   }
 
-  const findings = built.questions.map((item) => ({
-    code: 'proposal_question_open', origin: 'suite', severity: 'warning', blocks: false,
-    detail: { id: item.id, kind: item.kind },
-  }));
+  const findings = [
+    ...built.questions.map((item) => ({
+      code: 'proposal_question_open', origin: 'suite', severity: 'warning', blocks: false,
+      detail: { id: item.id, kind: item.kind },
+    })),
+    // Advisory, not a decision: an evidence finding never blocks acceptance.
+    ...built.evidence_advisories.map((item) => ({
+      code: 'proposal_evidence_advisory', origin: 'suite', severity: 'warning', blocks: false,
+      detail: { id: item.id, kind: item.kind },
+    })),
+  ];
 
   if (payload.decision === 'accept' && !built.acceptable) {
-    return respond(request, 'blocked', { code: 'PROPOSAL_NOT_ACCEPTABLE', questions: built.questions }, findings);
+    return respond(request, 'blocked', { code: 'PROPOSAL_NOT_ACCEPTABLE', questions: built.questions, evidence_advisories: built.evidence_advisories }, findings);
   }
 
   return respond(request, 'ok', {
@@ -784,6 +795,7 @@ function executePropose(request, services) {
     proposal: built.proposal,
     tree: built.tree,
     evidence: built.evidence,
+    evidence_advisories: built.evidence_advisories,
     questions: built.questions,
     navigation: built.navigation,
     plan: built.plan,

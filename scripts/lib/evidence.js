@@ -21,9 +21,15 @@
  * Priority is the settled order and is carried on each fact as `priority`, lowest
  * first: an explicit user choice (never produced here -- it outranks everything
  * this module can observe), then a known context file's parsed field, then any
- * other file's content. Two facts of the same kind and term that disagree at the
- * same priority are a conflict; `collect` returns a question for it rather than
- * picking one, exactly as an incomplete parse does.
+ * other file's content. Two facts at the same priority whose *parsed values*
+ * actually disagree are a conflict; `collect` returns an advisory for it rather
+ * than picking one, exactly as an incomplete parse does. Facts this module never
+ * compared -- two definitions of one term, whose prose it does not read -- are
+ * not a conflict and produce nothing.
+ *
+ * Everything this module returns is advisory. Evidence is non-authoritative
+ * (#176), so an evidence advisory never gates acceptance of a target bundle
+ * proposal; `proposal.js` keeps them out of its own acceptability gate.
  */
 
 const path = require('node:path');
@@ -128,26 +134,30 @@ function linkedContextFiles(mapFacts, scanned) {
   return linked;
 }
 
-function conflictQuestions(facts) {
+// A conflict needs two parsed values that actually disagree. Only a context-map
+// entry carries one (its `target`); a domain term's definition is prose this
+// module never reads, so two files defining one term are simply two hints, not a
+// disagreement this module is in any position to report.
+function conflictAdvisories(facts) {
   const byKey = new Map();
   for (const item of facts) {
-    if (item.kind === 'heading') continue; // ordinary content never conflicts: it only ever suggests
+    if (item.target === undefined) continue;
     const key = `${item.kind}:${item.term}`;
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(item);
   }
-  const questions = [];
+  const advisories = [];
   for (const [key, group] of byKey) {
-    const targets = [...new Set(group.map((item) => item.target || item.file))];
+    const targets = [...new Set(group.map((item) => item.target))];
     if (targets.length < 2) continue;
-    questions.push({
+    advisories.push({
       id: `evidence:${key}`,
       kind: 'evidence_conflict',
-      prompt: `Context files disagree about "${group[0].term}": ${targets.join(', ')}. Name the structure to use, or leave it out of the proposal.`,
+      prompt: `Context files disagree about "${group[0].term}": ${targets.join(', ')}. Decide the structure yourself; this evidence settles nothing on its own.`,
       options: null,
     });
   }
-  return questions.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return advisories.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 /*
@@ -186,17 +196,17 @@ function collect(gitRoot, sources, migrating, services) {
   }
 
   // Incomplete evidence: a context file present in the scan but unreadable, or one
-  // whose parse produced nothing at all, is asked about rather than treated as
-  // absent -- a silently empty parse is the one way this module could invent a
+  // whose parse produced nothing at all, is reported rather than treated as
+  // absent -- a silently empty parse is the one way this module could suggest a
   // structure by omission.
-  const questions = conflictQuestions(facts);
+  const advisories = conflictAdvisories(facts);
   for (const file of [ROOT_CONTEXT_MAP, ...contextFiles]) {
     if (!scanned.has(file)) continue;
     if (facts.some((item) => item.file === file)) continue;
-    questions.push({
+    advisories.push({
       id: `evidence:unparsed:${file}`,
       kind: 'evidence_incomplete',
-      prompt: `${file} is a known context file but yielded no structural fact. Confirm the structure it should suggest, or leave it out of the proposal.`,
+      prompt: `${file} is a known context file but yielded no structural fact in a format this parser recognizes. Read it yourself before relying on it; it suggests nothing here.`,
       options: null,
     });
   }
@@ -208,7 +218,7 @@ function collect(gitRoot, sources, migrating, services) {
       consumed_by: null,
       ...item,
     })),
-    questions,
+    advisories,
   };
 }
 

@@ -115,8 +115,8 @@ function extractProvenance(tree) {
 // Retained raw/unsupported evidence keeps its whole original relative path and
 // extension under `references/` -- an archival mirror, not a concept identity, so
 // two files sharing a basename in different source directories never collide here
-// the way concept placement (which does flatten into a type directory) safely
-// asks about instead.
+// the way concept placement (which defaults every concept to the bundle root, and
+// so does collide on a shared basename) safely asks about instead.
 function referencePathFor(sourcePath) {
   return `references/${sourcePath}`;
 }
