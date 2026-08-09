@@ -465,6 +465,14 @@ The exact set of sources the user accepts from a migration scope proposal. A
 folder selects only the discovered contents shown when the user accepts it.
 _Avoid_: Migration scan boundary, discovered inventory, proposed scope
 
+**Migration structural evidence**:
+Observed content from any readable file in the migration scan boundary that can
+suggest domain terms, reader-purpose groups, classification, or placement in a
+target bundle proposal. It does not select the file for migration or grant
+authority, trust, or approval; the accepted target bundle proposal remains
+authoritative.
+_Avoid_: Migration scope, source disposition, accepted structure
+
 **Target bundle proposal**:
 The complete, read-only migration plan that setup presents after discovery and
 semantic planning and before content transformation. Its authoritative table
@@ -508,6 +516,21 @@ _Avoid_: Lost content, retained bundle evidence, active extension
 Evidence that migrated content retains the intended user-authored meaning.
 Structural conformance and successful file conversion do not establish it.
 _Avoid_: Conformance, migration success
+
+**Migration proposal conformance**:
+Agreement between the complete staged migration output and the accepted target
+bundle proposal. It requires deterministic checks and semantic proposal review
+for every transformed output and source. It gates publication but does not
+establish human-assessed semantic fidelity or grant approval.
+_Avoid_: Semantic fidelity, bundle conformance, approval
+
+**Semantic proposal review**:
+A fresh, read-only comparison of staged migration output with its accepted
+content scopes and observed sources. Its output-specific and source-level
+verdicts provide evidence and findings for migration proposal conformance; they
+do not replace the accepted target bundle proposal as authority or establish
+human-assessed semantic fidelity.
+_Avoid_: Approval, semantic fidelity, deterministic validation
 
 **Manual-operation guard ledger**:
 Local, uncommitted, bundle-scoped safety state that binds preview confirmations
