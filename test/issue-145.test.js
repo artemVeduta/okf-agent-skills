@@ -45,10 +45,6 @@ function mappingFor(response, sourcePath) {
   return response.data.mapping.find((item) => item.path === sourcePath);
 }
 
-function referenceFor(response, sourcePath) {
-  return response.data.references.find((item) => item.path === sourcePath);
-}
-
 // -------------------------------------------------- deterministic type mapping
 
 test('Decision: a conventional directory name is deterministic evidence, with no explicit type', (t) => {
@@ -317,7 +313,7 @@ test('a link to a target outside this migration is left exactly as written', (t)
 
 // ------------------------------------------------------------------- residue
 
-test('an unsupported source is retained as residue, never silently dropped, and gets a deterministic references/ path', (t) => {
+test('an unsupported source is recorded as residue, never silently dropped and never given a bundle target', (t) => {
   const root = repo(t);
   write(root, 'notes/wiki.md', '# Note\n\nSee [[Other Note]] for background.\n');
   const sources = discoverSources(root);
@@ -326,9 +322,8 @@ test('an unsupported source is retained as residue, never silently dropped, and 
   assert.deepEqual(entryFor(response, 'notes/wiki.md'), {
     path: 'notes/wiki.md', disposition: 'residue', reason: 'unsupported_format', concept: null, type: null,
   });
-  assert.deepEqual(referenceFor(response, 'notes/wiki.md'), {
-    path: 'notes/wiki.md', reference_path: 'references/notes/wiki.md',
-  });
+  // #157: residue stays where it is. Nothing derives a bundle location for it.
+  assert.equal(Object.hasOwn(response.data, 'references'), false);
 });
 
 // ------------------------------------------------------------------ duplicates

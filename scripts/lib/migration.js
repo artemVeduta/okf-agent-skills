@@ -12,14 +12,14 @@
  * any `blocked_pending_decision` entry is structurally `executable: false`, so
  * a later executor (#146 onward) cannot run a half-decided plan by accident.
  *
- * This module only derives entries, questions, mappings, and residue-evidence
- * paths, and applies answers; it never prompts a human. Asking the question and
+ * This module only derives entries, questions, and mappings, and applies
+ * answers; it never prompts a human. Asking the question and
  * rendering the compact batch is `skills/okf-setup/SKILL.md`'s job -- the runtime
  * derives and validates, the procedure asks (AGENTS.md's "runtime derives ... it
  * never prompts").
  *
  * The type-mapping table, the default concept basename, provenance
- * extraction, reference-path derivation, and link rewriting are `./mapping.js`'s
+ * extraction, and link rewriting are `./mapping.js`'s
  * job (#145, SRP split): this module owns plan orchestration -- classification,
  * questions, answers -- and calls that module for the mapping *rules* rather than
  * duplicating them.
@@ -111,9 +111,9 @@ function classify(source, read, bundleRoot, services) {
   if (source.category === 'unsupported') {
     // Recognised-but-unparseable is a deterministic fact, not a guess: this
     // module always knows an `unsupported` source can never become a concept,
-    // so retaining it as inert evidence needs no question (#131: "retain it as
-    // source/evidence or inert migration residue"; residue is the safer,
-    // non-lossy default over silently leaving it out of the bundle's graph).
+    // so recording it as residue needs no question (#157: residue stays
+    // unchanged at its own source path and is reported only -- nothing copies
+    // it, and nothing routes it through a worker or publication).
     return { entry: entry(source.path, 'residue', 'unsupported_format') };
   }
   if (source.category === 'ambiguous') {
@@ -205,18 +205,6 @@ function deriveMapping(entries, read) {
   return mapped;
 }
 
-// #145: the deterministic `references/` path for every `residue` entry's raw
-// evidence, so retaining it (a later, separate copy step) never has to invent
-// where it goes. Every `unsupported`-format source is `residue` (see `classify`
-// above), so this covers exactly the "retain it as evidence" half of #131's
-// residue rule; the "retain it as source" half needs no path at all, the source
-// never moved from where it already sits.
-function deriveReferences(entries) {
-  return entries
-    .filter((item) => item.disposition === 'residue')
-    .map((item) => ({ path: item.path, reference_path: mapping.referencePathFor(item.path) }));
-}
-
 // #145: exact content duplicates among the sources this call is migrating,
 // surfaced as candidates -- never silently merged, never blocking (#131: "exact
 // duplicates may be surfaced as candidates; near duplicates/conflicting claims
@@ -287,7 +275,6 @@ function derivePlan(sources, gitRoot, bundleRoot, services, answers) {
     questions,
     executable: questions.length === 0,
     mapping: deriveMapping(entries, read),
-    references: deriveReferences(entries),
     duplicates: deriveDuplicates(entries, read),
   };
 }

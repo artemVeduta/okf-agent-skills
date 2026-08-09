@@ -42,7 +42,7 @@ function partitionCompute(root, planData, options = {}) {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'partition',
-    payload: { cwd: root, plan: planData.plan, mapping: planData.mapping, references: planData.references, ...options },
+    payload: { cwd: root, plan: planData.plan, mapping: planData.mapping, ...options },
   });
 }
 
@@ -53,7 +53,6 @@ function wellFormedShard(brief, suffix = 'Converted.') {
   return {
     shard: brief.shard,
     concepts: brief.mapping.map((item) => ({ path: item.path, concept: item.concept, type: item.type, body: `${item.body}\n\n${suffix}\n` })),
-    references: brief.references.map((item) => ({ path: item.path, reference_path: item.reference_path })),
     warnings: [],
     blockers: [],
   };
@@ -296,12 +295,13 @@ test('every partitioned source is accounted for in the result', (t) => {
   const { response } = assembleFixture(root, planData, { partitionOptions: { max_sources_per_shard: 1 } });
   assert.equal(response.result, 'ok');
 
+  // Every *partitioned* source, which is every migrating source and nothing else:
+  // residue never reaches a shard at all (#157), so it is neither staged nor lost.
   const accounted = [
     ...response.data.staged.map((item) => item.path),
-    ...response.data.references.map((item) => item.path),
     ...response.data.blockers.map((item) => item.path),
   ].sort();
-  assert.deepEqual(accounted, [...migrating, ...residue].sort());
+  assert.deepEqual(accounted, migrating.slice().sort());
 });
 
 // --------------------------------------------------------- missing shard refused
@@ -378,7 +378,7 @@ test('assemble reports not-configured outside a Git repository and is silent on 
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'assemble',
-    payload: { cwd: outside, partition: { shards: [{ shard: 'x', sources: ['x.md'], brief: { shard: 'x', mapping: [], references: [], sources: ['x.md'] } }] }, shards: [{ shard: 'x', path: 'x.json' }] },
+    payload: { cwd: outside, partition: { shards: [{ shard: 'x', sources: ['x.md'], brief: { shard: 'x', mapping: [], sources: ['x.md'] } }] }, shards: [{ shard: 'x', path: 'x.json' }] },
   };
   assert.equal(run(emptyRequest).result, 'not-configured');
 

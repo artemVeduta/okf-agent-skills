@@ -429,7 +429,6 @@ function convertShard(brief) {
       type: item.type,
       body: `# ${item.concept}\n\nAuthored from ${item.content_scope}.\n`,
     })),
-    references: brief.references.map((item) => ({ path: item.path, reference_path: item.reference_path })),
     warnings: [],
     blockers: [],
   };
@@ -461,7 +460,7 @@ test('an accepted split reaches workers as two bounded outputs and assembles int
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'partition',
-    payload: { cwd: root, plan: accepted.plan, mapping: accepted.mapping, references: accepted.references },
+    payload: { cwd: root, plan: accepted.plan, mapping: accepted.mapping },
   });
   assert.equal(partitioned.result, 'ok', JSON.stringify(partitioned.findings));
 
@@ -528,7 +527,7 @@ test('a blocker on a split source must name the output it blocks', (t) => {
 
   const partitioned = run({
     protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'partition',
-    payload: { cwd: root, plan: accepted.plan, mapping: accepted.mapping, references: accepted.references },
+    payload: { cwd: root, plan: accepted.plan, mapping: accepted.mapping },
   });
   const brief = partitioned.data.shards[0].brief;
   const validate = (shard) => run({
@@ -536,13 +535,13 @@ test('a blocker on a split source must name the output it blocks', (t) => {
   });
 
   // A bare source-path blocker would otherwise excuse both outputs at once.
-  const bare = validate({ shard: brief.shard, concepts: [], references: [], warnings: [], blockers: [{ path: 'docs/handbook.md', reason: 'unclear' }] });
+  const bare = validate({ shard: brief.shard, concepts: [], warnings: [], blockers: [{ path: 'docs/handbook.md', reason: 'unclear' }] });
   assert.equal(bare.result, 'blocked');
   assert.ok(bare.findings.some((item) => item.code === 'SHARD_BLOCKER_AMBIGUOUS'));
 
   // Naming one output leaves the other still owed.
   const partial = validate({
-    shard: brief.shard, concepts: [], references: [], warnings: [],
+    shard: brief.shard, concepts: [], warnings: [],
     blockers: [{ path: 'docs/handbook.md', concept: 'billing', reason: 'unclear' }],
   });
   assert.ok(partial.findings.some((item) => item.code === 'SHARD_INCOMPLETE' && item.detail.concept === 'refunds'));
@@ -550,7 +549,6 @@ test('a blocker on a split source must name the output it blocks', (t) => {
   const complete = validate({
     shard: brief.shard,
     concepts: [{ path: 'docs/handbook.md', concept: 'billing', type: 'Reference', body: '# Billing\n' }],
-    references: [],
     warnings: [],
     blockers: [{ path: 'docs/handbook.md', concept: 'refunds', reason: 'unclear' }],
   });

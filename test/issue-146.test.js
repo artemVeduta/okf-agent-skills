@@ -53,7 +53,7 @@ function derivedPlan(root) {
 }
 
 function partitionCompute(root, planData, options = {}) {
-  return run(partitionRequest(root, { plan: planData.plan, mapping: planData.mapping, references: planData.references, ...options }));
+  return run(partitionRequest(root, { plan: planData.plan, mapping: planData.mapping, ...options }));
 }
 
 function shardFor(response, id) {
@@ -169,7 +169,7 @@ test('a worker brief carries exactly the narrow context and nothing more', (t) =
   const brief = response.data.shards[0].brief;
   assert.deepEqual(
     Object.keys(brief).sort(),
-    ['bundle', 'cwd', 'mapping', 'neighbors', 'okf_version', 'project_mode', 'references', 'shard', 'sources'].sort(),
+    ['bundle', 'cwd', 'mapping', 'neighbors', 'okf_version', 'project_mode', 'shard', 'sources'].sort(),
   );
   assert.equal(brief.cwd, path.resolve(root));
   assert.equal(brief.bundle, 'docs-bundle');
@@ -177,7 +177,7 @@ test('a worker brief carries exactly the narrow context and nothing more', (t) =
   assert.equal(brief.okf_version, '0.2');
 });
 
-test('partition refuses a non-executable plan, a bundle/project_mode outside the allowed values, and a tampered mapping/references array, without computing anything', (t) => {
+test('partition refuses a non-executable plan, a bundle/project_mode outside the allowed values, and a tampered mapping array, without computing anything', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/a.md', '---\ntype: Decision\n---\n# A\n');
   const planData = derivedPlan(root);
@@ -185,19 +185,19 @@ test('partition refuses a non-executable plan, a bundle/project_mode outside the
   const notExecutable = { entries: [{ path: 'x.md', disposition: 'blocked_pending_decision', reason: 'type_not_inferable', concept: null, type: null }], executable: false };
   assert.equal(partitionCompute(root, { ...planData, plan: notExecutable }).result, 'blocked');
 
-  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: planData.mapping, references: planData.references, project_mode: 'sandbox' })).data.code, 'UNSUPPORTED_INPUT');
-  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: planData.mapping, references: planData.references, bundle: '' })).data.code, 'UNSUPPORTED_INPUT');
+  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: planData.mapping, project_mode: 'sandbox' })).data.code, 'UNSUPPORTED_INPUT');
+  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: planData.mapping, bundle: '' })).data.code, 'UNSUPPORTED_INPUT');
 
   const tamperedMapping = planData.mapping.map((item) => ({ ...item, concept: `${item.concept}-tampered` }));
-  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: tamperedMapping, references: planData.references })).result, 'blocked');
+  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: tamperedMapping })).result, 'blocked');
 });
 
 test('partition reports not-configured outside a Git repository and is silent on automatic invocation', (t) => {
   const outside = temporaryRoot(t, 'okf-146-no-repo-');
-  assert.equal(run(partitionRequest(outside, { plan: { entries: [], executable: true }, mapping: [], references: [] })).result, 'not-configured');
+  assert.equal(run(partitionRequest(outside, { plan: { entries: [], executable: true }, mapping: [] })).result, 'not-configured');
 
   const root = repo(t);
-  const request = partitionRequest(root, { plan: { entries: [], executable: true }, mapping: [], references: [] });
+  const request = partitionRequest(root, { plan: { entries: [], executable: true }, mapping: [] });
   const result = spawnWrapper(wrapper, { ...request, invocation: 'automatic' });
   assert.equal(result.status, 0);
   assert.equal(result.stdout, '');
@@ -210,7 +210,6 @@ function wellFormedShard(brief) {
   return {
     shard: brief.shard,
     concepts: brief.mapping.map((item) => ({ path: item.path, concept: item.concept, type: item.type, body: `${item.body}\n\nConverted.\n` })),
-    references: brief.references.map((item) => ({ path: item.path, reference_path: item.reference_path })),
     warnings: [],
     blockers: [],
   };

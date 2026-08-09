@@ -355,7 +355,7 @@ function bindEvidence(facts, outputs) {
  * again with a changed `revision`, and gets a new complete proposal, never a patch
  * applied to a remembered one.
  */
-function build({ plan, selected, references, revision = {}, gitRoot, bundleRoot, services }) {
+function build({ plan, selected, revision = {}, gitRoot, bundleRoot, services }) {
   const cache = new Map();
   const read = (sourcePath) => {
     if (!cache.has(sourcePath)) cache.set(sourcePath, migration.readSource(gitRoot, sourcePath, services));
@@ -501,7 +501,6 @@ function build({ plan, selected, references, revision = {}, gitRoot, bundleRoot,
     acceptable,
     plan: { entries: projectedEntries, executable: acceptable },
     mapping: projectedMapping,
-    references: references || [],
   };
 }
 

@@ -414,6 +414,18 @@ function validLinkItem(item) {
     typeof item.resolved === 'boolean';
 }
 
+// One structural fact `propose` (#176) cited, passed through unmodified: `id` is
+// the fact, `consumed_by` names the exact target proposal rows that used it. A
+// caller hands these straight from `propose`'s own `data.evidence`, so any further
+// field it carries is simply not read here.
+function validEvidenceItem(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (typeof item.id !== 'string' || item.id === '') return false;
+  if (typeof item.file !== 'string' || item.file === '') return false;
+  if (typeof item.kind !== 'string' || item.kind === '') return false;
+  return Array.isArray(item.consumed_by) && item.consumed_by.every((row) => typeof row === 'string' && row !== '');
+}
+
 function validSemanticReview(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value) && typeof value.performed === 'boolean';
 }
@@ -424,14 +436,15 @@ function reportFinding(code, severity, detail) {
 
 // One package's (or, in single-project mode, the whole run's) signal set:
 // summary counts, source-path -> concept-path mapping, per-skip/ambiguity/
-// residue reason, provenance coverage, link integrity, and the
-// semantic-fidelity disclosure (open points 2, 3, 4, 6).
-function computeSignals(sources, links, semanticReview) {
+// residue reason, provenance coverage, link integrity, structural-evidence
+// roles, and the semantic-fidelity disclosure (open points 2, 3, 4, 6).
+function computeSignals(sources, links, semanticReview, evidence) {
   const migrated = sources.filter((item) => item.disposition === 'migrated');
   const skipped = sources.filter((item) => item.disposition === 'skipped');
   const ambiguous = sources.filter((item) => item.disposition === 'ambiguous');
   const residue = sources.filter((item) => item.disposition === 'residue');
   const withSources = migrated.filter((item) => item.sources_declared === true).length;
+  const dispositionByPath = new Map(sources.map((item) => [item.path, item.disposition]));
   const resolvedLinks = links.filter((item) => item.resolved);
   const brokenLinks = links.filter((item) => !item.resolved);
 
@@ -446,7 +459,17 @@ function computeSignals(sources, links, semanticReview) {
     concepts: migrated.map((item) => ({ source: item.path, concept: item.concept, sources_declared: item.sources_declared === true })),
     skipped: skipped.map((item) => ({ source: item.path, reason: item.reason })),
     ambiguous: ambiguous.map((item) => ({ source: item.path, reason: item.reason })),
-    residue: residue.map((item) => ({ source: item.path, reason: item.reason })),
+    // #157: residue was never copied anywhere. The report names where the source
+    // still sits, why it was classified residue, and that setup left it alone.
+    residue: residue.map((item) => ({ source: item.path, reason: item.reason, unchanged: true })),
+    // #176: a file setup read for structural meaning *and* migrated has two
+    // separate roles. Each fact names the proposal rows that consumed it and the
+    // migration disposition of the same file, if it had one -- an evidence read is
+    // never a second migration, so nothing here enters the counts above.
+    evidence: evidence.map((item) => ({
+      fact: item.id, file: item.file, kind: item.kind, consumed_by: item.consumed_by,
+      migration_disposition: dispositionByPath.get(item.file) || null,
+    })),
     provenance: { total: migrated.length, with_sources: withSources, without_sources: migrated.length - withSources },
     links: {
       total: links.length, resolved: resolvedLinks.length, broken: brokenLinks.length,
@@ -506,6 +529,7 @@ function validPackageResult(item) {
   if (item.reason !== undefined) return false;
   if (!Array.isArray(item.sources) || !item.sources.every(validSourceItem)) return false;
   if (item.links !== undefined && (!Array.isArray(item.links) || !item.links.every(validLinkItem))) return false;
+  if (item.evidence !== undefined && (!Array.isArray(item.evidence) || !item.evidence.every(validEvidenceItem))) return false;
   return validSemanticReview(item.semantic_review);
 }
 
@@ -534,7 +558,11 @@ function executeReport(request, services) {
     if (!validSemanticReview(payload.semantic_review)) {
       return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
     }
-    const signals = computeSignals(payload.sources, links, payload.semantic_review);
+    const evidence = payload.evidence === undefined ? [] : payload.evidence;
+    if (!Array.isArray(evidence) || !evidence.every(validEvidenceItem)) {
+      return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+    }
+    const signals = computeSignals(payload.sources, links, payload.semantic_review, evidence);
     return respond(request, 'ok', reportData(signals), signalFindings('', signals));
   }
 
@@ -557,7 +585,7 @@ function executeReport(request, services) {
       packages.push({ package: item.package, status: 'failed', reason: item.reason, warnings: item.warnings || [] });
       continue;
     }
-    const signals = computeSignals(item.sources, item.links || [], item.semantic_review);
+    const signals = computeSignals(item.sources, item.links || [], item.semantic_review, item.evidence || []);
     if (signals.migration_status === 'partial') anyUnresolved = true;
     okSignals.push(signals);
     findings.push(...signalFindings(`${item.package}:`, signals));
@@ -638,8 +666,7 @@ function validPlanSource(item) {
 }
 
 // `/setup`'s migration plan derivation and batched-question round (#144), plus the
-// source-to-concept mapping engine, provenance extraction, reference-path
-// derivation, and link rewriting (#145). Turns `discover`'s (#142) source inventory
+// source-to-concept mapping engine, provenance extraction, and link rewriting (#145). Turns `discover`'s (#142) source inventory
 // into a fully-determined migration plan: every source gets an intentional
 // disposition -- `migrate`, `skip`, `residue`, or `blocked_pending_decision` -- a
 // concept path derived from its type's own canonical directory (not a mechanical
@@ -648,8 +675,9 @@ function validPlanSource(item) {
 // half-decided plan by accident. `data.mapping` carries, for every `migrate` entry,
 // the provenance its own frontmatter already declared (verbatim, never fabricated)
 // and its body with unambiguous internal links rewritten to their new concept
-// paths; `data.references` carries the deterministic `references/` path for every
-// `residue` entry's raw evidence; `data.plan.duplicates` surfaces, never merges, an
+// paths; a `residue` entry carries its own source path and reason and nothing more
+// (#157: residue stays unchanged where it is and is reported only, never copied
+// into the bundle); `data.plan.duplicates` surfaces, never merges, an
 // exact content duplicate among the sources this call is migrating. Read-only and
 // purely derivational, like `discover`: it reads each markdown source's own
 // frontmatter and body (through the same reader `discover` and the write path both
@@ -699,7 +727,6 @@ function executeMigrationPlan(request, services) {
     plan: { entries: outcome.entries, executable: outcome.executable, duplicates: outcome.duplicates },
     questions: outcome.questions,
     mapping: outcome.mapping,
-    references: outcome.references,
   }, findings);
 }
 
@@ -733,10 +760,6 @@ function executePropose(request, services) {
   if (!Array.isArray(selected) || !selected.every(validPlanSource)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  const references = payload.references === undefined ? [] : payload.references;
-  if (!Array.isArray(references) || !references.every(validPartitionReferenceItem)) {
-    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
-  }
   if (!proposal.validRevision(payload.revision)) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   if (payload.decision !== undefined && payload.decision !== 'accept' && payload.decision !== 'reject') {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
@@ -745,7 +768,6 @@ function executePropose(request, services) {
   const built = proposal.build({
     plan: payload.plan,
     selected,
-    references,
     revision: payload.revision || {},
     gitRoot,
     bundleRoot,
@@ -768,7 +790,6 @@ function executePropose(request, services) {
       navigation: [],
       plan: { entries: built.plan.entries, executable: false },
       mapping: [],
-      references: [],
     }, []);
   }
 
@@ -800,14 +821,12 @@ function executePropose(request, services) {
     navigation: built.navigation,
     plan: built.plan,
     mapping: built.mapping,
-    references: built.references,
   }, findings);
 }
 
 // `/setup`'s dynamic semantic partitioner and delegated worker protocol (#146).
 // Its own upstream, unmodified, is exactly `migration-plan`'s response shape:
-// `payload.plan` (`{entries, executable}`), `payload.mapping`, and
-// `payload.references`. Read-only and purely derivational, like `migration-plan`
+// `payload.plan` (`{entries, executable}`) and `payload.mapping`. Read-only and purely derivational, like `migration-plan`
 // itself: it never reads a source file, never writes anything, and never spawns or
 // prompts anything -- launching the fresh-context worker a brief describes is
 // `skills/okf-setup/SKILL.md`'s job, not this one's (#131: "the runtime never
@@ -840,21 +859,14 @@ function validPartitionMappingItem(item) {
   return typeof item.body === 'string';
 }
 
-function validPartitionReferenceItem(item) {
-  return !!item && typeof item === 'object' && !Array.isArray(item) &&
-    typeof item.path === 'string' && item.path !== '' &&
-    typeof item.reference_path === 'string' && item.reference_path !== '';
-}
-
-// A caller cannot hand this operation a `mapping`/`references` array that does not
-// correspond, one-for-one, to `plan.entries`' own `migrate`/`residue` sources --
-// exactly the invariant `migration-plan` itself always produces, checked here
-// rather than trusted blindly, since nothing stops a caller from tampering with or
-// hand-assembling the three pieces separately.
-function partitionInputConsistent(plan, mapping, references) {
+// A caller cannot hand this operation a `mapping` array that does not correspond,
+// one-for-one, to `plan.entries`' own `migrate` sources -- exactly the invariant
+// `migration-plan` itself always produces, checked here rather than trusted
+// blindly, since nothing stops a caller from tampering with or hand-assembling the
+// two pieces separately.
+function partitionInputConsistent(plan, mapping) {
   const migrating = plan.entries.filter((entry) => entry.disposition === 'migrate');
-  const residue = plan.entries.filter((entry) => entry.disposition === 'residue');
-  if (mapping.length !== migrating.length || references.length !== residue.length) return false;
+  if (mapping.length !== migrating.length) return false;
   // Matched on the whole `(path, concept, type)` triple rather than on the source
   // path alone: an accepted proposal may split one source into several output
   // concepts (#156), so neither the path nor the concept is unique on its own here
@@ -864,15 +876,11 @@ function partitionInputConsistent(plan, mapping, references) {
     const key = `${entry.path} ${entry.concept} ${entry.type}`;
     remaining.set(key, (remaining.get(key) || 0) + 1);
   }
-  const residueByPath = new Map(residue.map((entry) => [entry.path, entry]));
   for (const item of mapping) {
     const key = `${item.path} ${item.concept} ${item.type}`;
     const left = remaining.get(key);
     if (!left) return false;
     remaining.set(key, left - 1);
-  }
-  for (const item of references) {
-    if (!residueByPath.has(item.path)) return false;
   }
   return true;
 }
@@ -887,10 +895,7 @@ function executePartitionCompute(request) {
   if (!Array.isArray(payload.mapping) || !payload.mapping.every(validPartitionMappingItem)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (!Array.isArray(payload.references) || !payload.references.every(validPartitionReferenceItem)) {
-    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
-  }
-  if (!partitionInputConsistent(payload.plan, payload.mapping, payload.references)) {
+  if (!partitionInputConsistent(payload.plan, payload.mapping)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
   const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
@@ -904,7 +909,7 @@ function executePartitionCompute(request) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
 
-  const outcome = partition.computePartition(payload.plan, payload.mapping, payload.references, {
+  const outcome = partition.computePartition(payload.plan, payload.mapping, {
     cwd: path.resolve(payload.cwd),
     bundle: bundleName,
     projectMode: payload.project_mode,
@@ -948,9 +953,8 @@ function executePartition(request, services) {
 
 // `payload.partition.shards[]` is exactly one `partition` compute-mode
 // `data.shards[]` entry (`{shard, sources, brief}`), unmodified -- reusing
-// `validPartitionMappingItem`/`validPartitionReferenceItem` for the brief's
-// own `mapping`/`references` arrays rather than a second shape check, since
-// a brief's `mapping`/`references` are exactly those two shapes already.
+// `validPartitionMappingItem` for the brief's own `mapping` array rather than
+// a second shape check, since a brief's `mapping` is exactly that shape already.
 function validAssemblyPartitionShard(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
   if (typeof item.shard !== 'string' || item.shard === '') return false;
@@ -960,7 +964,6 @@ function validAssemblyPartitionShard(item) {
   const brief = item.brief;
   if (!brief || typeof brief !== 'object' || Array.isArray(brief) || brief.shard !== item.shard) return false;
   if (!Array.isArray(brief.mapping) || !brief.mapping.every(validPartitionMappingItem)) return false;
-  if (!Array.isArray(brief.references) || !brief.references.every(validPartitionReferenceItem)) return false;
   if (!Array.isArray(brief.sources) || brief.sources.some((s) => typeof s !== 'string' || s === '')) return false;
   return true;
 }
@@ -1110,7 +1113,6 @@ function executeAssemble(request, services) {
     status: outcome.blockers.length > 0 ? 'partial' : 'complete',
     publishable: outcome.blockers.length === 0,
     staged,
-    references: outcome.references,
     blockers: outcome.blockers,
     duplicates: outcome.duplicates,
     links,

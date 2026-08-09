@@ -1,14 +1,13 @@
 /*
- * #145: source-to-concept mapping engine, provenance extraction, reference-path
- * derivation, and link rewriting.
+ * #145: source-to-concept mapping engine, provenance extraction, and link
+ * rewriting.
  *
  * Sibling of `migration.js` rather than an extension of it (SRP): `migration.js`
  * owns plan orchestration -- dispositions, questions, applying answers; this module
  * owns the mapping *rules* that orchestration consumes -- what type a source with
  * no explicit `type` deterministically is, what default concept basename a source
  * carries, what provenance a source's own frontmatter already carries
- * verbatim, where retained raw evidence deterministically lives under `references/`,
- * and how a migrating body's own Markdown links are rewritten when the mapping is
+ * verbatim, and how a migrating body's own Markdown links are rewritten when the mapping is
  * unambiguous. `migration.js` calls this module; this module never calls back.
  *
  * Binding rules from #131 this module enforces:
@@ -110,17 +109,6 @@ function extractProvenance(tree) {
   return tree && Array.isArray(tree.sources) ? tree.sources : null;
 }
 
-// -------------------------------------------------------------- reference-path derivation
-
-// Retained raw/unsupported evidence keeps its whole original relative path and
-// extension under `references/` -- an archival mirror, not a concept identity, so
-// two files sharing a basename in different source directories never collide here
-// the way concept placement (which defaults every concept to the bundle root, and
-// so does collide on a shared basename) safely asks about instead.
-function referencePathFor(sourcePath) {
-  return `references/${sourcePath}`;
-}
-
 // ------------------------------------------------------------------------ link rewriting
 
 const LINK_PATTERN = /(\[[^\]\n]*\]\()(\s*)(?:<([^>\n]*)>|([^\s)\n]+))/g;
@@ -173,4 +161,4 @@ function rewriteLinks(sourcePath, body, conceptOf) {
   }).join('\n');
 }
 
-module.exports = { inferType, conceptBasename, extractProvenance, referencePathFor, rewriteLinks };
+module.exports = { inferType, conceptBasename, extractProvenance, rewriteLinks };

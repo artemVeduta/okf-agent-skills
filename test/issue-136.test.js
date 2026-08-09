@@ -147,7 +147,7 @@ test('residue is reported inertly, distinct from a skip or an ambiguity, and doe
     semantic_review: reviewed,
   }));
   assert.equal(response.data.status, 'complete');
-  assert.deepEqual(response.data.residue, [{ source: 'docs/legacy.docx', reason: 'unsupported_format' }]);
+  assert.deepEqual(response.data.residue, [{ source: 'docs/legacy.docx', reason: 'unsupported_format', unchanged: true }]);
   assert.deepEqual(response.data.summary.sources_residue, 1);
 });
 

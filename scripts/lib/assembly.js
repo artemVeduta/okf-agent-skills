@@ -70,7 +70,7 @@ function renderConcept(type, sources, body) {
 // `Map<shardId, shardObject>`; `partitionShards` is `partition`'s own
 // `data.shards` array (`{shard, sources, brief}`), unmodified. Returns either
 // `{ok: false, ...}` naming exactly what was wrong, or `{ok: true, concepts,
-// references, blockers, duplicates}` -- `concepts` already carries each
+// blockers, duplicates}` -- `concepts` already carries each
 // item's own rendered file text, ready to stage.
 function computeAssembly(partitionShards, shardContents) {
   // Defense in depth: `skills/okf-setup/SKILL.md` already requires every
@@ -83,18 +83,17 @@ function computeAssembly(partitionShards, shardContents) {
   }
 
   const concepts = [];
-  const references = [];
   const blockers = [];
   // The identity a shard claims. For a concept that is its Concept ID, not its
   // source path: an accepted proposal may split one source into several output
   // concepts (#156), so the same source path legitimately appears more than once.
-  // Residue and blockers are still claimed per source path -- neither has a
-  // Concept ID, and neither is ever split.
+  // A blocker is still claimed per source path -- it has no Concept ID of its own
+  // when the source produced exactly one output.
   const claimed = new Map();
 
   for (const shard of partitionShards) {
     const content = shardContents.get(shard.shard);
-    for (const [list, items] of [[concepts, content.concepts], [references, content.references], [blockers, content.blockers]]) {
+    for (const [list, items] of [[concepts, content.concepts], [blockers, content.blockers]]) {
       for (const item of items) {
         const key = list === concepts ? `output:${item.path}\u0000${item.concept}` : `source:${item.path}`;
         const owner = claimed.get(key);
@@ -136,7 +135,7 @@ function computeAssembly(partitionShards, shardContents) {
     return { path: item.path, concept: item.concept, type: item.type, shard: item.shard, rendered: renderConcept(item.type, sources, item.body) };
   });
 
-  return { ok: true, concepts: rendered, references, blockers, duplicates };
+  return { ok: true, concepts: rendered, blockers, duplicates };
 }
 
 // #146's own `cross_shard_links` re-checked against the concepts assembly
