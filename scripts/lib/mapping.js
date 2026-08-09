@@ -5,8 +5,8 @@
  * Sibling of `migration.js` rather than an extension of it (SRP): `migration.js`
  * owns plan orchestration -- dispositions, questions, applying answers; this module
  * owns the mapping *rules* that orchestration consumes -- what type a source with
- * no explicit `type` deterministically is, what bundle-relative concept path a type
- * maps a source to, what provenance a source's own frontmatter already carries
+ * no explicit `type` deterministically is, what default concept basename a source
+ * carries, what provenance a source's own frontmatter already carries
  * verbatim, where retained raw evidence deterministically lives under `references/`,
  * and how a migrating body's own Markdown links are rewritten when the mapping is
  * unambiguous. `migration.js` calls this module; this module never calls back.
@@ -85,43 +85,19 @@ function inferType(sourcePath, tree, body) {
   return null;
 }
 
-// ------------------------------------------------------------------ type-directory mapping
+// -------------------------------------------------------------------- concept basename
 
-// #130's own folder model, transcribed, not invented: the canonical directory each
-// producer type gets. A type absent from this table -- `Attested Computation`
-// (#130 names no canonical directory for it), a preserved domain-specific type, or
-// `Glossary` (handled separately below) -- keeps #144's mechanical mirror rather
-// than inventing a directory the data model never specified.
-const TYPE_DIRECTORIES = new Map([
-  ['Decision', 'decisions'],
-  ['Constraint', 'constraints'],
-  ['Research', 'research'],
-  ['Playbook', 'playbooks'],
-  ['Release', 'releases'],
-  ['Reference', 'references'],
-]);
-
-function stripExtension(sourcePath) {
-  const ext = path.posix.extname(sourcePath);
-  return ext ? sourcePath.slice(0, -ext.length) : sourcePath;
-}
-
-// The canonical directory for `type` decides the destination directory; the
-// source's own directory is not mirrored (#145's job, replacing #144's mechanical
-// mirror). `Glossary` is the one documented exception: #130's folder model keeps
-// one `glossary.md` per hierarchy level rather than a directory of many, so a
-// Glossary target keeps the source's own directory and only renames the file
-// itself to `glossary` -- which also means two glossary-shaped sources in the same
-// directory collide exactly the way #144's existing target-collision question
-// already handles, never a silent merge.
-function conceptPathFor(sourcePath, type) {
-  if (type === 'Glossary') {
-    const dir = path.posix.dirname(sourcePath);
-    return dir === '.' ? 'glossary' : `${dir}/glossary`;
-  }
-  const dir = TYPE_DIRECTORIES.get(type);
-  if (!dir) return stripExtension(sourcePath);
-  return `${dir}/${path.posix.basename(stripExtension(sourcePath))}`;
+// #160: type never determines path, and a source path is never mirrored into the
+// bundle. All this module still derives is a *default basename* -- the source's own
+// filename with its extension stripped, or `glossary` for the one type whose
+// basename the data model fixes (#162). Where that basename lands -- the bundle root
+// or a named reader-purpose group -- is decided only by the accepted target bundle
+// proposal (`./proposal.js`), never here.
+function conceptBasename(sourcePath, type) {
+  if (type === 'Glossary') return 'glossary';
+  const base = path.posix.basename(sourcePath);
+  const ext = path.posix.extname(base);
+  return ext ? base.slice(0, -ext.length) : base;
 }
 
 // ------------------------------------------------------------------------- provenance
@@ -197,4 +173,4 @@ function rewriteLinks(sourcePath, body, conceptOf) {
   }).join('\n');
 }
 
-module.exports = { inferType, conceptPathFor, extractProvenance, referencePathFor, rewriteLinks };
+module.exports = { inferType, conceptBasename, extractProvenance, referencePathFor, rewriteLinks };

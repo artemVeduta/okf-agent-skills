@@ -130,8 +130,8 @@ test('a link between two sources forced into different shards is surfaced as a c
   assert.equal(response.data.shards.length, 2);
   assert.equal(response.data.cross_shard_links.length, 1);
   const link = response.data.cross_shard_links[0];
-  assert.equal(link.from, 'decisions/a');
-  assert.equal(link.to, 'decisions/b');
+  assert.equal(link.from, 'a');
+  assert.equal(link.to, 'b');
   assert.notEqual(link.from_shard, link.to_shard);
 
   const warning = response.findings.find((item) => item.code === 'cross_shard_link');
@@ -142,7 +142,7 @@ test('a link between two sources forced into different shards is surfaced as a c
   // The narrow brief still lets the owning worker know the target concept exists,
   // without handing it any of that concept's own content.
   const fromShard = shardFor(response, link.from_shard);
-  assert.deepEqual(fromShard.brief.neighbors, [{ concept: 'decisions/b' }]);
+  assert.deepEqual(fromShard.brief.neighbors, [{ concept: 'b' }]);
 });
 
 test('two sources that link to each other but land in the same shard need no cross-shard warning', (t) => {
@@ -251,7 +251,7 @@ test('a malformed shard is refused with a specific finding, never a bare failure
     [{ ...wellFormedShard(brief), shard: 'wrong-id' }, 'SHARD_IDENTITY_MISMATCH'],
     [{ ...wellFormedShard(brief), extra: true }, 'SHARD_UNKNOWN_FIELD'],
     [{ ...wellFormedShard(brief), concepts: [{ path: 'not/assigned.md', concept: 'x', type: 'Decision', body: '' }] }, 'SHARD_SOURCE_NOT_ASSIGNED'],
-    [{ ...wellFormedShard(brief), concepts: [{ path: 'docs/decisions/a.md', concept: 'decisions/a', type: 'Note', body: '' }] }, 'SHARD_CONCEPT_MISMATCH'],
+    [{ ...wellFormedShard(brief), concepts: [{ path: 'docs/decisions/a.md', concept: 'a', type: 'Note', body: '' }] }, 'SHARD_CONCEPT_MISMATCH'],
     [{ ...wellFormedShard(brief), concepts: [] }, 'SHARD_INCOMPLETE'],
   ];
   for (const [shard, expectedCode] of cases) {

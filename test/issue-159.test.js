@@ -61,7 +61,7 @@ test('a rewritten link keeps its #fragment, in both bare and angle-bracket targe
   assert.ok(body.includes('[angled](<0002-second.md#other>)'), body);
 });
 
-test('a rewritten link keeps a #fragment even when the concept path moves the target to another directory', (t) => {
+test('a rewritten link keeps a #fragment even when the target moves out of the source directory', (t) => {
   const root = repo(t);
   write(root, 'docs/adr/0001-first.md', [
     '---', 'type: Decision', '---', '# First', '',
@@ -70,7 +70,7 @@ test('a rewritten link keeps a #fragment even when the concept path moves the ta
   write(root, 'docs/spec/limits.md', '---\ntype: Constraint\n---\n# Limits\n\nBody.\n');
 
   const body = mappingFor(planned(root), 'docs/adr/0001-first.md').body;
-  assert.ok(body.includes('[the constraint](../constraints/limits.md#acceptance-evidence)'), body);
+  assert.ok(body.includes('[the constraint](limits.md#acceptance-evidence)'), body);
 });
 
 test('a bare sibling filename is rewritten exactly like a ./-prefixed one', (t) => {
@@ -82,12 +82,12 @@ test('a bare sibling filename is rewritten exactly like a ./-prefixed one', (t) 
   write(root, 'docs/research/deep/symlinks.md', '---\ntype: Research\n---\n# Symlinks\n\nBody.\n');
 
   const response = planned(root);
-  assert.equal(response.data.plan.entries.find((i) => i.path === 'docs/research/deep/symlinks.md').concept, 'research/symlinks');
+  assert.equal(response.data.plan.entries.find((i) => i.path === 'docs/research/deep/symlinks.md').concept, 'symlinks');
   const body = mappingFor(response, 'docs/research/deep/skills.md').body;
   assert.ok(body.includes('Bare [one](symlinks.md), dotted [two](symlinks.md).'), body);
 });
 
-test('a bare sibling filename whose target lands in another type directory is rewritten, not left as a source filename', (t) => {
+test('a bare sibling filename whose target carries a different type is rewritten, not left as a source filename', (t) => {
   const root = repo(t);
   write(root, 'docs/research/deep/skills.md', [
     '---', 'type: Research', '---', '# Skills', '',
@@ -96,5 +96,5 @@ test('a bare sibling filename whose target lands in another type directory is re
   write(root, 'docs/research/deep/rules.md', '---\ntype: Constraint\n---\n# Rules\n\nBody.\n');
 
   const body = mappingFor(planned(root), 'docs/research/deep/skills.md').body;
-  assert.ok(body.includes('Bare [one](../constraints/rules.md), dotted [two](../constraints/rules.md).'), body);
+  assert.ok(body.includes('Bare [one](rules.md), dotted [two](rules.md).'), body);
 });

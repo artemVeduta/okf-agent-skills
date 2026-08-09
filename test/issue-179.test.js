@@ -65,7 +65,7 @@ test('a research-metadata document with two or more "**Label**: value" lines no 
   // `Research`, never `Glossary`.
   assert.deepEqual(entryFor(response, 'docs/research/spike.md'), {
     path: 'docs/research/spike.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'research/spike', type: 'Research',
+    concept: 'spike', type: 'Research',
   });
 });
 
@@ -77,7 +77,7 @@ test('Glossary: a "glossary" directory segment is still exact structural evidenc
 
   assert.deepEqual(entryFor(response, 'docs/glossary/terms.md'), {
     path: 'docs/glossary/terms.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'docs/glossary/glossary', type: 'Glossary',
+    concept: 'glossary', type: 'Glossary',
   });
 });
 
@@ -89,7 +89,7 @@ test('Glossary: a "glossary.md" filename is still exact structural evidence', (t
 
   assert.deepEqual(entryFor(response, 'billing/glossary.md'), {
     path: 'billing/glossary.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'billing/glossary', type: 'Glossary',
+    concept: 'glossary', type: 'Glossary',
   });
 });
 
@@ -101,7 +101,7 @@ test('Glossary: a "CONTEXT.md" filename is still exact structural evidence', (t)
 
   assert.deepEqual(entryFor(response, 'billing/CONTEXT.md'), {
     path: 'billing/CONTEXT.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'billing/glossary', type: 'Glossary',
+    concept: 'glossary', type: 'Glossary',
   });
 });
 

@@ -21,7 +21,7 @@ const routerOwners = new Map([
   ['relationship', 'okf-write'], ['sync', 'okf-lifecycle'], ['review', 'okf-review'],
   ['init', 'okf-setup'], ['inspect', 'okf-setup'], ['repair', 'okf-setup'],
   ['plan', 'okf-setup'], ['aggregate', 'okf-setup'], ['report', 'okf-setup'],
-  ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'], ['partition', 'okf-setup'],
+  ['discover', 'okf-setup'], ['migration-plan', 'okf-setup'], ['propose', 'okf-setup'], ['partition', 'okf-setup'],
   ['assemble', 'okf-setup'], ['migration-validate', 'okf-setup'], ['publish', 'okf-setup'],
 ]);
 

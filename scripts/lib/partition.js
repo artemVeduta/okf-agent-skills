@@ -181,8 +181,16 @@ function residueEntries(entries) {
   return entries.filter((entry) => entry.disposition === 'residue');
 }
 
-function mappingByPath(mapping) {
-  return new Map(mapping.map((item) => [item.path, item]));
+// Keyed by the `(source path, Concept ID)` pair, not by source path alone: an
+// accepted target bundle proposal may split one source into several output
+// concepts (#156), and two sources may still both claim one Concept ID (the
+// intra-plan collision `assemble` catches). Only the pair identifies an output.
+function outputKey(sourcePath, concept) {
+  return `${sourcePath}\u0000${concept}`;
+}
+
+function mappingByOutput(mapping) {
+  return new Map(mapping.map((item) => [outputKey(item.path, item.concept), item]));
 }
 
 function referencesByPath(references) {
@@ -196,7 +204,7 @@ function referencesByPath(references) {
 // determined plan, it never resolves an open question itself.
 function computePartition(plan, mapping, references, options = {}) {
   const maxSize = options.maxSourcesPerShard || DEFAULT_MAX_SOURCES_PER_SHARD;
-  const mapped = mappingByPath(mapping);
+  const mapped = mappingByOutput(mapping);
   const referenced = referencesByPath(references);
 
   const items = [
@@ -220,7 +228,7 @@ function computePartition(plan, mapping, references, options = {}) {
   for (const shard of shards) {
     for (const item of shard.items) {
       if (item.kind !== 'concept') continue;
-      const entry = mapped.get(item.path);
+      const entry = mapped.get(outputKey(item.path, item.concept));
       if (!entry) continue;
       for (const target of linkedConcepts(item.concept, entry.body, conceptFiles)) {
         const targetShard = shardOfConcept.get(target);
@@ -233,8 +241,8 @@ function computePartition(plan, mapping, references, options = {}) {
   }
 
   const result = shards.map((shard) => {
-    const sources = shard.items.map((item) => item.path).sort();
-    const shardMapping = shard.items.filter((item) => item.kind === 'concept').map((item) => mapped.get(item.path));
+    const sources = [...new Set(shard.items.map((item) => item.path))].sort();
+    const shardMapping = shard.items.filter((item) => item.kind === 'concept').map((item) => mapped.get(outputKey(item.path, item.concept)));
     const shardReferences = shard.items.filter((item) => item.kind === 'residue').map((item) => referenced.get(item.path));
     const neighbors = [...neighborsByShard.get(shard.id)].sort().map((concept) => ({ concept }));
     return {
@@ -297,7 +305,10 @@ function validateShard(brief, shard) {
   }
   if (shard.shard !== brief.shard) return invalid('SHARD_IDENTITY_MISMATCH', { expected: brief.shard, actual: shard.shard });
 
-  const assignedMapping = new Map(brief.mapping.map((item) => [item.path, item]));
+  // Keyed by the `(source path, Concept ID)` pair (#156: one source may be split
+  // into several outputs), so a worker accounts for every *output* it was
+  // assigned, not merely every source.
+  const assignedMapping = new Map(brief.mapping.map((item) => [outputKey(item.path, item.concept), item]));
   const assignedReferences = new Map(brief.references.map((item) => [item.path, item]));
   const assignedSources = new Set(brief.sources);
 
@@ -308,13 +319,18 @@ function validateShard(brief, shard) {
       !nonEmptyString(item.type) || typeof item.body !== 'string') {
       return invalid('SHARD_MALFORMED', { field: 'concepts', path: item && item.path });
     }
-    const approved = assignedMapping.get(item.path);
-    if (!approved) return invalid('SHARD_SOURCE_NOT_ASSIGNED', { path: item.path });
-    if (item.concept !== approved.concept || item.type !== approved.type) {
+    const key = outputKey(item.path, item.concept);
+    const approved = assignedMapping.get(key);
+    if (!approved) {
+      const assignedSource = [...assignedMapping.values()].find((entry) => entry.path === item.path);
+      if (!assignedSource) return invalid('SHARD_SOURCE_NOT_ASSIGNED', { path: item.path });
+      return invalid('SHARD_CONCEPT_MISMATCH', { path: item.path, expected: assignedSource.concept, actual: item.concept });
+    }
+    if (item.type !== approved.type) {
       return invalid('SHARD_CONCEPT_MISMATCH', { path: item.path, expected: approved.concept, actual: item.concept });
     }
-    if (concepts.has(item.path)) return invalid('SHARD_DUPLICATE_ENTRY', { path: item.path });
-    concepts.add(item.path);
+    if (concepts.has(key)) return invalid('SHARD_DUPLICATE_ENTRY', { path: item.path });
+    concepts.add(key);
   }
 
   if (!Array.isArray(shard.references)) return invalid('SHARD_MALFORMED', { field: 'references' });
@@ -346,8 +362,8 @@ function validateShard(brief, shard) {
     blocked.add(item.path);
   }
 
-  for (const sourcePath of assignedMapping.keys()) {
-    if (!concepts.has(sourcePath) && !blocked.has(sourcePath)) return invalid('SHARD_INCOMPLETE', { path: sourcePath });
+  for (const [key, approved] of assignedMapping) {
+    if (!concepts.has(key) && !blocked.has(approved.path)) return invalid('SHARD_INCOMPLETE', { path: approved.path });
   }
   for (const sourcePath of assignedReferences.keys()) {
     if (!refs.has(sourcePath) && !blocked.has(sourcePath)) return invalid('SHARD_INCOMPLETE', { path: sourcePath });

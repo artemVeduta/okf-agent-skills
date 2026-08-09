@@ -85,17 +85,23 @@ function computeAssembly(partitionShards, shardContents) {
   const concepts = [];
   const references = [];
   const blockers = [];
-  const claimed = new Map(); // source path -> the one shard allowed to claim it
+  // The identity a shard claims. For a concept that is its Concept ID, not its
+  // source path: an accepted proposal may split one source into several output
+  // concepts (#156), so the same source path legitimately appears more than once.
+  // Residue and blockers are still claimed per source path -- neither has a
+  // Concept ID, and neither is ever split.
+  const claimed = new Map();
 
   for (const shard of partitionShards) {
     const content = shardContents.get(shard.shard);
     for (const [list, items] of [[concepts, content.concepts], [references, content.references], [blockers, content.blockers]]) {
       for (const item of items) {
-        const owner = claimed.get(item.path);
+        const key = list === concepts ? `output:${item.path}\u0000${item.concept}` : `source:${item.path}`;
+        const owner = claimed.get(key);
         if (owner !== undefined) {
           return { ok: false, shard: shard.shard, code: 'ASSEMBLY_SOURCE_DUPLICATE', detail: { path: item.path, shards: [owner, shard.shard] } };
         }
-        claimed.set(item.path, shard.shard);
+        claimed.set(key, shard.shard);
         list.push({ ...item, shard: shard.shard });
       }
     }
@@ -125,7 +131,7 @@ function computeAssembly(partitionShards, shardContents) {
 
   const briefByShard = new Map(partitionShards.map((shard) => [shard.shard, shard.brief]));
   const rendered = concepts.map((item) => {
-    const approved = briefByShard.get(item.shard).mapping.find((entry) => entry.path === item.path);
+    const approved = briefByShard.get(item.shard).mapping.find((entry) => entry.path === item.path && entry.concept === item.concept);
     const sources = approved ? approved.sources : null;
     return { path: item.path, concept: item.concept, type: item.type, shard: item.shard, rendered: renderConcept(item.type, sources, item.body) };
   });

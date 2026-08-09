@@ -11,6 +11,7 @@ const manifest = require('./manifest');
 const monorepo = require('./monorepo');
 const discovery = require('./discovery');
 const migration = require('./migration');
+const proposal = require('./proposal');
 const partition = require('./partition');
 const assembly = require('./assembly');
 const lifecycle = require('./lifecycle');
@@ -702,6 +703,95 @@ function executeMigrationPlan(request, services) {
   }, findings);
 }
 
+/*
+ * #156/#160/#176: the target bundle proposal -- the one approval point between the
+ * accepted source scope and any transformation. `migration-plan` decided each
+ * source's disposition and type; this operation decides *structure*: which output
+ * concepts exist, what each one's exact Concept ID, content scope, provenance
+ * assignment, and link decisions are, which named reader-purpose group each sits
+ * in, and what every group's navigation-only `index.md` says. Read-only, like every
+ * other derivational setup operation: it reads each migrating source's own body and
+ * probes the bundle for an existing target, and writes nothing at all.
+ *
+ * Acceptance stays in the caller's own session. There is no token, no checkpoint,
+ * and no resume state here: `payload.decision: "accept"` returns the accepted
+ * proposal in the same response the caller already holds, and a changed
+ * `payload.revision` simply produces a new complete proposal.
+ */
+function executePropose(request, services) {
+  if (request.invocation === 'automatic') return null;
+  const payload = request.payload;
+  const context = setupContext(request, services);
+  if (context.refusal) return context.refusal;
+  const { gitRoot, bundleRoot } = context;
+
+  if (!validPartitionPlan(payload.plan)) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  const selected = payload.selected === undefined ? [] : payload.selected;
+  if (!Array.isArray(selected) || !selected.every(validPlanSource)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const references = payload.references === undefined ? [] : payload.references;
+  if (!Array.isArray(references) || !references.every(validPartitionReferenceItem)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!proposal.validRevision(payload.revision)) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  if (payload.decision !== undefined && payload.decision !== 'accept' && payload.decision !== 'reject') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  const built = proposal.build({
+    plan: payload.plan,
+    selected,
+    references,
+    revision: payload.revision || {},
+    gitRoot,
+    bundleRoot,
+    services,
+  });
+
+  // A rejected proposal carries nothing executable forward: the tables stay
+  // visible so the user can see what they turned down, but nothing downstream
+  // can partition, transform, or publish from it.
+  if (payload.decision === 'reject') {
+    return respond(request, 'ok', {
+      status: 'rejected',
+      accepted: false,
+      acceptable: built.acceptable,
+      proposal: built.proposal,
+      tree: built.tree,
+      evidence: built.evidence,
+      questions: built.questions,
+      navigation: [],
+      plan: { entries: built.plan.entries, executable: false },
+      mapping: [],
+      references: [],
+    }, []);
+  }
+
+  const findings = built.questions.map((item) => ({
+    code: 'proposal_question_open', origin: 'suite', severity: 'warning', blocks: false,
+    detail: { id: item.id, kind: item.kind },
+  }));
+
+  if (payload.decision === 'accept' && !built.acceptable) {
+    return respond(request, 'blocked', { code: 'PROPOSAL_NOT_ACCEPTABLE', questions: built.questions }, findings);
+  }
+
+  return respond(request, 'ok', {
+    status: payload.decision === 'accept' ? 'accepted' : 'proposed',
+    accepted: payload.decision === 'accept',
+    acceptable: built.acceptable,
+    proposal: built.proposal,
+    tree: built.tree,
+    evidence: built.evidence,
+    questions: built.questions,
+    navigation: built.navigation,
+    plan: built.plan,
+    mapping: built.mapping,
+    references: built.references,
+  }, findings);
+}
+
 // `/setup`'s dynamic semantic partitioner and delegated worker protocol (#146).
 // Its own upstream, unmodified, is exactly `migration-plan`'s response shape:
 // `payload.plan` (`{entries, executable}`), `payload.mapping`, and
@@ -753,11 +843,21 @@ function partitionInputConsistent(plan, mapping, references) {
   const migrating = plan.entries.filter((entry) => entry.disposition === 'migrate');
   const residue = plan.entries.filter((entry) => entry.disposition === 'residue');
   if (mapping.length !== migrating.length || references.length !== residue.length) return false;
-  const migratingByPath = new Map(migrating.map((entry) => [entry.path, entry]));
+  // Matched on the whole `(path, concept, type)` triple rather than on the source
+  // path alone: an accepted proposal may split one source into several output
+  // concepts (#156), so neither the path nor the concept is unique on its own here
+  // -- an intra-plan concept collision is deliberately still `assemble`'s to catch.
+  const remaining = new Map();
+  for (const entry of migrating) {
+    const key = `${entry.path} ${entry.concept} ${entry.type}`;
+    remaining.set(key, (remaining.get(key) || 0) + 1);
+  }
   const residueByPath = new Map(residue.map((entry) => [entry.path, entry]));
   for (const item of mapping) {
-    const entry = migratingByPath.get(item.path);
-    if (!entry || entry.concept !== item.concept || entry.type !== item.type) return false;
+    const key = `${item.path} ${item.concept} ${item.type}`;
+    const left = remaining.get(key);
+    if (!left) return false;
+    remaining.set(key, left - 1);
   }
   for (const item of references) {
     if (!residueByPath.has(item.path)) return false;
@@ -1122,6 +1222,32 @@ function validPublishStagedRef(item) {
     (item.sources === undefined || Array.isArray(item.sources));
 }
 
+// #156: the navigation-only files the accepted proposal binds -- one `index.md` per
+// concept group, and the agent connector when an existing bundle did not carry it.
+// They are not concepts and never go through the write gate: exactly like `init`'s
+// own connector write, they are plain published files with reserved navigation
+// meaning. `expected: null` refuses a target that appeared since the proposal was
+// accepted rather than overwriting it.
+function validPublishNavigation(item) {
+  return !!item && typeof item === 'object' && !Array.isArray(item) &&
+    typeof item.path === 'string' && item.path.endsWith('.md') && typeof item.body === 'string';
+}
+
+function publishNavigation(navigation, bundleRoot, services) {
+  return navigation.map((item) => {
+    const rel = monorepo.normalizeRelative(item.path);
+    const file = rel ? path.resolve(bundleRoot, rel) : null;
+    if (!file || !inside(bundleRoot, file)) return { path: item.path, status: 'blocked: outside-bundle' };
+    if (services.exists(file)) return { path: item.path, status: 'blocked: target-exists' };
+    try {
+      services.publishFile(file, item.body, null);
+    } catch (error) {
+      return { path: item.path, status: `blocked: ${writeFailureReason(error, 'write failed')}` };
+    }
+    return { path: item.path, status: 'written' };
+  });
+}
+
 function dispatchBrief(brief) {
   const result = childProcess.spawnSync(process.execPath, [DELEGATE_WRAPPER], {
     input: JSON.stringify(brief), encoding: 'utf8',
@@ -1257,6 +1383,10 @@ function executePublish(request, services) {
   if (new Set(payload.staged.map((item) => item.concept)).size !== payload.staged.length) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  const navigation = payload.navigation === undefined ? [] : payload.navigation;
+  if (!Array.isArray(navigation) || !navigation.every(validPublishNavigation)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
 
   const cwd = payload.cwd;
   const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
@@ -1289,17 +1419,24 @@ function executePublish(request, services) {
     return { concept: item.concept, status: outcome.status, findings: outcome.findings || [] };
   });
 
+  const navigationResults = publishNavigation(navigation, context.bundleRoot, services);
+
   const published = results.filter((item) => item.status === 'clean').map((item) => item.concept);
   const failed = results.filter((item) => item.status !== 'clean');
-  const findings = failed.flatMap((item) => item.findings.map((finding) => (
-    { ...finding, detail: { ...finding.detail, concept: item.concept } }
-  )));
+  const navigationFailed = navigationResults.filter((item) => item.status !== 'written');
+  const findings = [
+    ...failed.flatMap((item) => item.findings.map((finding) => (
+      { ...finding, detail: { ...finding.detail, concept: item.concept } }
+    ))),
+    ...navigationFailed.map((item) => suiteFinding('NAVIGATION_NOT_PUBLISHED', { gate: 'publish', path: item.path, status: item.status })),
+  ];
 
   return respond(request, 'ok', {
-    status: failed.length === 0 ? 'complete' : 'partial',
+    status: failed.length === 0 && navigationFailed.length === 0 ? 'complete' : 'partial',
     published,
     failed: failed.map((item) => ({ concept: item.concept, status: item.status })),
     results,
+    navigation: navigationResults,
   }, findings);
 }
 
@@ -1310,6 +1447,7 @@ const operations = new Map([
   ['init', executeInit], ['inspect', executeInspect], ['repair', executeRepair],
   ['plan', executePlan], ['aggregate', executeAggregate], ['report', executeReport],
   ['discover', executeDiscover], ['migration-plan', executeMigrationPlan],
+  ['propose', executePropose],
   ['partition', executePartition], ['assemble', executeAssemble],
   ['migration-validate', executeMigrationValidate], ['publish', executePublish],
 ]);

@@ -18,7 +18,7 @@
  * derives and validates, the procedure asks (AGENTS.md's "runtime derives ... it
  * never prompts").
  *
- * The type-mapping table, the type-directory concept-path mapping, provenance
+ * The type-mapping table, the default concept basename, provenance
  * extraction, reference-path derivation, and link rewriting are `./mapping.js`'s
  * job (#145, SRP split): this module owns plan orchestration -- classification,
  * questions, answers -- and calls that module for the mapping *rules* rather than
@@ -138,7 +138,10 @@ function classify(source, read, bundleRoot, services) {
     return { entry: entry(source.path, 'blocked_pending_decision', 'type_not_inferable'), question: q };
   }
 
-  const concept = mapping.conceptPathFor(source.path, type);
+  // #160: the default placement, not a derived one -- the bundle root, carrying the
+  // source's own basename. The accepted target bundle proposal (`./proposal.js`) is
+  // the only thing that may move a concept into a named reader-purpose group.
+  const concept = mapping.conceptBasename(source.path, type);
   const targetFile = path.join(bundleRoot, `${concept}.md`);
   if (services.exists(targetFile)) {
     const q = question(
@@ -164,7 +167,7 @@ function validAnswer(q, value) {
 function resolve(source, entryBefore, q, value) {
   if (q.kind === 'type') {
     const type = value.trim();
-    return entry(source.path, 'migrate', 'type_approved', mapping.conceptPathFor(source.path, type), type);
+    return entry(source.path, 'migrate', 'type_approved', mapping.conceptBasename(source.path, type), type);
   }
   if (q.kind === 'target_collision') return entry(source.path, 'skip', 'target_collision');
   return entry(source.path, value, entryBefore.reason);
@@ -289,4 +292,4 @@ function derivePlan(sources, gitRoot, bundleRoot, services, answers) {
   };
 }
 
-module.exports = { derivePlan };
+module.exports = { derivePlan, readSource };

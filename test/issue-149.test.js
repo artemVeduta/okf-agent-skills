@@ -177,7 +177,7 @@ test('migration-validate and okf-read validate report the identical structural f
     payload: {
       cwd: staging,
       selected: ['docs/a.md'],
-      plan: { entries: [{ path: 'docs/a.md', disposition: 'migrate', reason: 'type_preserved', concept: 'decisions/a', type: 'Decision' }], executable: true },
+      plan: { entries: [{ path: 'docs/a.md', disposition: 'migrate', reason: 'type_preserved', concept: 'a', type: 'Decision' }], executable: true },
       semantic_review: { performed: true },
     },
   });
@@ -225,13 +225,13 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
   const brief = {
     shard: 'x', cwd: root, bundle: 'okf', project_mode: null, okf_version: '0.2',
     sources: ['docs/a.md'],
-    mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, body: '# A\n' }],
+    mapping: [{ path: 'docs/a.md', concept: 'a', type: 'Decision', sources: null, body: '# A\n' }],
     references: [],
     neighbors: [],
   };
   const shard = {
     shard: 'x',
-    concepts: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', body: '# A\n' }],
+    concepts: [{ path: 'docs/a.md', concept: 'a', type: 'Decision', body: '# A\n' }],
     references: [],
     warnings: [],
     blockers: [],
@@ -252,7 +252,7 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
   });
   assert.equal(assembleResponse.result, 'ok', JSON.stringify(assembleResponse));
   assert.equal(assembleResponse.data.status, 'complete');
-  assert.equal(fs.existsSync(path.join(root, '.okf-staging', 'okf', 'decisions', 'a.md')), true);
+  assert.equal(fs.existsSync(path.join(root, '.okf-staging', 'okf', 'a.md')), true);
 
   const migrationValidateResponse = run({
     protocol: 'okf-wrapper/1',
@@ -261,7 +261,7 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
     payload: {
       cwd: root,
       selected: ['docs/a.md'],
-      plan: { entries: [{ path: 'docs/a.md', disposition: 'migrate', reason: 'type_preserved', concept: 'decisions/a', type: 'Decision' }], executable: true },
+      plan: { entries: [{ path: 'docs/a.md', disposition: 'migrate', reason: 'type_preserved', concept: 'a', type: 'Decision' }], executable: true },
       semantic_review: { performed: true },
     },
   });

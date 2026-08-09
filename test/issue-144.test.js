@@ -71,7 +71,7 @@ test('derives a fully determined, executable plan from a discovery inventory nee
   // (`decisions/`), not a mechanical mirror of the source's own directory.
   assert.deepEqual(entryFor(response, 'docs/decisions/use-postgres.md'), {
     path: 'docs/decisions/use-postgres.md', disposition: 'migrate', reason: 'type_preserved',
-    concept: 'decisions/use-postgres', type: 'Decision',
+    concept: 'use-postgres', type: 'Decision',
   });
 });
 
@@ -84,7 +84,7 @@ test('the one-source-one-concept default holds: every source produces exactly on
   assert.equal(response.data.plan.entries.length, sources.length);
   const entry = entryFor(response, 'docs/glossary.md');
   assert.equal(entry.disposition, 'migrate');
-  assert.equal(entry.concept, 'docs/glossary');
+  assert.equal(entry.concept, 'glossary');
 });
 
 // -------------------------------------------------- questions, only where needed
@@ -138,10 +138,9 @@ test('a question is derived only for a genuinely undecidable source, never for a
 test('a target-path collision blocks pending a user decision, offering only "skip"', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/collide.md', '---\ntype: Decision\n---\n# Collide\n');
-  // #145: the pre-existing bundle file must sit at the type-directory-mapped
-  // concept path (`decisions/collide.md`), not the old mechanical-mirror path,
-  // for the collision below to actually occur.
-  write(root, 'okf/decisions/collide.md', '---\ntype: Decision\n---\n# Already here\n');
+  // #160: type never determines path, so the default target is the bundle root.
+  // The pre-existing bundle file must sit there for the collision to occur.
+  write(root, 'okf/collide.md', '---\ntype: Decision\n---\n# Already here\n');
   write(root, 'okf/index.md', '---\nokf_version: "0.2"\n---\n# Bundle\n');
   const sources = discoverSources(root);
 
@@ -161,10 +160,9 @@ test('a target-path collision blocks pending a user decision, offering only "ski
 test('answers are applied, producing a fully determined and executable plan', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/collide.md', '---\ntype: Decision\n---\n# Collide\n');
-  // #145: the pre-existing bundle file must sit at the type-directory-mapped
-  // concept path (`decisions/collide.md`), not the old mechanical-mirror path,
-  // for the collision below to actually occur.
-  write(root, 'okf/decisions/collide.md', '---\ntype: Decision\n---\n# Already here\n');
+  // #160: type never determines path, so the default target is the bundle root.
+  // The pre-existing bundle file must sit there for the collision to occur.
+  write(root, 'okf/collide.md', '---\ntype: Decision\n---\n# Already here\n');
   write(root, 'okf/index.md', '---\nokf_version: "0.2"\n---\n# Bundle\n');
   write(root, 'docs/notes.md', '# Notes\n\nJust prose, no frontmatter.\n');
   fs.writeFileSync(path.join(root, 'garbled.md'), Buffer.from([0x23, 0x20, 0xff, 0xfe, 0x0a]));
@@ -184,9 +182,9 @@ test('answers are applied, producing a fully determined and executable plan', (t
   assert.deepEqual(entryFor(response, 'docs/decisions/collide.md'), {
     path: 'docs/decisions/collide.md', disposition: 'skip', reason: 'target_collision', concept: null, type: null,
   });
-  // #145: an approved type also goes through the type-directory mapping.
+  // #160: an approved type lands at the bundle root like every other concept.
   assert.deepEqual(entryFor(response, 'docs/notes.md'), {
-    path: 'docs/notes.md', disposition: 'migrate', reason: 'type_approved', concept: 'playbooks/notes', type: 'Playbook',
+    path: 'docs/notes.md', disposition: 'migrate', reason: 'type_approved', concept: 'notes', type: 'Playbook',
   });
   assert.deepEqual(entryFor(response, 'garbled.md'), {
     path: 'garbled.md', disposition: 'residue', reason: 'not_utf8', concept: null, type: null,
@@ -282,10 +280,9 @@ test('rejects an answer that names a question this source set does not have open
 test('rejects an answer value outside the question\'s own closed options, and an empty type answer', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/collide.md', '---\ntype: Decision\n---\n# Collide\n');
-  // #145: the pre-existing bundle file must sit at the type-directory-mapped
-  // concept path (`decisions/collide.md`), not the old mechanical-mirror path,
-  // for the collision below to actually occur.
-  write(root, 'okf/decisions/collide.md', '---\ntype: Decision\n---\n# Already here\n');
+  // #160: type never determines path, so the default target is the bundle root.
+  // The pre-existing bundle file must sit there for the collision to occur.
+  write(root, 'okf/collide.md', '---\ntype: Decision\n---\n# Already here\n');
   write(root, 'okf/index.md', '---\nokf_version: "0.2"\n---\n# Bundle\n');
   write(root, 'docs/notes.md', '# Notes\n\nJust prose.\n');
   const sources = discoverSources(root);

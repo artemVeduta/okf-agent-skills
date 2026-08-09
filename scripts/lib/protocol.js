@@ -16,6 +16,7 @@ const requiredPayload = new Map([
   ['report', ['cwd']],
   ['discover', ['cwd']],
   ['migration-plan', ['cwd']],
+  ['propose', ['cwd']],
   ['partition', ['cwd']],
   ['assemble', ['cwd']],
   ['migration-validate', ['cwd']],

@@ -59,7 +59,7 @@ test('Decision: a conventional directory name is deterministic evidence, with no
 
   assert.deepEqual(entryFor(response, 'docs/adr/0001-use-queue.md'), {
     path: 'docs/adr/0001-use-queue.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'decisions/0001-use-queue', type: 'Decision',
+    concept: '0001-use-queue', type: 'Decision',
   });
 });
 
@@ -71,7 +71,7 @@ test('Decision: a conventional ADR filename is deterministic evidence outside a 
 
   assert.deepEqual(entryFor(response, 'random/ADR-0007-cache.md'), {
     path: 'random/ADR-0007-cache.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'decisions/ADR-0007-cache', type: 'Decision',
+    concept: 'ADR-0007-cache', type: 'Decision',
   });
 });
 
@@ -100,7 +100,7 @@ test('Decision: a structural ADR-template match (Status/Context/Decision/Consequ
 
   assert.deepEqual(entryFor(response, 'notes/design-review.md'), {
     path: 'notes/design-review.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'decisions/design-review', type: 'Decision',
+    concept: 'design-review', type: 'Decision',
   });
 });
 
@@ -112,7 +112,7 @@ test('Glossary: the domain-modeling CONTEXT.md filename convention is determinis
 
   assert.deepEqual(entryFor(response, 'billing/CONTEXT.md'), {
     path: 'billing/CONTEXT.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'billing/glossary', type: 'Glossary',
+    concept: 'glossary', type: 'Glossary',
   });
 });
 
@@ -124,7 +124,7 @@ test('Constraint: a conventional directory name is deterministic evidence', (t) 
 
   assert.deepEqual(entryFor(response, 'docs/constraints/rate-limit.md'), {
     path: 'docs/constraints/rate-limit.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'constraints/rate-limit', type: 'Constraint',
+    concept: 'rate-limit', type: 'Constraint',
   });
 });
 
@@ -136,7 +136,7 @@ test('Research: a conventional directory name is deterministic evidence', (t) =>
 
   assert.deepEqual(entryFor(response, 'docs/research/spike.md'), {
     path: 'docs/research/spike.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'research/spike', type: 'Research',
+    concept: 'spike', type: 'Research',
   });
 });
 
@@ -148,7 +148,7 @@ test('Playbook: a conventional directory name is deterministic evidence', (t) =>
 
   assert.deepEqual(entryFor(response, 'ops/playbooks/deploy.md'), {
     path: 'ops/playbooks/deploy.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'playbooks/deploy', type: 'Playbook',
+    concept: 'deploy', type: 'Playbook',
   });
 });
 
@@ -161,11 +161,11 @@ test('Release: a conventional directory name and a conventional semver filename 
 
   assert.deepEqual(entryFor(response, 'docs/releases/notes.md'), {
     path: 'docs/releases/notes.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'releases/notes', type: 'Release',
+    concept: 'notes', type: 'Release',
   });
   assert.deepEqual(entryFor(response, 'random/v2.0.0.md'), {
     path: 'random/v2.0.0.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'releases/v2.0.0', type: 'Release',
+    concept: 'v2.0.0', type: 'Release',
   });
 });
 
@@ -177,7 +177,7 @@ test('Reference: a conventional directory name is deterministic evidence', (t) =
 
   assert.deepEqual(entryFor(response, 'docs/references/external-spec.md'), {
     path: 'docs/references/external-spec.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'references/external-spec', type: 'Reference',
+    concept: 'external-spec', type: 'Reference',
   });
 });
 
@@ -189,7 +189,7 @@ test('Attested Computation: an explicit "runtime" field is structural frontmatte
 
   assert.deepEqual(entryFor(response, 'docs/misc/pipeline.md'), {
     path: 'docs/misc/pipeline.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'docs/misc/pipeline', type: 'Attested Computation',
+    concept: 'pipeline', type: 'Attested Computation',
   });
 });
 
@@ -218,7 +218,7 @@ test('an explicit type is preserved verbatim, including a domain-specific one no
 
   assert.deepEqual(entryFor(response, 'docs/misc/req.md'), {
     path: 'docs/misc/req.md', disposition: 'migrate', reason: 'type_preserved',
-    concept: 'docs/misc/req', type: 'Requirement',
+    concept: 'req', type: 'Requirement',
   });
 });
 
@@ -230,7 +230,7 @@ test('an explicit type wins even when the path also carries deterministic eviden
 
   assert.deepEqual(entryFor(response, 'docs/decisions/status.md'), {
     path: 'docs/decisions/status.md', disposition: 'migrate', reason: 'type_preserved',
-    concept: 'research/status', type: 'Research',
+    concept: 'status', type: 'Research',
   });
 });
 
@@ -294,8 +294,8 @@ test('an unambiguous internal link is rewritten to the target concept path, and 
   const sources = discoverSources(root);
   const response = run(planRequest(root, sources));
 
-  assert.equal(entryFor(response, 'docs/decisions/adr1.md').concept, 'decisions/adr1');
-  assert.equal(entryFor(response, 'docs/decisions/adr2.md').concept, 'decisions/adr2');
+  assert.equal(entryFor(response, 'docs/decisions/adr1.md').concept, 'adr1');
+  assert.equal(entryFor(response, 'docs/decisions/adr2.md').concept, 'adr2');
 
   const mapped = mappingFor(response, 'docs/decisions/adr1.md');
   assert.ok(mapped.body.includes('[the other decision](adr2.md)'), mapped.body);
@@ -344,8 +344,8 @@ test('an exact content duplicate among migrating sources is surfaced as a candid
   // Both still migrate, to two distinct concepts -- never merged into one.
   assert.equal(entryFor(response, 'docs/decisions/first.md').disposition, 'migrate');
   assert.equal(entryFor(response, 'docs/decisions/second.md').disposition, 'migrate');
-  assert.equal(entryFor(response, 'docs/decisions/first.md').concept, 'decisions/first');
-  assert.equal(entryFor(response, 'docs/decisions/second.md').concept, 'decisions/second');
+  assert.equal(entryFor(response, 'docs/decisions/first.md').concept, 'first');
+  assert.equal(entryFor(response, 'docs/decisions/second.md').concept, 'second');
   assert.equal(response.data.plan.executable, true);
 
   assert.deepEqual(response.data.plan.duplicates, [{ paths: ['docs/decisions/first.md', 'docs/decisions/second.md'] }]);

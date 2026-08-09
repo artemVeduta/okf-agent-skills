@@ -163,16 +163,15 @@ test('N shards assemble cleanly into one staged file per concept', (t) => {
 
 test('two shards claiming the same concept path block, never silently renamed or overwritten', (t) => {
   const root = repo(t);
-  // Both are inferred `Decision` by directory alone and both strip down to
-  // the same basename-only target (#145's own `conceptPathFor`), a collision
-  // `migration-plan`'s own check cannot see: it only ever compares a
-  // candidate path against the bundle already published on disk, never
-  // against a sibling entry in the very same plan.
+  // Both default to the bundle root under the same basename (#160: type never
+  // determines path), a collision `migration-plan`'s own check cannot see: it
+  // only ever compares a candidate path against the bundle already published
+  // on disk, never against a sibling entry in the very same plan.
   write(root, 'docs/team-a/decisions/postgres.md', '# Use Postgres (team A)\n');
   write(root, 'docs/team-b/decisions/postgres.md', '# Use Postgres (team B)\n');
   const planData = derivedPlan(root);
   assert.equal(
-    planData.mapping.filter((item) => item.concept === 'decisions/postgres').length,
+    planData.mapping.filter((item) => item.concept === 'postgres').length,
     2,
     'fixture must actually produce a same-target collision migration-plan alone does not catch',
   );
@@ -182,7 +181,7 @@ test('two shards claiming the same concept path block, never silently renamed or
   assert.equal(response.result, 'blocked');
   assert.equal(response.data.code, 'CONCEPT_TARGET_COLLISION');
   assert.equal(response.data.collisions.length, 1);
-  assert.equal(response.data.collisions[0].concept, 'decisions/postgres');
+  assert.equal(response.data.collisions[0].concept, 'postgres');
   assert.deepEqual(
     response.data.collisions[0].claims.map((claim) => claim.path).sort(),
     ['docs/team-a/decisions/postgres.md', 'docs/team-b/decisions/postgres.md'],
@@ -214,14 +213,14 @@ test('an exact cross-shard duplicate is surfaced as a candidate, never merged', 
 
   assert.equal(response.result, 'ok');
   assert.equal(response.data.duplicates.length, 1);
-  assert.deepEqual(response.data.duplicates[0].concepts, ['decisions/one', 'decisions/two']);
+  assert.deepEqual(response.data.duplicates[0].concepts, ['one', 'two']);
   assert.equal(response.data.duplicates[0].shards.length, 2);
   const finding = response.findings.find((item) => item.code === 'ASSEMBLY_DUPLICATE_CANDIDATE');
   assert.ok(finding);
   assert.equal(finding.blocks, false);
 
   // Surfacing is as far as it goes: both concepts still stage, distinct.
-  assert.deepEqual(response.data.staged.map((item) => item.concept).sort(), ['decisions/one', 'decisions/two']);
+  assert.deepEqual(response.data.staged.map((item) => item.concept).sort(), ['one', 'two']);
 });
 
 test('a near duplicate is never merged, and neither concept is dropped', (t) => {
@@ -236,7 +235,7 @@ test('a near duplicate is never merged, and neither concept is dropped', (t) => 
       const shard = wellFormedShard(descriptor.brief);
       shard.concepts = shard.concepts.map((item) => ({
         ...item,
-        body: item.concept === 'decisions/one' ? '# Nearly identical, version A\n' : '# Nearly identical, version B\n',
+        body: item.concept === 'one' ? '# Nearly identical, version A\n' : '# Nearly identical, version B\n',
       }));
       return shard;
     },
@@ -244,7 +243,7 @@ test('a near duplicate is never merged, and neither concept is dropped', (t) => 
 
   assert.equal(response.result, 'ok');
   assert.deepEqual(response.data.duplicates, []);
-  assert.deepEqual(response.data.staged.map((item) => item.concept).sort(), ['decisions/one', 'decisions/two']);
+  assert.deepEqual(response.data.staged.map((item) => item.concept).sort(), ['one', 'two']);
   const bodies = response.data.staged.map((item) => fs.readFileSync(path.join(root, item.file), 'utf8'));
   assert.notEqual(bodies[0], bodies[1]);
 });
@@ -280,7 +279,7 @@ test('a shard carrying a blocker marks the result partial and unpublishable, wit
   assert.equal(warning.blocks, false);
 
   // The other source's own shard still resolved and still stages.
-  assert.deepEqual(response.data.staged.map((item) => item.concept), ['decisions/two']);
+  assert.deepEqual(response.data.staged.map((item) => item.concept), ['two']);
 });
 
 // ---------------------------------------------------------- nothing disappears
@@ -344,7 +343,7 @@ test('a cross-shard link resolves once both shards return, and is carried as a n
   const resolved = assembleFixture(root, planData, { partitionOptions: { max_sources_per_shard: 1 } });
   assert.equal(resolved.partitioned.data.cross_shard_links.length, 1, 'fixture must actually split the linked pair across shards');
   assert.equal(resolved.response.result, 'ok');
-  assert.deepEqual(resolved.response.data.links.resolved, [{ from: 'decisions/a', to: 'decisions/b' }]);
+  assert.deepEqual(resolved.response.data.links.resolved, [{ from: 'a', to: 'b' }]);
   assert.deepEqual(resolved.response.data.links.lost, []);
 
   const lost = assembleFixture(root, planData, {
@@ -361,14 +360,14 @@ test('a cross-shard link resolves once both shards return, and is carried as a n
   assert.equal(lost.response.result, 'ok');
   assert.deepEqual(lost.response.data.links.resolved, []);
   assert.equal(lost.response.data.links.lost.length, 1);
-  assert.equal(lost.response.data.links.lost[0].from, 'decisions/a');
-  assert.equal(lost.response.data.links.lost[0].to, 'decisions/b');
+  assert.equal(lost.response.data.links.lost[0].from, 'a');
+  assert.equal(lost.response.data.links.lost[0].to, 'b');
   const finding = lost.response.findings.find((item) => item.code === 'MIGRATION_LINK_LOST');
   assert.ok(finding, 'a lost cross-shard link must name the relationship loss, distinct from an ordinary broken-link warning');
   assert.equal(finding.blocks, false);
   assert.equal(finding.severity, 'warning');
-  assert.equal(finding.detail.from, 'decisions/a');
-  assert.equal(finding.detail.to, 'decisions/b');
+  assert.equal(finding.detail.from, 'a');
+  assert.equal(finding.detail.to, 'b');
 });
 
 // ---------------------------------------------------------------- wrapper wiring
