@@ -1075,7 +1075,8 @@ function executeMigrationValidate(request, services) {
 function validPublishStagedRef(item) {
   return !!item && typeof item === 'object' && !Array.isArray(item) &&
     typeof item.concept === 'string' && item.concept !== '' &&
-    typeof item.file === 'string' && item.file !== '';
+    typeof item.file === 'string' && item.file !== '' &&
+    (item.sources === undefined || Array.isArray(item.sources));
 }
 
 function dispatchBrief(brief) {
@@ -1115,7 +1116,9 @@ function publishPrecheckBrief(cwd, bundle, taskKind) {
     paths: [bundle],
     allowed_effects: [],
     forbidden_effects: ['concept-create', 'concept-revise', 'format', 'relationship', 'machine-verify'],
-    evidence: ['index.md'],
+    // #174: a read cites nothing, and `index.md` was never evidence for anything --
+    // it was filler that satisfied an existence check.
+    evidence: [],
     required_checks: ['runtime-preflight'],
     settings: { read_execution: 'delegated', write_execution: 'delegated' },
     expected_result: `${bundle} current bundle state confirmed before publish`,
@@ -1128,7 +1131,7 @@ function publishPrecheckBrief(cwd, bundle, taskKind) {
 // `set` that already names one, see `unsupportedPayload`) and the staged
 // Markdown body, forwarded through the #149 extension to `buildRequest` in
 // `scripts/lib/delegation.js`.
-function publishWriteBrief(cwd, bundle, taskKind, concept, tree, body) {
+function publishWriteBrief(cwd, bundle, taskKind, concept, tree, body, sources) {
   return {
     role: 'okf-writer',
     task_kind: taskKind,
@@ -1140,7 +1143,11 @@ function publishWriteBrief(cwd, bundle, taskKind, concept, tree, body) {
     body,
     allowed_effects: ['concept-create'],
     forbidden_effects: ['concept-revise', 'format', 'relationship', 'machine-verify'],
-    evidence: ['index.md'],
+    // #174: the accepted migration proposal binds this concept to the actual source
+    // file or files it was migrated from, each with its SHA-256 identity. One source
+    // may appear under several concepts (a split); one concept may carry several
+    // sources (a synthesis). The delegated `create` rechecks every binding itself.
+    evidence: sources,
     required_checks: ['runtime-preflight'],
     settings: { read_execution: 'delegated', write_execution: 'delegated' },
     expected_result: `${concept}.md created from staged migration content`,
@@ -1234,7 +1241,7 @@ function executePublish(request, services) {
     } catch {
       return { concept: item.concept, status: 'blocked: staged-file-unparseable', findings: [] };
     }
-    const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, parsed.tree, parsed.body);
+    const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, parsed.tree, parsed.body, item.sources || []);
     const outcome = dispatchBrief(brief) || dispatchFailure('okf-writer');
     return { concept: item.concept, status: outcome.status, findings: outcome.findings || [] };
   });

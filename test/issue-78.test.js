@@ -59,6 +59,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { binding } = require('../test-support/snapshot');
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
 
 function bundle(t) {
@@ -72,14 +73,15 @@ function bundle(t) {
   return root;
 }
 
-function request(root, { operation = 'revise', concept = 'note.md', set = { title: 'After' }, evidence = ['evidence.md'] } = {}) {
+function request(root, { operation = 'revise', concept = 'note.md', set = { title: 'After' }, evidence } = {}) {
+  const bindings = evidence === undefined ? [binding(root, 'evidence.md')] : evidence;
   return {
     protocol: 'okf-wrapper/1',
     skill: 'okf-write',
     operation,
     task_kind: 'fix',
     scope: { concepts: [concept] },
-    payload: { cwd: root, bundle: root, concept, set, evidence },
+    payload: { cwd: root, bundle: root, concept, set, evidence: bindings },
   };
 }
 

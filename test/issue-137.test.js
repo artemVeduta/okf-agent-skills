@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { repository, runWrapper, spawnWrapper, temporaryRoot, treeHash } = require('../test-support/snapshot');
+const { binding, repository, runWrapper, spawnWrapper, temporaryRoot, treeHash } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const writeWrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
@@ -204,7 +204,7 @@ test('precondition chain: after init succeeds, a normal create passes the full o
       cwd: root,
       bundle: path.join(root, 'okf'),
       concept: 'concept.md',
-      evidence: ['evidence.md'],
+      evidence: [binding(root, path.join('okf', 'evidence.md'))],
       set: { type: 'Note', title: 'From the chain' },
     },
   }).response;

@@ -9,6 +9,8 @@ description: Maintains OKF lifecycle synchronization and explicit reconciliation
 
 ## Narrow sync vs. explicit reconciliation
 
+Write evidence a `sync` carries is an **observation binding** — `{ "path", "sha256" }` against material actually read, resolved from the active Git worktree — and `sync` inherits the evidence rule of the `create` or `revise` it selects. It is not provenance and it is never proof of relevance. Human statements and non-file tool results stay in the session-local accepted proposal and never cross the wrapper seam.
+
 Ordinary work triggers **incremental synchronization**: the agent selects narrow, evidence-backed maintenance for the directly affected concepts, their declared review dependencies, and mechanical derivatives, with no manual gate. This is the only synchronization allowed to run unprompted by the human.
 
 Everything wider is **explicit reconciliation**, and a caller must ask for it by name. `okf-lifecycle` MUST NOT run a broad operation from incremental synchronization alone. A caller that asks for reconciliation by name gets one of exactly two scopes:

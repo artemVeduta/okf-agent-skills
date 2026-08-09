@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { binding } = require('../test-support/snapshot');
 const scripts = path.join(__dirname, '..', 'scripts');
 
 function bundle(t, mode = 'knowledge-only') {
@@ -30,7 +31,7 @@ function request(root, concept, extra = {}) {
       bundle: root,
       concept,
       set: { type: 'Note', title: 'Created' },
-      evidence: ['evidence.md'],
+      evidence: [binding(root, 'evidence.md')],
       body: '# Created\n',
       ...extra,
     },

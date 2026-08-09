@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { binding } = require('../test-support/snapshot');
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
 
 function bundle(t, index) {
@@ -25,7 +26,7 @@ function request(root, concept = 'note.md', set = { title: 'After' }) {
     operation: 'revise',
     task_kind: 'fix',
     scope: { concepts: [concept] },
-    payload: { cwd: root, bundle: root, concept, set, evidence: ['evidence.md'] },
+    payload: { cwd: root, bundle: root, concept, set, evidence: [binding(root, 'evidence.md')] },
   };
 }
 
