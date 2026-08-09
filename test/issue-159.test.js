@@ -2,6 +2,12 @@
  * #159: `migration-plan` link rewriting must preserve a `#fragment` through the
  * rewrite, and must treat a bare sibling filename exactly like a `./`-prefixed one.
  * Same wrapper seam and fixture shape as #145's own test.
+ *
+ * Only the two `#fragment` tests pin a fix. The two bare-sibling tests are
+ * regression pins, not fix proof: `path.posix.join` already normalized `x.md`
+ * and `./x.md` identically, so they pass against the pre-fix rewriter too. The
+ * defect the issue reported for a bare sibling had another cause, and these
+ * tests hold the behavior that was never broken.
  */
 
 const test = require('node:test');
