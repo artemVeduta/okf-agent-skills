@@ -22,8 +22,8 @@
  *     own collision check cannot see on its own: `scripts/lib/migration.js`'s
  *     `classify()` only ever checks a candidate path against the bundle
  *     already published on disk, never against a sibling entry in the same
- *     plan, so two sources sharing a deterministic target directory-and-
- *     basename (#145's `conceptPathFor`) can both reach `migrate`
+ *     plan, so two sources defaulting to the same bundle-root basename
+ *     (#160: type never determines path) can both reach `migrate`
  *     disposition undetected until assembly.
  *   - an exact cross-shard content duplicate (identical `body`, different
  *     `concept`) is surfaced as a non-blocking candidate -- #145's own

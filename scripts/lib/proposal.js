@@ -487,4 +487,4 @@ function build({ plan, selected, references, revision = {}, gitRoot, bundleRoot,
   };
 }
 
-module.exports = { build, validRevision, renderIndex };
+module.exports = { build, validRevision };
