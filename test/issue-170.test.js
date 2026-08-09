@@ -106,6 +106,38 @@ test('the connector states the exact invariant rules an external skill must foll
   assert.match(connector, /Executable permissions, hooks, and harness settings stay outside this bundle/);
 });
 
+// The connector is `init`'s to create, never `init`'s to overwrite: a bundle root
+// missing only `index.md` is repaired in full, and a connector file already on disk
+// keeps its own bytes instead of turning the repair into a partial write.
+test('init repairs a bundle root beside an existing connector file without overwriting it', (t) => {
+  const root = temporaryRoot(t, 'okf-170-repair-');
+  fs.mkdirSync(path.join(root, '.git'));
+  const bundle = path.join(root, 'okf');
+  fs.mkdirSync(path.join(bundle, 'agents'), { recursive: true });
+  const handWritten = '---\ntitle: OKF agent connector\ntype: Playbook\n---\n\n# Local connector\n';
+  fs.writeFileSync(path.join(bundle, 'agents', 'okf.md'), handWritten);
+
+  const response = setup(root, 'init');
+  assert.equal(response.result, 'applied', JSON.stringify(response.findings));
+  assert.deepEqual(response.data.actual_effects.map((record) => record.effect), ['init']);
+  assert.equal(fs.readFileSync(path.join(bundle, 'agents', 'okf.md'), 'utf8'), handWritten);
+  assert.equal(fs.readFileSync(path.join(bundle, 'agents', 'index.md'), 'utf8'), '# Agents\n\n- [OKF agent connector](okf.md)\n');
+});
+
+// An existing bundle root is not a new bundle: it keeps its own body and gets no
+// connector from `init`. Setup's target-tree proposal owns that case instead.
+test('init leaves an existing bundle root without the connector', (t) => {
+  const root = temporaryRoot(t, 'okf-170-existing-');
+  fs.mkdirSync(path.join(root, '.git'));
+  const bundle = path.join(root, 'okf');
+  fs.mkdirSync(bundle, { recursive: true });
+  fs.writeFileSync(path.join(bundle, 'index.md'), '---\nokf_version: [\n---\n# Old bundle\n');
+
+  assert.equal(setup(root, 'init').result, 'applied');
+  assert.equal(fs.readFileSync(path.join(bundle, 'index.md'), 'utf8'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  assert.equal(fs.existsSync(path.join(bundle, 'agents')), false);
+});
+
 test('the proposal-first flow writes once per accepted concept and leaves a valid bundle', (t) => {
   const root = bootstrap(t);
   const bundle = path.join(root, 'okf');

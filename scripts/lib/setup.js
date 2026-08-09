@@ -97,18 +97,33 @@ function executeInit(request, services) {
   if (!outcome.data.written) return settle('no-op', outcome.findings);
 
   const completedEffects = new Set();
+  let publishing = 'index.md';
   try {
     // publishFile already mkdir's the parent of index.md (the bundle root).
     services.publishFile(outcome.data.file, outcome.data.rendered, outcome.data.expected);
     // #170: a bundle root created for the first time carries the agent connector, so
     // the navigation chain `index.md -> agents/index.md -> agents/okf.md` exists in
     // every new bundle. `outcome.data.connector` is empty for an existing root.
-    for (const file of outcome.data.connector || []) services.publishFile(file.file, file.rendered, null);
+    // `outcome.data.connector` already excludes any connector file present on disk,
+    // so `expected: null` here only ever refuses a file that appeared between the
+    // evaluation and this write -- never the repair case, which leaves it untouched.
+    for (const file of outcome.data.connector || []) {
+      publishing = path.relative(bundleRoot, file.file);
+      services.publishFile(file.file, file.rendered, null);
+    }
     completedEffects.add('init');
   } catch (error) {
     if (error && error.code === 'TARGET_CHANGED') {
-      const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: 'index.md', reason: writeFailureReason(error, 'target changed') });
-      return refuse('TARGET_CHANGED', null, [...outcome.findings, finding]);
+      const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: publishing, reason: writeFailureReason(error, 'target changed') });
+      return writeResponse(request, {
+        result: 'blocked',
+        effects: effectRecords(provisionalEffects, 'blocked'),
+        evidence: [],
+        findings: [...outcome.findings, finding],
+        code: 'TARGET_CHANGED',
+        scope,
+        completed: completedEffects,
+      });
     }
     const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: writeFailureReason(error) });
     return settle('failed/incomplete', [...outcome.findings, finding], { completed: completedEffects });

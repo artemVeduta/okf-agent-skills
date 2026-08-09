@@ -781,7 +781,15 @@ function evaluateInit(request, services) {
   return done('ok', {
     written: true,
     tree,
-    connector: fresh ? connector.FILES.map(([relative, text]) => ({ file: path.join(bundleRoot, relative), rendered: text })) : [],
+    // A connector file already on disk is left exactly as it is: `init` never
+    // overwrites one, so a bundle root missing only `index.md` is repaired without
+    // a partial write and without a `TARGET_CHANGED` refusal for content it does
+    // not own.
+    connector: fresh
+      ? connector.FILES
+        .map(([relative, text]) => ({ file: path.join(bundleRoot, relative), rendered: text }))
+        .filter((item) => !services.exists(item.file))
+      : [],
     rendered: serialized + body,
     expected: currentText,
     file: indexPath,
