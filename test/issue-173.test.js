@@ -41,9 +41,10 @@ test('the documented setup order bootstraps a repository that holds only a Git r
   assert.deepEqual(init.findings, []);
   assert.equal(
     fs.readFileSync(path.join(root, 'okf', 'index.md'), 'utf8'),
-    '---\nokf_version: "0.2"\nproject_mode: code-backed\n---\n# Bundle\n',
+    '---\nokf_version: "0.2"\nproject_mode: code-backed\n---\n# Bundle\n\n- [Agents](agents/index.md)\n',
   );
-  // The exception never widens: `init` writes the bundle root alone.
+  // The exception never widens: `init` writes the bundle root and its agent connector
+  // (#170) alone.
   assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
 
   const activation = runWrapper(wrapper, request('repair', root, { targets: ['activation'] }));

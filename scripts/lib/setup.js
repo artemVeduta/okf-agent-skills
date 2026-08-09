@@ -100,6 +100,10 @@ function executeInit(request, services) {
   try {
     // publishFile already mkdir's the parent of index.md (the bundle root).
     services.publishFile(outcome.data.file, outcome.data.rendered, outcome.data.expected);
+    // #170: a bundle root created for the first time carries the agent connector, so
+    // the navigation chain `index.md -> agents/index.md -> agents/okf.md` exists in
+    // every new bundle. `outcome.data.connector` is empty for an existing root.
+    for (const file of outcome.data.connector || []) services.publishFile(file.file, file.rendered, null);
     completedEffects.add('init');
   } catch (error) {
     if (error && error.code === 'TARGET_CHANGED') {

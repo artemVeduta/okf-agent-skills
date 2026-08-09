@@ -17,6 +17,7 @@ undecided. Invented here, pending a decision:
 
 const path = require('node:path');
 const { inside, resolve } = require('./reach');
+const connector = require('./connector');
 
 const NON_HUMAN_ACTORS = ['agent:', 'tool:'];
 
@@ -771,10 +772,16 @@ function evaluateInit(request, services) {
     return done('blocked', {});
   }
 
-  const body = parseable ? currentBody : '# Bundle\n';
+  // A bundle root that does not exist yet is a new bundle, so it gets the agent
+  // connector (#170): a root body linking to `agents/index.md`, and the two connector
+  // files themselves. An existing root keeps its own body and gets the connector
+  // through setup's target-tree proposal instead.
+  const fresh = currentText === null;
+  const body = parseable ? currentBody : (fresh ? connector.ROOT_BODY : '# Bundle\n');
   return done('ok', {
     written: true,
     tree,
+    connector: fresh ? connector.FILES.map(([relative, text]) => ({ file: path.join(bundleRoot, relative), rendered: text })) : [],
     rendered: serialized + body,
     expected: currentText,
     file: indexPath,
