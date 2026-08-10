@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # Lifecycle Dimensions of Lightweight Durable Context
 
 > **Superseded in part — 2026-08-01.** The research below is retained unchanged as the record of

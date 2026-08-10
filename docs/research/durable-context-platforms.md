@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # Durable Context in AI Coding Platforms — Research Report
 
 > Research date: July 2026

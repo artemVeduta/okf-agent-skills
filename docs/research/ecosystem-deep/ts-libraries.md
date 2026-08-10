@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # TypeScript/JavaScript OKF Libraries — Deep Investigation
 
 > Auto-generated research document. All source code was retrieved from npm registry tarballs

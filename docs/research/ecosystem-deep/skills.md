@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # OKF Ecosystem Deep-Dive: Agent Skills & Memory Systems
 
 ## Table of Contents

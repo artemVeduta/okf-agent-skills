@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # Toolbox and Samples — Deep Analysis
 
 > Repository: https://github.com/GoogleCloudPlatform/knowledge-catalog

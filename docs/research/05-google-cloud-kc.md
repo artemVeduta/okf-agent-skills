@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # Google Cloud Knowledge Catalog & OKF Relationship
 
 ## Knowledge Catalog Product

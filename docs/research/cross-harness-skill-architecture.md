@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # Cross-Harness Skill Architecture and Lifecycle Integration
 
 > Synthesized from 5 parallel fanout research investigations into Claude Code, Codex, OpenCode, the skills CLI (`npx skills`), and skill-authoring guidance (Anthropic + Matt Pocock). All underlying claims are cited in the source reports under `docs/research/ecosystem-deep/`.

@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # OKF Ecosystem: Bundle Producing Projects — Deep Investigation
 
 > **Research date**: 2026-07-25

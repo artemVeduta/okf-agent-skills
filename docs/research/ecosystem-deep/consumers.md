@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # OKF Ecosystem Projects — Deep Investigation
 
 > Generated: 2026-07-25

@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # OKF v0.2 Specification — Deep Analysis
 
 ## How to read this document

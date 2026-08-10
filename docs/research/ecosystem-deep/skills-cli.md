@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # `npx skills` CLI — Deep Investigation
 
 > Exhaustive research from primary sources: npm registry, GitHub repository, specification site, and source code (v1.5.20).

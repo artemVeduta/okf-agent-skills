@@ -1,3 +1,7 @@
+---
+type: Research
+---
+
 # OKF Ecosystem — Specialized & Smaller Projects: Deep Investigation
 
 > Research corrected 2026-07-26. Evidence comes from primary repositories,
