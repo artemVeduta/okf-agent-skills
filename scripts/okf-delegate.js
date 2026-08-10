@@ -19,8 +19,13 @@ function dispatch(request) {
   if (!fs.existsSync(wrapperPath)) {
     return { status: 'blocked: missing-skill', findings: [dispatchFinding('MISSING_SKILL', skill)], next_action: NEXT_ACTION };
   }
+  // A delegated response grows with the bundle: `okf-read validate` on a bundle of a
+  // few hundred concepts already exceeds Node's 1 MiB default `maxBuffer`, and the
+  // overflow arrives as a SIGTERM kill indistinguishable from a crashed wrapper. Size
+  // the buffer past any single JSON response instead of reporting a large bundle as
+  // an indeterminate dispatch failure.
   const result = childProcess.spawnSync(process.execPath, [wrapperPath], {
-    input: JSON.stringify(request), encoding: 'utf8',
+    input: JSON.stringify(request), encoding: 'utf8', maxBuffer: 1 << 30,
   });
   let response = null;
   try { response = JSON.parse(result.stdout); } catch { response = null; }
