@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { repository, runWrapper, spawnWrapper, temporaryRoot, treeHash } = require('../test-support/snapshot');
+const { binding, repository, runWrapper, spawnWrapper, temporaryRoot, treeHash } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const writeWrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
@@ -37,7 +37,9 @@ test('happy path: init on a clean repository creates the bundle root with okf_ve
   assert.deepEqual(response.findings, []);
 
   const written = fs.readFileSync(indexFile(root), 'utf8');
-  assert.equal(written, '---\nokf_version: "0.2"\nproject_mode: code-backed\n---\n# Bundle\n');
+  // #170: a bundle root created here is a new bundle, so it carries the agent connector.
+  assert.equal(written, '---\nokf_version: "0.2"\nproject_mode: code-backed\n---\n# Bundle\n\n- [Agents](agents/index.md)\n');
+  assert.equal(fs.readFileSync(path.join(root, 'okf', 'agents', 'okf.md'), 'utf8').includes('type: Playbook'), true);
 });
 
 test('init defaults the bundle to "okf" and writes okf_version alone when project_mode is omitted', (t) => {
@@ -46,7 +48,7 @@ test('init defaults the bundle to "okf" and writes okf_version alone when projec
 
   assert.equal(response.result, 'applied');
   const written = fs.readFileSync(indexFile(root), 'utf8');
-  assert.equal(written, '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  assert.equal(written, '---\nokf_version: "0.2"\n---\n# Bundle\n\n- [Agents](agents/index.md)\n');
 });
 
 test('no-op: init against an already-valid root changes nothing', (t) => {
@@ -71,7 +73,7 @@ test('repair: a bundle directory that exists without index.md is completed, not 
   const response = run(initRequest(root));
 
   assert.equal(response.result, 'applied');
-  assert.equal(fs.readFileSync(indexFile(root), 'utf8'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  assert.equal(fs.readFileSync(indexFile(root), 'utf8'), '---\nokf_version: "0.2"\n---\n# Bundle\n\n- [Agents](agents/index.md)\n');
 });
 
 test('idempotent both ways: a second call is a no-op, and a corrupted root is repaired by overwrite', (t) => {
@@ -204,7 +206,7 @@ test('precondition chain: after init succeeds, a normal create passes the full o
       cwd: root,
       bundle: path.join(root, 'okf'),
       concept: 'concept.md',
-      evidence: ['evidence.md'],
+      evidence: [binding(root, path.join('okf', 'evidence.md'))],
       set: { type: 'Note', title: 'From the chain' },
     },
   }).response;

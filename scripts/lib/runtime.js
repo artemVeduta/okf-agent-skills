@@ -1,4 +1,5 @@
 const path = require('node:path');
+const crypto = require('node:crypto');
 const validation = require('./validation');
 const admission = require('./admission');
 const routing = require('./routing');
@@ -72,17 +73,44 @@ function scopeFor(request, requireScope) {
   return { scope };
 }
 
-function readEvidence(payload, operation, bundleRoot, services) {
-  const required = ['create', 'revise', 'relationship', 'machine-verify'].includes(operation);
-  if (!required) return { evidence: [] };
-  if (!Array.isArray(payload.evidence) || payload.evidence.length === 0 || payload.evidence.some((item) => typeof item !== 'string' || item === '')) return { invalid: true, evidence: [] };
+// #174/#167: write evidence is an observation binding between material the resolution
+// actually read and this one mutation, never authored provenance and never a claim of
+// semantic relevance. A binding is `{ path, sha256 }`, the path relative to the active
+// Git worktree (so a migration source outside the bundle binds too), and the runtime
+// checks only what it can observe: the file is a regular readable file whose real path
+// is still inside the worktree, and its exact bytes still hash to the accepted digest.
+// An empty list is valid everywhere except `machine-verify`: proposal-only evidence
+// (a human statement, a non-file tool result) never crosses this seam, so there is no
+// self-attested token to check here, only the limit reported in `evidence_limits`.
+const DIGEST = /^[0-9a-f]{64}$/;
+
+function malformedBinding(item) {
+  return !item || typeof item !== 'object' || Array.isArray(item) ||
+    typeof item.path !== 'string' || item.path === '' || path.isAbsolute(item.path) ||
+    item.path.split(/[\\/]/).includes('..') ||
+    typeof item.sha256 !== 'string' || !DIGEST.test(item.sha256);
+}
+
+function readEvidence(payload, operation, activeRoot, services) {
+  const entries = payload.evidence === undefined ? [] : payload.evidence;
+  if (!Array.isArray(entries)) return { code: 'UNSUPPORTED_INPUT', evidence: [] };
   const evidence = [];
-  for (const relative of payload.evidence) {
-    const file = path.resolve(bundleRoot, relative);
-    if (!inside(bundleRoot, file)) return { invalid: true, evidence };
-    try { services.readFile(file); } catch { return { unavailable: true, evidence }; }
-    evidence.push(relative.split(path.sep).join('/'));
+  for (const item of entries) {
+    if (malformedBinding(item)) return { code: 'UNSUPPORTED_INPUT', evidence };
+    const file = path.resolve(activeRoot, item.path);
+    if (!inside(activeRoot, file)) return { code: 'UNSUPPORTED_INPUT', evidence };
+    if (validation.escapesBundle(file, activeRoot, services)) return { code: 'SYMLINK_ESCAPE', evidence };
+    let bytes;
+    try {
+      if (!services.isFile(file) || !services.access(file)) return { code: 'EVIDENCE_UNAVAILABLE', evidence };
+      bytes = services.readBuffer(file);
+    } catch { return { code: 'EVIDENCE_UNAVAILABLE', evidence }; }
+    if (crypto.createHash('sha256').update(bytes).digest('hex') !== item.sha256) {
+      return { code: 'EVIDENCE_CHANGED', evidence };
+    }
+    evidence.push({ path: item.path.split(path.sep).join('/'), sha256: item.sha256 });
   }
+  if (operation === 'machine-verify' && evidence.length === 0) return { code: 'EVIDENCE_REQUIRED', evidence };
   return { evidence };
 }
 
@@ -185,11 +213,9 @@ function executeBounded(request, services, operation, requireScope = false) {
   if (mode === 'code-backed' && payload.code_recoverable === true) {
     return refuse('CODE_RECOVERABLE_MATERIAL', { gate: 'project mode' });
   }
-  const observed = readEvidence(payload, operation, bundleRoot, services);
+  const observed = readEvidence(payload, operation, activeRoot, services);
   evidence = observed.evidence;
-  if (observed.invalid || observed.unavailable) {
-    return refuse(observed.unavailable ? 'EVIDENCE_UNAVAILABLE' : 'EVIDENCE_REQUIRED', { gate: 'evidence' });
-  }
+  if (observed.code) return refuse(observed.code, { gate: 'evidence' });
 
   let outcome;
   try {
@@ -456,6 +482,18 @@ function run(skill, request, services) {
   const activation = activationState(request, services);
   if (activation === 'absent') {
     if (request.invocation === 'automatic') return null;
+    // The bootstrap exception (#166/#173): an explicit `init` runs while the marker is
+    // *absent*, because there is no bundle yet for a marker to declare active, and the
+    // documented order `inspect -> consent -> init -> repair activation -> ...` would
+    // otherwise be unreachable on a clean repository. It is narrower than the bypass set
+    // above: an invalid marker still blocks below, `init` still creates only the bundle
+    // root, and marker creation stays a separate explicit `repair`.
+    // A Git repository is still the precondition every operation shares: outside one,
+    // `init` keeps answering `not-configured` rather than reaching ownership.
+    if (request.operation === 'init' && (skill === 'okf-setup' || skill === 'okf') &&
+      services.gitRootOf(request.payload.cwd)) {
+      return skill === 'okf' ? routerRun(request, services) : runActive(skill, request, services);
+    }
     if (request.operation === 'orient') return orientRespond(request, services, 'absent');
     if (request.operation === 'read' || request.operation === 'search') {
       return respond(request, 'not-configured', routing.notConfiguredData(request.operation), []);

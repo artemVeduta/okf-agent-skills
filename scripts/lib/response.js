@@ -7,7 +7,16 @@ const primaryEffects = new Map([
   ['relationship', 'relationship'], ['machine-verify', 'machine-verify'], ['init', 'init'],
 ]);
 const derivedEffects = new Set(['index-maintenance', 'log-append']);
-const writeLimits = { writes: 'not serialized', crash_recovery: 'not provided' };
+const writeLimits = {
+  writes: 'not serialized',
+  crash_recovery: 'not provided',
+  // #174: `data.evidence` lists only file bindings whose current bytes still hash to
+  // the accepted digest. It never states that the material supports the claim, and it
+  // never carries the human statements or non-file tool results the accepted proposal
+  // holds -- those never cross the wrapper seam.
+  semantic_support: 'not runtime-verified',
+  non_file_evidence: 'accepted proposal only',
+};
 
 function respond(request, result, data, findings, options = {}) {
   return {

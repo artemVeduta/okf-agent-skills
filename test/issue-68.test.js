@@ -4,7 +4,7 @@ const cp = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { REQUIRED_BRIEF_FIELDS } = require('../test-support/snapshot');
+const { REQUIRED_BRIEF_FIELDS, binding } = require('../test-support/snapshot');
 
 const scripts = path.join(__dirname, '..', 'scripts');
 const delegation = require(path.join(scripts, 'lib', 'delegation'));
@@ -26,6 +26,12 @@ function concept(root, text = '---\ntype: Note\ntitle: Before\n---\n# Body\n') {
   fs.writeFileSync(path.join(root, 'note.md'), text);
 }
 
+// #174: a write-evidence observation binding for the fixture's own `evidence.md`;
+// the brief-shape cases use a synthetic root with no filesystem behind it.
+function evidenceBinding(root) {
+  try { return binding(root, 'evidence.md'); } catch { return { path: 'evidence.md', sha256: 'a'.repeat(64) }; }
+}
+
 function brief(root, overrides = {}) {
   return {
     role: 'okf-writer',
@@ -37,7 +43,7 @@ function brief(root, overrides = {}) {
     changes: { title: 'After' },
     allowed_effects: ['concept-revise'],
     forbidden_effects: ['concept-create', 'format', 'relationship', 'machine-verify'],
-    evidence: ['evidence.md'],
+    evidence: [evidenceBinding(root)],
     required_checks: ['runtime-preflight'],
     settings: { read_execution: 'inline', write_execution: 'delegated' },
     expected_result: 'note.md revised',
@@ -164,7 +170,7 @@ test('validateBrief accepts a well-formed writer brief and builds the same okf-w
     operation: 'revise',
     task_kind: 'fix',
     invocation: 'explicit',
-    payload: { cwd: '/repo', bundle: '/repo', concept: 'note.md', evidence: ['evidence.md'], effects: ['concept-revise'], set: { title: 'After' } },
+    payload: { cwd: '/repo', bundle: '/repo', concept: 'note.md', evidence: [evidenceBinding('/repo')], effects: ['concept-revise'], set: { title: 'After' } },
   });
 });
 
@@ -199,7 +205,7 @@ test('receipt carries requested and actual effects, evidence, validation, residu
     result: 'applied',
     data: {
       actual_effects: [{ effect: 'concept-revise', authorization: 'notice', inherited: false }],
-      evidence: ['evidence.md'],
+      evidence: [evidenceBinding('/repo')],
       validation: 'valid',
       residue: [],
     },
@@ -214,7 +220,7 @@ test('receipt carries requested and actual effects, evidence, validation, residu
   assert.deepEqual(result.target, { bundle: '/repo', cwd: '/repo', concepts: ['note.md'] });
   assert.deepEqual(result.requested_effects, ['concept-revise', 'log-append']);
   assert.deepEqual(result.actual_effects, response.data.actual_effects);
-  assert.deepEqual(result.evidence, ['evidence.md']);
+  assert.deepEqual(result.evidence, response.data.evidence);
   assert.equal(result.validation, 'valid');
   assert.deepEqual(result.residue, []);
   assert.deepEqual(result.disclosures, { writes: 'not serialized', crash_recovery: 'not provided', retry: 'not automatic' });
@@ -275,7 +281,7 @@ test('a delegated write reaches the same #54 runtime preflight as an inline writ
 
   const inline = run(writeWrapper, {
     protocol: 'okf-wrapper/1', skill: 'okf-write', operation: 'revise', task_kind: 'fix',
-    payload: { cwd: root, bundle: outside, concept: 'note.md', set: { title: 'After' }, evidence: ['evidence.md'] },
+    payload: { cwd: root, bundle: outside, concept: 'note.md', set: { title: 'After' }, evidence: [evidenceBinding(root)] },
   });
   assert.equal(inline.response.data.code, 'WRITE_TARGET_OUTSIDE_WORKTREE');
 
@@ -288,7 +294,7 @@ test('a delegated write reaches the same #54 runtime preflight as an inline writ
 test('a delegated write with unreadable evidence is blocked: stale-handoff, matching the runtime EVIDENCE_UNAVAILABLE gate', (t) => {
   const root = bundle(t);
   concept(root);
-  const { response } = run(delegateWrapper, brief(root, { evidence: ['missing-evidence.md'] }));
+  const { response } = run(delegateWrapper, brief(root, { evidence: [{ path: 'missing-evidence.md', sha256: 'a'.repeat(64) }] }));
   assert.equal(response.status, 'blocked: stale-handoff');
   assert.ok(response.findings.some((f) => f.code === 'EVIDENCE_UNAVAILABLE'));
 });
@@ -301,7 +307,7 @@ test('inline and delegated bounded writes against equivalent fixtures agree at t
 
   const inline = run(writeWrapper, {
     protocol: 'okf-wrapper/1', skill: 'okf-write', operation: 'revise', task_kind: 'fix',
-    payload: { cwd: inlineRoot, bundle: inlineRoot, concept: 'note.md', set: { title: 'After' }, evidence: ['evidence.md'] },
+    payload: { cwd: inlineRoot, bundle: inlineRoot, concept: 'note.md', set: { title: 'After' }, evidence: [evidenceBinding(inlineRoot)] },
   });
   const delegated = run(delegateWrapper, brief(delegatedRoot));
 

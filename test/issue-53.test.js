@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { binding } = require('../test-support/snapshot');
 const scripts = path.join(__dirname, '..', 'scripts');
 const runtime = require(path.join(scripts, 'lib', 'runtime'));
 const services = require(path.join(scripts, 'lib', 'services'));
@@ -37,7 +38,7 @@ function request(root, skill, operation, extra = {}) {
       bundle: root,
       concept: 'note.md',
       set: { title: 'After' },
-      evidence: ['evidence.md'],
+      evidence: [binding(root, 'evidence.md')],
       ...extra,
     },
   };
@@ -73,9 +74,14 @@ test('writer applies a bounded evidence-backed revision and reports its atomic o
   const response = run(request(root, 'okf-write', 'revise'));
   assert.equal(response.result, 'applied');
   assert.equal(response.data.authorization, 'notice');
-  assert.deepEqual(response.data.evidence, ['evidence.md']);
+  assert.deepEqual(response.data.evidence, [binding(root, 'evidence.md')]);
   assert.deepEqual(response.data.effects.map((item) => item.effect), ['concept-revise']);
-  assert.deepEqual(response.evidence_limits, { writes: 'not serialized', crash_recovery: 'not provided' });
+  assert.deepEqual(response.evidence_limits, {
+    writes: 'not serialized',
+    crash_recovery: 'not provided',
+    semantic_support: 'not runtime-verified',
+    non_file_evidence: 'accepted proposal only',
+  });
   assert.match(fs.readFileSync(path.join(root, 'note.md'), 'utf8'), /title: After/);
 });
 
@@ -155,7 +161,7 @@ test('bounded primary effects create, format, relate, and machine-verify through
   fs.writeFileSync(path.join(root, 'source.md'), '---\ntype: Note\n---\n# Source\n');
   fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Note\n');
   assert.equal(run(request(root, 'okf-write', 'format', { set: {}, evidence: undefined })).result, 'applied');
-  assert.equal(run(request(root, 'okf-write', 'relationship', { evidence: ['source.md'], set: { sources: [{ resource: 'source.md' }] } })).result, 'applied');
+  assert.equal(run(request(root, 'okf-write', 'relationship', { evidence: [binding(root, 'source.md')], set: { sources: [{ resource: 'source.md' }] } })).result, 'applied');
   assert.equal(run(request(root, 'okf-write', 'machine-verify', {
     set: { verified: [{ kind: 'machine', by: 'check', coverage: 'complete-current-concept' }] },
   })).result, 'applied');
@@ -209,7 +215,7 @@ test('mode, scope, ownership, evidence, and semantic gates block only the reques
     assert.equal(fs.readFileSync(path.join(root, 'note.md'), 'utf8').includes('After'), false, label);
     fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   }
-  assert.equal(run(request(root, 'okf-write', 'revise', { evidence: [] })).data.code, 'EVIDENCE_REQUIRED');
+  assert.equal(run(request(root, 'okf-write', 'revise', { evidence: ['evidence.md'] })).data.code, 'UNSUPPORTED_INPUT');
   const invalidScope = request(root, 'okf-write', 'revise');
   invalidScope.scope = { concepts: ['other.md'] };
   assert.equal(run(invalidScope).data.code, 'INVALID_SCOPE');

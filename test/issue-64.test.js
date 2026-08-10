@@ -4,11 +4,16 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { runWrapper, snapshot } = require('../test-support/snapshot');
+const { binding, runWrapper, snapshot } = require('../test-support/snapshot');
 
 const lifecycleWrapper = path.join(__dirname, '..', 'scripts', 'okf-lifecycle.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
-const writeLimits = { writes: 'not serialized', crash_recovery: 'not provided' };
+const writeLimits = {
+  writes: 'not serialized',
+  crash_recovery: 'not provided',
+  semantic_support: 'not runtime-verified',
+  non_file_evidence: 'accepted proposal only',
+};
 
 function bundle(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-64-')));
@@ -44,7 +49,7 @@ function syncRequest(root, concept = 'note.md', payload = {}) {
       bundle: root,
       concept,
       set: { title: 'After' },
-      evidence: ['evidence.md'],
+      evidence: [binding(root, 'evidence.md')],
       ...payload,
     },
   };
@@ -144,7 +149,7 @@ test('sync blocks unavailable evidence and unknown write ownership without chang
   fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Note\n');
   const before = snapshot(root);
 
-  const unavailable = sync(root, 'note.md', { evidence: ['missing.md'] });
+  const unavailable = sync(root, 'note.md', { evidence: [{ path: 'missing.md', sha256: 'a'.repeat(64) }] });
 
   assert.equal(unavailable.result, 'blocked');
   assert.equal(unavailable.data.code, 'EVIDENCE_UNAVAILABLE');

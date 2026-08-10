@@ -21,7 +21,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runWrapper } = require('../test-support/snapshot');
+const { binding, runWrapper } = require('../test-support/snapshot');
 
 const writeWrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
 
@@ -43,7 +43,7 @@ function revise(root, set = { title: 'After' }) {
     operation: 'revise',
     task_kind: 'fix',
     scope: { concepts: ['note.md'] },
-    payload: { cwd: root, bundle: root, concept: 'note.md', set, evidence: ['evidence.md'] },
+    payload: { cwd: root, bundle: root, concept: 'note.md', set, evidence: [binding(root, 'evidence.md')] },
   });
 }
 

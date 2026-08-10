@@ -79,7 +79,12 @@ function validateBrief(brief) {
   if (!brief || typeof brief !== 'object') return incompleteBrief(null);
   for (const field of requiredFields) {
     if (!Object.hasOwn(brief, field)) return incompleteBrief(field);
-    if (field !== 'allowed_effects' && isEmpty(brief[field])) return incompleteBrief(field);
+    // #174: an empty `evidence` list is a valid brief -- a proposal-backed write can
+    // have no recheckable file binding at all -- so the list must be an array, not
+    // non-empty. Each binding's own shape is the write gate's check, not this one's.
+    if (field === 'evidence') {
+      if (!Array.isArray(brief.evidence)) return incompleteBrief(field);
+    } else if (field !== 'allowed_effects' && isEmpty(brief[field])) return incompleteBrief(field);
   }
   if (!Object.hasOwn(ROLES, brief.role)) return incompleteBrief('role');
   if (brief.paths.length !== 1 || typeof brief.paths[0] !== 'string' || brief.paths[0] === '') {

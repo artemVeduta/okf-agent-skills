@@ -171,6 +171,26 @@ the points below.
   on a valid one. It runs ownership, REACH, TRUST, and ACCESS, and skips PRESENCE and the evidence
   gate, because there is no bundle to find yet and nothing to cite. The write gate keeps exactly
   one rule for every other mutation.
+- **The exception covers the activation marker too (#166, implemented by #173).** An explicit
+  `init` runs while `.okf-active` is absent, because there is no bundle yet for a marker to
+  declare active and the setup order `inspect -> consent -> init -> repair activation -> repair
+  manifest -> discover` would otherwise be unreachable on a clean repository. An automatic caller
+  still gets silence, an *invalid* marker still blocks with `ACTIVATION_MARKER_INVALID`, a Git
+  repository is still required, and `init` still never creates or repairs `.okf-active` or
+  `.okf-workspace.json` — marker creation stays a separate, explicit `repair`.
+- **A new bundle carries the agent connector (#168, #169, implemented by #170).** When `init`
+  creates a bundle root whose `index.md` did not exist yet, it also writes the navigation chain
+  `index.md` -> `agents/index.md` -> `agents/okf.md`. `agents/index.md` is navigation only, and
+  `agents/okf.md` is a `Playbook` concept holding the stable suite rules an external
+  document-producing skill needs: read through `okf-read`, prepare one complete proposal through
+  `okf-lifecycle`, one `okf-write` call per accepted concept, never edit bundle files directly,
+  every nested `index.md` is navigation, the type taxonomy is open and `Note` is not a fallback,
+  evidence is meaningful or the write is reported blocked, no skill owns a subtree, and
+  project-specific agent policy is found through the `agents` index. The connector carries no
+  wrapper request schema and no executable harness configuration. A bundle root that already
+  exists is untouched: an existing bundle gets the connector through setup's target-tree proposal.
+  `test/issue-170.test.js` is the deterministic conformance fixture; it proves wrapper-flow
+  compatibility, never human acceptance or a real agent waiting for it.
 - **`init` moves off `okf-lifecycle`.** Pinned-spec line 2748 is superseded on `init` alone.
   `sync` and `compact` are unchanged, and `compact` still takes the unknown-operation result.
 - **Migration is a phase, not an operation.** There is no user-facing `migrate`, and no

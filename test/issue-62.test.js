@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { binding } = require('../test-support/snapshot');
 const readWrapper = path.join(__dirname, '..', 'scripts', 'okf-read.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 const writeWrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
@@ -310,7 +311,7 @@ test('unlisted identity changes and unsupported writer payloads do not write', (
     { set: { title: 'Changed', effects: ['link-rewrite'] } }, { set: { title: 'Changed', effects: 'link-rewrite' } },
   ]) {
     const response = run(writeWrapper, root, 'okf-write', 'revise', {
-      task_kind: 'fix', concept: 'note.md', set: { title: 'Changed' }, evidence: ['evidence.md'], ...payload,
+      task_kind: 'fix', concept: 'note.md', set: { title: 'Changed' }, evidence: [binding(root, 'evidence.md')], ...payload,
     });
     const label = JSON.stringify(payload);
     assert.equal(response.result, 'blocked', label);

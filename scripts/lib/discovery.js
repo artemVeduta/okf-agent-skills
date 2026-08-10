@@ -35,6 +35,14 @@ const validation = require('./validation');
 // `discover` call in the same or a rerun setup session.
 const EXCLUDED_DIR_NAMES = new Set(['.git', 'node_modules', '.okf-staging']);
 
+// #165: the same reasoning, applied to OKF's own root-level artifacts. These are
+// written by `/okf-setup` itself beside the bundle, so a `discover` call in the
+// same or a rerun setup session would otherwise report the files it had just
+// written as candidate migration sources. Matched by `gitRoot`-relative path, so a
+// user document that merely shares one of these names deeper in the tree is
+// untouched.
+const EXCLUDED_ROOT_FILES = new Set(['.okf-active', '.okf-workspace.json', '.okf-occurrences.json']);
+
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown']);
 const HTML_EXTENSIONS = new Set(['.html', '.htm']);
 const PDF_EXTENSIONS = new Set(['.pdf']);
@@ -231,7 +239,10 @@ function shouldSkipDir(bundleRoot, dir) {
 function discover(gitRoot, bundleRoot, services, scanRoot) {
   const root = scanRoot ? path.join(gitRoot, scanRoot) : gitRoot;
   const { files, complete } = services.listFiles(root, (dir) => shouldSkipDir(bundleRoot, dir));
-  const sources = files.map((file) => classify(file, relPosix(gitRoot, file), services));
+  const sources = files
+    .map((file) => [file, relPosix(gitRoot, file)])
+    .filter(([, rel]) => !EXCLUDED_ROOT_FILES.has(rel))
+    .map(([file, rel]) => classify(file, rel, services));
   return { sources, complete };
 }
 

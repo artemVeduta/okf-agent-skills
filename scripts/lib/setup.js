@@ -97,14 +97,33 @@ function executeInit(request, services) {
   if (!outcome.data.written) return settle('no-op', outcome.findings);
 
   const completedEffects = new Set();
+  let publishing = 'index.md';
   try {
     // publishFile already mkdir's the parent of index.md (the bundle root).
     services.publishFile(outcome.data.file, outcome.data.rendered, outcome.data.expected);
+    // #170: a bundle root created for the first time carries the agent connector, so
+    // the navigation chain `index.md -> agents/index.md -> agents/okf.md` exists in
+    // every new bundle. `outcome.data.connector` is empty for an existing root.
+    // `outcome.data.connector` already excludes any connector file present on disk,
+    // so `expected: null` here only ever refuses a file that appeared between the
+    // evaluation and this write -- never the repair case, which leaves it untouched.
+    for (const file of outcome.data.connector || []) {
+      publishing = path.relative(bundleRoot, file.file);
+      services.publishFile(file.file, file.rendered, null);
+    }
     completedEffects.add('init');
   } catch (error) {
     if (error && error.code === 'TARGET_CHANGED') {
-      const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: 'index.md', reason: writeFailureReason(error, 'target changed') });
-      return refuse('TARGET_CHANGED', null, [...outcome.findings, finding]);
+      const finding = suiteFinding('TARGET_CHANGED', { gate: 'target', path: publishing, reason: writeFailureReason(error, 'target changed') });
+      return writeResponse(request, {
+        result: 'blocked',
+        effects: effectRecords(provisionalEffects, 'blocked'),
+        evidence: [],
+        findings: [...outcome.findings, finding],
+        code: 'TARGET_CHANGED',
+        scope,
+        completed: completedEffects,
+      });
     }
     const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: writeFailureReason(error) });
     return settle('failed/incomplete', [...outcome.findings, finding], { completed: completedEffects });
@@ -877,6 +896,25 @@ function assemblyShardCoverage(partitionShards, gathered) {
 // itself, only the staging area beside it, so the shared bypass block in
 // `run()` already turns an automatic invocation into silence before this
 // ever runs.
+// #174: the observation binding a staged concept carries into `publish`. The
+// concept's own accepted source file (`item.path`, the path the mapping was
+// approved for) with the SHA-256 of its exact current bytes -- never `index.md`
+// filler. One source hashed once serves every concept split out of it; an
+// unreadable source yields no binding at all rather than an invented one.
+function sourceBinding(gitRoot, sourcePath, identities, services) {
+  const rel = monorepo.normalizeRelative(sourcePath);
+  if (!rel) return [];
+  if (!identities.has(rel)) {
+    let digest = null;
+    try {
+      digest = crypto.createHash('sha256').update(services.readBuffer(path.join(gitRoot, rel))).digest('hex');
+    } catch { digest = null; }
+    identities.set(rel, digest);
+  }
+  const sha256 = identities.get(rel);
+  return sha256 ? [{ path: rel, sha256 }] : [];
+}
+
 function executeAssemble(request, services) {
   const payload = request.payload;
   const context = setupContext(request, services);
@@ -944,11 +982,16 @@ function executeAssemble(request, services) {
   ];
 
   const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
+  const identities = new Map();
   const staged = outcome.concepts.map((item) => {
     const file = path.join(stagingRoot, `${item.concept}.md`);
     services.mkdir(path.dirname(file));
     services.writeFile(file, item.rendered);
-    return { path: item.path, concept: item.concept, type: item.type, shard: item.shard, file: path.relative(gitRoot, file) };
+    return {
+      path: item.path, concept: item.concept, type: item.type, shard: item.shard,
+      file: path.relative(gitRoot, file),
+      sources: sourceBinding(gitRoot, item.path, identities, services),
+    };
   });
 
   return respond(request, 'ok', {
@@ -1075,7 +1118,8 @@ function executeMigrationValidate(request, services) {
 function validPublishStagedRef(item) {
   return !!item && typeof item === 'object' && !Array.isArray(item) &&
     typeof item.concept === 'string' && item.concept !== '' &&
-    typeof item.file === 'string' && item.file !== '';
+    typeof item.file === 'string' && item.file !== '' &&
+    (item.sources === undefined || Array.isArray(item.sources));
 }
 
 function dispatchBrief(brief) {
@@ -1115,7 +1159,9 @@ function publishPrecheckBrief(cwd, bundle, taskKind) {
     paths: [bundle],
     allowed_effects: [],
     forbidden_effects: ['concept-create', 'concept-revise', 'format', 'relationship', 'machine-verify'],
-    evidence: ['index.md'],
+    // #174: a read cites nothing, and `index.md` was never evidence for anything --
+    // it was filler that satisfied an existence check.
+    evidence: [],
     required_checks: ['runtime-preflight'],
     settings: { read_execution: 'delegated', write_execution: 'delegated' },
     expected_result: `${bundle} current bundle state confirmed before publish`,
@@ -1128,7 +1174,7 @@ function publishPrecheckBrief(cwd, bundle, taskKind) {
 // `set` that already names one, see `unsupportedPayload`) and the staged
 // Markdown body, forwarded through the #149 extension to `buildRequest` in
 // `scripts/lib/delegation.js`.
-function publishWriteBrief(cwd, bundle, taskKind, concept, tree, body) {
+function publishWriteBrief(cwd, bundle, taskKind, concept, tree, body, sources) {
   return {
     role: 'okf-writer',
     task_kind: taskKind,
@@ -1140,7 +1186,11 @@ function publishWriteBrief(cwd, bundle, taskKind, concept, tree, body) {
     body,
     allowed_effects: ['concept-create'],
     forbidden_effects: ['concept-revise', 'format', 'relationship', 'machine-verify'],
-    evidence: ['index.md'],
+    // #174: the accepted migration proposal binds this concept to the actual source
+    // file or files it was migrated from, each with its SHA-256 identity. One source
+    // may appear under several concepts (a split); one concept may carry several
+    // sources (a synthesis). The delegated `create` rechecks every binding itself.
+    evidence: sources,
     required_checks: ['runtime-preflight'],
     settings: { read_execution: 'delegated', write_execution: 'delegated' },
     expected_result: `${concept}.md created from staged migration content`,
@@ -1234,7 +1284,7 @@ function executePublish(request, services) {
     } catch {
       return { concept: item.concept, status: 'blocked: staged-file-unparseable', findings: [] };
     }
-    const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, parsed.tree, parsed.body);
+    const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, parsed.tree, parsed.body, item.sources || []);
     const outcome = dispatchBrief(brief) || dispatchFailure('okf-writer');
     return { concept: item.concept, status: outcome.status, findings: outcome.findings || [] };
   });

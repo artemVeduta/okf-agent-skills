@@ -22,12 +22,19 @@ clarifies domain language, intent, rationale, constraints, invariants, or
 workflows without duplicating implementation.
 _Avoid_: Documentation of the code, prose mirror
 
+**OKF-native documentation**:
+A project documentation policy in which all durable project documentation
+lives as OKF concepts and indexes. It does not change project mode: in a
+code-backed project, code, configuration, and tests remain authoritative for
+executable behavior.
+_Avoid_: Third project mode, code mirror
+
 **Automatic lifecycle**:
 The recurring behavior through which an agent consults relevant OKF knowledge
-and maintains small, evidence-backed documentation changes while doing normal
-project work. This behavior reaches the wrapper as an explicit invocation,
-never an automatic invocation: the agent, not an adapter or hook, sends the
-request.
+and proposes small, evidence-backed documentation changes while doing normal
+project work. A mutation follows acceptance of an OKF change proposal. This
+behavior reaches the wrapper as an explicit invocation, never an automatic
+invocation: the agent, not an adapter or hook, sends the request.
 _Avoid_: Automatic full sync, automatic invocation
 
 **Explicit invocation**:
@@ -72,11 +79,46 @@ adopted evidence, clear ownership, and post-write validation. It does not
 automatically alter trust, status, freshness, or review baselines.
 _Avoid_: Source change, automatic repair, documentation mirror
 
+**OKF change proposal**:
+A bounded, read-only list of intended concept changes and their evidence,
+presented for one user decision before any listed write. Acceptance applies
+only to the listed changes, and each concept remains an independently validated
+write.
+_Avoid_: Draft concept, write approval per concept, automatic mutation
+
+**Lifecycle handoff**:
+Session-local input from an external document-producing skill to
+`okf-lifecycle`. It names the workspace, bundle, task kind, user goal,
+completed work, observed evidence, and candidate durable changes. It does not
+approve a write or make observed evidence eligible for a write.
+_Avoid_: Wrapper request, delegation brief, approval
+
+**Accepted proposal record**:
+The session-local ordered list of exact concept writes that a user accepted in
+one OKF change proposal. It permits one attempt for each listed write. A changed
+request or an added concept requires a new proposal and acceptance. It is not a
+runtime approval record, persistent token, or retry grant.
+_Avoid_: Approval record, wrapper receipt, automatic retry
+
+**Domain-from-code proposal**:
+An OKF change proposal for a user-selected domain scope, based on existing OKF
+knowledge and observed project or external evidence. It contains curated
+language, intent, rationale, constraints, invariants, ownership, navigation, or
+workflows that code cannot explain adequately; it is not a description of the
+implementation.
+_Avoid_: Code import, generated API reference, prose mirror
+
 **Scoped synchronization**:
 Reconciliation of authoritative evidence and durable context within an
 explicit scope. Incremental, diff-scoped, and full-project synchronization
 have different safeguards; synchronization is not mirroring.
 _Avoid_: Automatic full sync, bidirectional replication
+
+**Whole-workspace synchronization**:
+Explicit reconciliation of all admitted bundles in the active workspace. It
+collects read-only findings before one complete proposal and keeps each
+bundle's authority and validation boundaries during approved writes.
+_Avoid_: Scheduled synchronization, automatic workspace write, bundle merge
 
 **Trust tier**:
 An advisory classification of the verification evidence recorded for a
@@ -128,6 +170,35 @@ The harness-specific integration layer that invokes and presents the shared
 skills and runtime through native plugins, hooks, or session seams. It does
 not redefine shared authority, trust, or mutation rules.
 _Avoid_: Separate runtime, harness-specific semantics
+
+**External document-producing skill**:
+A third-party skill outside this suite whose normal work creates or maintains
+project documents. When it targets an OKF bundle, it uses the owning OKF flows;
+an accepted mutation reaches `okf-write`. Direct file edits are outside the
+supported suite contract.
+_Avoid_: Harness adapter, OKF producer, direct bundle editor
+
+**Agent policy**:
+Durable, human-readable project guidance that tells agents how to work. It can
+be stored as OKF knowledge. Executable permissions, hooks, and harness settings
+remain authoritative configuration outside the bundle.
+_Avoid_: Harness configuration, permission file, executable setting
+
+**Agent connector concept**:
+The `agents/okf` Playbook concept linked from the `agents` concept-group index.
+It gives an external document-producing skill the stable suite rules, directs
+it to the owning skill for each wrapper request, and links project-specific
+agent policy. Setup creates it in every new bundle and proposes it for an
+existing bundle. It is durable guidance, not executable harness configuration
+or a copy of each wrapper request schema.
+_Avoid_: Agent index, harness adapter, permission grant
+
+**External-skill conformance**:
+An observed result in which an external document-producing skill discovers the
+agent connector, uses the owning OKF flows, avoids direct bundle edits, selects
+meaningful concept types, and leaves a suite-valid bundle. It does not establish
+the semantic truth or trust of the authored content.
+_Avoid_: Bundle conformance, content verification, trust review
 
 **Skill wrapper script**:
 The thin per-skill process entry under `scripts/` that imports shared modules,
@@ -296,6 +367,42 @@ It cannot widen bundle admission, and it does not grant trust, access, write
 ownership, approval, or permission.
 _Avoid_: Discovery, admission, bundle admission
 
+**Dynamic concept structure**:
+An OKF bundle organization in which a concept's type does not determine its
+path. Placement is a separate decision in the approved target tree.
+_Avoid_: Type directory, source-path fallback, closed concept taxonomy
+
+**Concept group**:
+A bundle subdirectory that collects concepts for one reader purpose. A concept
+group can represent a domain, release history, or another coherent topic; it is
+not a concept type or an unexamined source directory. Groups can contain other
+groups, but nesting depth has no fixed semantic meaning. A group serves a
+current, named reader purpose, contains at least one concept directly or through
+child groups, and states its purpose in a navigation-only `index.md`.
+_Avoid_: Type directory, arbitrary folder, source-path mirror
+
+**Glossary concept**:
+An OKF concept of type `Glossary` that defines a coherent set of canonical
+terms for one reader purpose. The document is the concept and has one Concept
+ID and lifecycle; its individual terms are not separate concepts. A bundle can
+contain zero or more glossary concepts, placed like other concepts in its
+approved reader structure. `Glossary` is the one type that fixes its basename
+to `glossary.md`, so the bundle root and each concept group can contain at most
+one glossary concept.
+_Avoid_: Glossary index, term concept
+
+**Term conflict**:
+The case in which two migration sources define the same term. It requires an
+explicit semantic decision because the definitions can express one shared
+meaning or separate scoped meanings. It never causes an automatic merge.
+_Avoid_: Target collision, automatic deduplication
+
+**Source-path mirror**:
+A target concept path copied from its source project path instead of selected
+for the bundle's reader structure. It is evidence of a missing placement
+decision and is not a valid fallback.
+_Avoid_: Approved target path, concept group
+
 **LLM-guided native navigation**:
 Task-specific reading in which an agent uses harness-native file and search
 tools to navigate admitted bundles. The model chooses navigation steps and
@@ -317,6 +424,13 @@ answer only to the extent observed; it is not authored provenance, a review
 baseline, or a freshness claim.
 _Avoid_: Provenance source, source-of-truth claim, review dependency
 
+**Write evidence**:
+An observation binding between material used during a resolution and one exact
+proposed mutation. It is either a file observation that the write path can
+recheck or a non-file observation frozen in the accepted proposal. It does not
+prove semantic relevance or create authored provenance.
+_Avoid_: Provenance source, semantic proof, readable-file token
+
 **Review dependency**:
 An operationally tracked artifact or scope whose change is evidence that a
 concept may need review. It is distinct from authored provenance and does not
@@ -335,10 +449,60 @@ It is not automatic lifecycle synchronization and does not silently discard or
 invent meaning.
 _Avoid_: Automatic import, full synchronization
 
+**Migration scan boundary**:
+The repository or package subtree in which setup discovers possible migration
+sources. It limits discovery but does not select or approve a source.
+_Avoid_: Migration scope, include list, approval
+
+**Migration scope proposal**:
+A read-only list of discovered files or folders that setup offers for one user
+decision before migration planning. It shows proposed inclusions and exclusions
+with reasons and permits the user to add or remove sources.
+_Avoid_: Migration plan, automatic selection, approval
+
+**Migration scope**:
+The exact set of sources the user accepts from a migration scope proposal. A
+folder selects only the discovered contents shown when the user accepts it.
+_Avoid_: Migration scan boundary, discovered inventory, proposed scope
+
+**Target bundle proposal**:
+The complete, read-only migration plan that setup presents after discovery and
+semantic planning and before content transformation. Its authoritative table
+has one row for each source disposition, output concept, and concept group. It
+defines each output's content scope, provenance assignment, link decisions,
+and placement. A requested change produces a new complete proposal. The
+proposal cannot be accepted while a disposition, ambiguity, or target
+validation remains unresolved.
+_Avoid_: Migration scope proposal, staged bundle, approval token
+
+**Target bundle tree**:
+The derived view of a target bundle proposal that shows concept groups,
+concept paths, and each navigation-only `index.md` with its exact group purpose
+and planned child entries. It helps a reader inspect the planned structure,
+but the proposal table remains authoritative.
+_Avoid_: Source-path mirror, authoritative migration plan
+
+**Accepted target bundle proposal**:
+The exact target bundle proposal that the user accepts for the current setup
+session. It permits transformation and publication of only its listed concepts
+and navigation indexes. A changed output or a later setup session requires a
+new proposal and decision; acceptance is not a persistent token or resume
+state.
+_Avoid_: Accepted proposal record, approval file, migration checkpoint
+
+**Migration split**:
+An accepted source mapping in which one selected migration source produces
+multiple output concepts. Each output has an exact Concept ID, type, and
+bounded content scope before transformation starts. It is not automatic
+section extraction or a later restructuring operation.
+_Avoid_: Automatic split, concept explosion, source disposition
+
 **Migration residue**:
-Source material that cannot be safely represented as OKF semantics. It remains
-visible and inert with an operational report; it is not active concept meaning.
-_Avoid_: Lost content, active extension
+Selected source material that cannot be safely represented as OKF semantics.
+It stays unchanged at its original project path and appears in the migration
+report. It is not copied into the OKF bundle or treated as active concept
+meaning.
+_Avoid_: Lost content, retained bundle evidence, active extension
 
 **Semantic fidelity**:
 Evidence that migrated content retains the intended user-authored meaning.
@@ -523,10 +687,11 @@ area before acceptance.
 _Avoid_: Migration residue, final concept content
 
 **Bootstrap exception**:
-The undefined condition, if any, under which the first write that creates a
-bundle root would be permitted without a pre-existing `okf_version: "0.2"`
-declaration. No such exception exists in `v0.1.0`; its exact condition and
-atomicity requirement are an open item.
+The one condition under which a write that creates a bundle root is permitted
+without a pre-existing `okf_version: "0.2"` declaration, and without an
+activation marker. It covers an explicit `okf-setup` `init` alone: an
+automatic request stays silent, an invalid marker still blocks, and `init`
+writes only the bundle-root `index.md`.
 _Avoid_: Write gate, adoption operation
 
 **Operation identity**:

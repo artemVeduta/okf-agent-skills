@@ -29,6 +29,14 @@ function snapshot(root) {
   return entries;
 }
 
+// #174: one write-evidence observation binding, `{ path, sha256 }`, built from the
+// file's current bytes. `relative` is relative to the active Git worktree, the same
+// way the runtime resolves it.
+function binding(worktree, relative) {
+  const bytes = fs.readFileSync(path.resolve(worktree, relative));
+  return { path: relative, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
+}
+
 function treeHash(root) {
   const hash = crypto.createHash('sha256');
   function visit(directory, relative = '') {
@@ -123,6 +131,7 @@ module.exports = {
   RESPONSE_KEYS,
   adapterManifest,
   assertEnvelope,
+  binding,
   bundle,
   repository,
   runSilent,

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { binding } = require('../test-support/snapshot');
 const scripts = path.join(__dirname, '..', 'scripts');
 const runtime = require(path.join(scripts, 'lib', 'runtime'));
 const services = require(path.join(scripts, 'lib', 'services'));
@@ -35,7 +36,7 @@ function request(root, operation = 'revise', extra = {}) {
       bundle: root,
       concept: 'note.md',
       set: { title: 'After' },
-      evidence: ['evidence.md'],
+      evidence: [binding(root, 'evidence.md')],
       ...extra,
     },
   };
@@ -133,7 +134,7 @@ test('writer blocks root, evidence, mode, and scope gates before publication', (
   const cases = [
     ['root', () => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.1"\nproject_mode: "knowledge-only"\n---\n'), 'ROOT_DECLARATION_NOT_EXACT'],
     ['mode', () => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "invalid"\n---\n'), 'PROJECT_MODE_INVALID'],
-    ['evidence', () => {}, 'EVIDENCE_REQUIRED', { evidence: [] }],
+    ['evidence', () => {}, 'EVIDENCE_CHANGED', { evidence: [{ path: 'evidence.md', sha256: 'a'.repeat(64) }] }],
     ['scope', () => {}, 'INVALID_SCOPE', {}, { concepts: ['other.md'] }],
   ];
   for (const [label, setup, code, extra, scope] of cases) {

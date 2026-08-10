@@ -195,7 +195,12 @@ function rewriteLinks(sourcePath, body, conceptOf) {
       const targetConcept = conceptOf.get(resolved);
       if (!targetConcept) return whole;
 
-      const newTarget = path.posix.relative(path.posix.dirname(`${ownConcept}.md`), `${targetConcept}.md`);
+      // The `?query`/`#fragment` suffix identifies a section of the target, not the
+      // target itself: it is carried through untouched (#159). `bodyLinkPath`
+      // returns only the path part, so whatever follows it in the raw target is
+      // exactly that suffix.
+      const suffix = rawTarget.slice(targetPath.length);
+      const newTarget = path.posix.relative(path.posix.dirname(`${ownConcept}.md`), `${targetConcept}.md`) + suffix;
       return `${prefix}${ws}${angled !== undefined ? `<${newTarget}>` : newTarget}`;
     });
   }).join('\n');
