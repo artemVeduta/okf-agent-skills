@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "tracker": { "adapter": "github", "path": "" },
+  "docs":    { "path": "okf" },
+  "scm":     { "adapter": "github", "branchPattern": "fix/issue-{ticket}-*" },
+  "ci":      { "adapter": "github-actions" },
+  "statuses": {
+    "open": "open",
+    "in-progress": "in-progress",
+    "to-accept": "to-accept",
+    "resolved": "resolved",
+    "closed": "closed"
+  },
+  "labels": {
+    "ready-for-agent": "ready-for-agent",
+    "needs-info": "needs-info"
+  }
+}
