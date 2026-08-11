@@ -316,14 +316,18 @@ test('an unambiguous internal link is rewritten to the target concept path, and 
   assert.ok(mapped.body.includes('[fenced](./also-not-real.md)'), mapped.body);
 });
 
-test('a link to a target outside this migration is left exactly as written', (t) => {
+// #188: a target outside this migration is not left as written -- its link is
+// re-expressed from the concept's own new directory (see test/issue-188.test.js
+// for the dedicated coverage of that rewrite). Only a target this rewriter cannot
+// parse as an internal path at all -- an external URL -- is left untouched.
+test('a link to a target outside this migration is re-expressed for the concept\'s new directory; an external URL is left exactly as written', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/lonely.md', '---\ntype: Decision\n---\n# Lonely decision\n\nSee [elsewhere](../missing.md) and [the web](https://example.test/).\n');
   const sources = discoverSources(root);
   const response = run(planRequest(root, sources));
 
   const mapped = mappingFor(response, 'docs/decisions/lonely.md');
-  assert.ok(mapped.body.includes('[elsewhere](../missing.md)'), mapped.body);
+  assert.ok(mapped.body.includes('[elsewhere](../../docs/missing.md)'), mapped.body);
   assert.ok(mapped.body.includes('[the web](https://example.test/)'), mapped.body);
 });
 

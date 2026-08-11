@@ -184,8 +184,11 @@ function conceptIndex(entries) {
 // declares (verbatim, or `null` -- never fabricated, see `mapping.js`) and its
 // body with links rewritten against every other source this same call is
 // migrating. Read-only and purely derivational, exactly like the rest of this
-// module: nothing here is written anywhere.
-function deriveMapping(entries, read) {
+// module: nothing here is written anywhere. `bundleDir` (the bundle root's own
+// project-relative path, e.g. `"okf"`) lets `rewriteLinks` (#188) place a
+// migrated concept at its real project-relative directory when re-expressing a
+// link to a target that stays outside this migration.
+function deriveMapping(entries, bundleDir, read) {
   const conceptOf = conceptIndex(entries);
   const mapped = [];
   for (const item of entries) {
@@ -196,7 +199,7 @@ function deriveMapping(entries, read) {
       concept: item.concept,
       type: item.type,
       sources: mapping.extractProvenance(tree),
-      body: mapping.rewriteLinks(item.path, body, conceptOf),
+      body: mapping.rewriteLinks(item.path, body, conceptOf, bundleDir),
     });
   }
   return mapped;
@@ -279,11 +282,12 @@ function derivePlan(sources, gitRoot, bundleRoot, services, answers) {
     }
   }
 
+  const bundleDir = path.relative(gitRoot, bundleRoot).split(path.sep).join('/');
   return {
     entries,
     questions,
     executable: questions.length === 0,
-    mapping: deriveMapping(entries, read),
+    mapping: deriveMapping(entries, bundleDir, read),
     references: deriveReferences(entries),
     duplicates: deriveDuplicates(entries, read),
   };

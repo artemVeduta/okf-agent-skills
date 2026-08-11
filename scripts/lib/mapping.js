@@ -158,13 +158,30 @@ function referencePathFor(sourcePath) {
 
 const LINK_PATTERN = /(\[[^\]\n]*\]\()(\s*)(?:<([^>\n]*)>|([^\s)\n]+))/g;
 
-// Rewrites only a link this migration can resolve unambiguously: a parsed,
+// Rewrites every link this migration can parse unambiguously: a parsed,
 // non-fenced, non-inline-code, non-image standard Markdown inline link (reusing
 // `validation.js`'s own `withoutFencedCode`/`bodyLinkPath` rather than a second
-// parser) whose target resolves, relative to the source file's own directory, to
-// exactly one other source in `conceptOf`. Anything else -- an external URL, an
-// anchor, a target outside this migration, fenced or inline code, an image -- is
-// left exactly as written, byte for byte.
+// parser). Anything else -- an external URL, an anchor, fenced or inline code, an
+// image -- is left exactly as written, byte for byte.
+//
+// #188: the target's *project-relative identity* is always resolved against the
+// source file's own directory (or, for a root-relative `/foo` target, against the
+// repository root directly) -- never against the bundle. That identity then
+// splits two ways:
+//   - the target is itself another source this same call is migrating
+//     (`conceptOf` has it): the link becomes a path to that target's concept,
+//     computed bundle-relative-to-bundle-relative (unaffected by either file's
+//     depth in the project -- this half was never the bug);
+//   - the target is not in `conceptOf` (a project file staying put, or a path
+//     that resolves to nothing at all): the link is re-expressed as a path from
+//     the concept's own new directory -- `bundleDir/ownConceptDir` -- to that
+//     same project-relative identity, so a depth change between the source's old
+//     directory and the concept's new one no longer breaks it. A target that
+//     resolves to nothing stays exactly as unresolvable after this rewrite as
+//     before it; `okf-read validate` is what reports that (#188 lands the "report
+//     it, and say which class" requirement there, not here -- see `validation.js`
+//     `UNRESOLVED_INTERNAL_LINK`, which already fires once the rewritten path is
+//     wrong).
 //
 // Reference-style link *definitions* (`[label]: target`) are out of scope: neither
 // shared helper parses that syntax, and writing a second link parser to reach it
@@ -174,8 +191,10 @@ const LINK_PATTERN = /(\[[^\]\n]*\]\()(\s*)(?:<([^>\n]*)>|([^\s)\n]+))/g;
 //
 // `conceptOf` is a `Map<sourcePath, conceptPath>` covering every source this same
 // migration call is placing (`disposition: "migrate"`), keyed by the source's own
-// project-relative path -- exactly the identity #22/#131 already use.
-function rewriteLinks(sourcePath, body, conceptOf) {
+// project-relative path -- exactly the identity #22/#131 already use. `bundleDir`
+// is the bundle root's own project-relative path (e.g. `"okf"`), so a concept's
+// project-relative directory is always `bundleDir/dirname(concept.md)`.
+function rewriteLinks(sourcePath, body, conceptOf, bundleDir) {
   const ownConcept = conceptOf.get(sourcePath);
   const lines = body.split('\n');
   const maskLines = validation.withoutFencedCode(body).split('\n');
@@ -191,16 +210,21 @@ function rewriteLinks(sourcePath, body, conceptOf) {
       const targetPath = validation.bodyLinkPath(rawTarget);
       if (!targetPath || !ownConcept) return whole;
 
-      const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), targetPath));
+      const resolved = targetPath.startsWith('/')
+        ? path.posix.normalize(targetPath.slice(1))
+        : path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), targetPath));
       const targetConcept = conceptOf.get(resolved);
-      if (!targetConcept) return whole;
+      const ownConceptDir = path.posix.dirname(`${ownConcept}.md`);
+      const newTargetPath = targetConcept
+        ? path.posix.relative(ownConceptDir, `${targetConcept}.md`)
+        : path.posix.relative(path.posix.join(bundleDir, ownConceptDir), resolved);
 
       // The `?query`/`#fragment` suffix identifies a section of the target, not the
       // target itself: it is carried through untouched (#159). `bodyLinkPath`
       // returns only the path part, so whatever follows it in the raw target is
       // exactly that suffix.
       const suffix = rawTarget.slice(targetPath.length);
-      const newTarget = path.posix.relative(path.posix.dirname(`${ownConcept}.md`), `${targetConcept}.md`) + suffix;
+      const newTarget = newTargetPath + suffix;
       return `${prefix}${ws}${angled !== undefined ? `<${newTarget}>` : newTarget}`;
     });
   }).join('\n');
