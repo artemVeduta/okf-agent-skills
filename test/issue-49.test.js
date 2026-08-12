@@ -309,3 +309,37 @@ test('validate reports malformed log and index bytes without refusing safe conce
     assertReport(result, false, false);
   }
 });
+
+// -------------------------------------------------------------- word count (#197)
+
+test('validate reports a substantive concept\'s word_count as continuous letter/number runs -- headings, frontmatter, table cells, and code count, Markdown marks do not -- and omits it for the generated connector file', (t) => {
+  const root = rootFor(t);
+  const content = [
+    '---',
+    'type: Note',
+    '---',
+    '# Heading one',
+    '',
+    'Some **bold** text.',
+    '',
+    '| A | B |',
+    '|---|---|',
+    '| x1 | two words |',
+    '',
+    '```',
+    'code fence text',
+    '```',
+    '',
+  ].join('\n');
+  write(root, 'safe.md', content);
+  fs.mkdirSync(path.join(root, 'agents'));
+  write(root, path.join('agents', 'okf.md'), '---\ntitle: OKF agent connector\ntype: Playbook\n---\n# OKF agent connector\n\nSome prose that would inflate a count if it were reported.\n');
+
+  const result = validateUnchanged(root);
+  assert.equal(result.response.result, 'ok');
+  // type, Note, Heading, one, Some, bold, text, A, B, x1, two, words, code, fence, text
+  assert.equal(concept(result, 'safe.md').word_count, 15);
+  assert.equal(Object.hasOwn(concept(result, 'agents/okf.md'), 'word_count'), false);
+  // The count alone never produces a finding -- it is data, not a warning.
+  assert.deepEqual(result.response.findings, []);
+});

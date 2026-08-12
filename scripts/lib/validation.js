@@ -18,6 +18,7 @@ undecided. Invented here, pending a decision:
 const path = require('node:path');
 const { inside, resolve } = require('./reach');
 const connector = require('./connector');
+const { countWords } = require('./words');
 
 const NON_HUMAN_ACTORS = ['agent:', 'tool:'];
 
@@ -971,6 +972,13 @@ function linkVerdict(root, target, services) {
   return inside(target, root) && services.exists(target) && services.isFile(target) ? 'resolves' : 'unexpectedly-broken';
 }
 
+// #197 (#200): the file-word target applies to substantive concepts only, never
+// to a navigation-only index (already excluded below as `reserved`, by name,
+// wherever it sits in the bundle) or to a generated connector file -- `init`'s
+// own `connector.FILES` list, reused here rather than a second name for the
+// same paths, so this set can never quietly drift from what `init` writes.
+const GENERATED_CONNECTOR_PATHS = new Set(connector.FILES.map(([relative]) => relative));
+
 function validateRead(bundleRoot, services, options = {}) {
   const root = services.realpath(path.resolve(bundleRoot));
   const entries = readEntries(root, services);
@@ -1054,6 +1062,12 @@ function validateRead(bundleRoot, services, options = {}) {
 
     const concept = { path: entry.path, bytes, findings: sortFindings(conceptFindings) };
     if (Object.hasOwn(tree, 'status')) concept.status = tree.status;
+    // #197 (#200): a substantive concept's own word count, reported purely as
+    // information -- never compared against the effective target here, never a
+    // finding, and never a reason a normal read warns or blocks. A generated
+    // connector file is excluded by path; a navigation-only index never reaches
+    // this line at all (`reserved`, above, already `continue`s past it).
+    if (!GENERATED_CONNECTOR_PATHS.has(entry.path)) concept.word_count = countWords(bytes);
     concepts.push(concept);
     findings.push(...conceptFindings);
   }

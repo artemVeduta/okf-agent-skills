@@ -686,6 +686,14 @@ function executeMigrationPlan(request, services) {
   const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers);
   if (outcome.invalid) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
 
+  // #197 (#200): `migration-plan` is the proposal `/setup`'s migration flow builds,
+  // so the effective `max_words_per_file` and any settings finding are exposed here
+  // the same way `inspect` already exposes them for the manifest itself (#197 task
+  // 1) -- `migration-plan` is never bypass-gated (see `runtime.js`'s
+  // `activationBypassOperations`), so a valid manifest is already guaranteed by the
+  // time this line runs and `inspect` always reports `state: 'ok'` here.
+  const settingsReport = manifest.inspect(path.join(gitRoot, '.okf-workspace.json'), gitRoot, services);
+
   const findings = [
     ...outcome.questions.map((q) => ({
       code: 'plan_question_open',
@@ -721,6 +729,8 @@ function executeMigrationPlan(request, services) {
     questions: outcome.questions,
     mapping: outcome.mapping,
     references: outcome.references,
+    settings: settingsReport.settings,
+    settingsFindings: settingsReport.settingsFindings,
   }, findings);
 }
 

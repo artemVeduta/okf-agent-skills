@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runWrapper, spawnWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
+const { runWrapper, spawnWrapper, temporaryRoot, writeManifest, TEST_WORKSPACE_ID } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
@@ -355,4 +355,57 @@ test('the generic okf router reaches migration-plan too, still behind the activa
   const inactive = repo(t, { active: false });
   const notConfigured = runWrapper(routerWrapper, { ...planRequest(inactive, []), skill: 'okf' });
   assert.equal(notConfigured.result, 'not-configured');
+});
+
+// -------------------------------------------------------- settings exposure (#197)
+
+// `migration-plan` is the proposal `/setup`'s migration flow builds, so the
+// effective `max_words_per_file` value must reach it the same way `inspect`
+// already reports it for the manifest itself -- this writes the manifest
+// directly (rather than through `repo()`'s fixed template) so each test
+// controls its own `settings` block.
+function writeManifestWithSettings(root, settings) {
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: TEST_WORKSPACE_ID,
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' }],
+    ...(settings === undefined ? {} : { settings }),
+  }));
+}
+
+test('migration-plan exposes the built-in max_words_per_file default when the manifest declares no settings', (t) => {
+  const root = repo(t, { active: false });
+  writeManifestWithSettings(root, undefined);
+
+  const response = run(planRequest(root, []));
+  assert.equal(response.result, 'ok');
+  assert.deepEqual(response.data.settings, { max_words_per_file: 1000 });
+  assert.deepEqual(response.data.settingsFindings, []);
+});
+
+test('migration-plan exposes an override value from .okf-workspace.json as the effective max_words_per_file', (t) => {
+  const root = repo(t, { active: false });
+  writeManifestWithSettings(root, { max_words_per_file: 250 });
+
+  const response = run(planRequest(root, []));
+  assert.equal(response.result, 'ok');
+  assert.deepEqual(response.data.settings, { max_words_per_file: 250 });
+  assert.deepEqual(response.data.settingsFindings, []);
+});
+
+test('migration-plan keeps the built-in max_words_per_file default effective and reports SETTING_INVALID when the override is invalid', (t) => {
+  const root = repo(t, { active: false });
+  writeManifestWithSettings(root, { max_words_per_file: 0 });
+
+  const response = run(planRequest(root, []));
+  assert.equal(response.result, 'ok');
+  assert.deepEqual(response.data.settings, { max_words_per_file: 1000 });
+  assert.deepEqual(response.data.settingsFindings, [{
+    code: 'SETTING_INVALID', origin: 'suite', severity: 'warning', blocks: false,
+    detail: { gate: 'settings', reason: 'invalid_setting_value', key: 'max_words_per_file' },
+  }]);
+  // The invalid override never invalidates the manifest or the plan itself --
+  // the same non-blocking guarantee `inspect` already gives (#197 task 1).
+  assert.equal(response.data.plan.executable, true);
 });
