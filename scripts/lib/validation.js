@@ -415,26 +415,19 @@ function readTree(file, services) {
   return { tree: parseYAML(extracted.frontmatter), body: extracted.body, text };
 }
 
-// Step 1: the bundle root must declare exactly the string "0.2".
-function checkRoot(bundleRoot, services) {
-  const indexPath = path.join(bundleRoot, 'index.md');
-  if (!services.exists(indexPath)) return rootFinding(undefined);
-  let tree = {};
-  try {
-    tree = readTree(indexPath, services).tree;
-  } catch {
-    tree = {};
-  }
-  return tree.okf_version === '0.2' ? null : rootFinding(tree.okf_version);
+// Step 1: the selected manifest bundle record must declare exactly the string
+// "0.2" (#197). This moved off the bundle root's own `index.md` frontmatter --
+// the root is navigation only now, so the value comes from whichever manifest
+// bundle record the caller resolved (`admission.js`'s admitted candidate), not
+// from the filesystem.
+function checkRoot(okfVersion) {
+  return okfVersion === '0.2' ? null : rootFinding(okfVersion);
 }
 
-function projectMode(bundleRoot, services) {
-  try {
-    const tree = readTree(path.join(bundleRoot, 'index.md'), services).tree;
-    return tree.project_mode === 'code-backed' || tree.project_mode === 'knowledge-only' ? tree.project_mode : null;
-  } catch {
-    return null;
-  }
+// Same relocation for `project_mode` (#197): a pure recognized-value check
+// against the manifest bundle record's own field, no filesystem read.
+function projectMode(mode) {
+  return mode === 'code-backed' || mode === 'knowledge-only' ? mode : null;
 }
 
 // #151: the lexical containment check above is cheap but can be fooled by a symlink
@@ -581,7 +574,7 @@ function evaluate(request, services) {
   const findings = [];
   const done = (result, data) => ({ result, data, findings: sortFindings(findings) });
 
-  const root = checkRoot(bundleRoot, services);
+  const root = checkRoot(request.payload.okf_version);
   if (root) {
     findings.push(root);
     return done('blocked', {});
@@ -644,7 +637,7 @@ function evaluateCreate(request, services) {
   const rel = request.payload.concept;
   const findings = [];
   const done = (result, data) => ({ result, data, findings: sortFindings(findings) });
-  const root = checkRoot(bundleRoot, services);
+  const root = checkRoot(request.payload.okf_version);
   if (root) {
     findings.push(root);
     return done('blocked', { path: rel });
@@ -816,6 +809,9 @@ function postWriteInit(bundleRoot, services, expectedTree) {
 // Read-only counterpart to `evaluateInit`: `/setup`'s inspection report for the
 // bundle root. Reuses the same parser as `evaluateInit` so the two never drift on
 // what counts as parseable or valid; unlike `evaluateInit` it never touches disk.
+// #197 task 3 owns making `init`/`inspect` treat the root as navigation-only; this
+// task only moves the write gate itself off this file, so `inspectIndex` (setup-only,
+// bypassed by the activation gate) is left exactly as task 3 will find it.
 function inspectIndex(bundleRoot, services) {
   const indexPath = path.join(bundleRoot, 'index.md');
   if (!services.exists(indexPath)) return { state: 'missing' };
@@ -829,13 +825,16 @@ function inspectIndex(bundleRoot, services) {
   return { state: 'ok' };
 }
 
-function postWrite(bundleRoot, rel, services, expectedTree) {
+// `bundleRecord` is the manifest bundle record the caller already resolved for
+// this write (#197) -- `{ okf_version, project_mode }` at minimum. `undefined`
+// (no record) is treated the same as an absent/unrecognized declaration.
+function postWrite(bundleRoot, rel, services, expectedTree, bundleRecord) {
   const findings = [];
   const file = path.resolve(bundleRoot, rel);
   try {
-    const root = checkRoot(bundleRoot, services);
+    const root = checkRoot(bundleRecord && bundleRecord.okf_version);
     if (root) findings.push(root);
-    if (!projectMode(bundleRoot, services)) {
+    if (!projectMode(bundleRecord && bundleRecord.project_mode)) {
       findings.push(blocker('PROJECT_MODE_INVALID', 'suite', { gate: 'project mode' }));
     }
     const current = readConcept(file, rel, services);

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runWrapper, spawnWrapper, temporaryRoot } = require('../test-support/snapshot');
+const { runWrapper, spawnWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
@@ -12,7 +12,7 @@ const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 function repo(t, { active = true } = {}) {
   const root = temporaryRoot(t, 'okf-144-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  if (active) fs.writeFileSync(path.join(root, '.okf-active'), '');
+  if (active) writeManifest(root, '.');
   return root;
 }
 
@@ -325,12 +325,12 @@ test('migration-plan does not bypass the activation gate: an inactive bundle ans
   assert.equal(response.data.plan, undefined);
 });
 
-test('migration-plan reports ACTIVATION_MARKER_INVALID like every other setup operation on a broken marker', (t) => {
+test('migration-plan reports MANIFEST_INVALID like every other setup operation on a broken manifest', (t) => {
   const root = repo(t, { active: false });
-  fs.mkdirSync(path.join(root, '.okf-active'));
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
   const response = run(planRequest(root, []));
   assert.equal(response.result, 'blocked');
-  assert.equal(response.data.code, 'ACTIVATION_MARKER_INVALID');
+  assert.equal(response.data.code, 'MANIFEST_INVALID');
 });
 
 // -------------------------------------------------------- automatic + router

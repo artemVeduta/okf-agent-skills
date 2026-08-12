@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { binding, repository, runWrapper, spawnWrapper, temporaryRoot, treeHash } = require('../test-support/snapshot');
+const { binding, repository, runWrapper, spawnWrapper, temporaryRoot, treeHash, writeManifest } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const writeWrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
@@ -193,6 +193,9 @@ test('round-trip: the written root re-reads to the exact tree init wrote', (t) =
 
 test('precondition chain: after init succeeds, a normal create passes the full okf-write gate', (t) => {
   const root = repository(t, 'okf-137-chain-');
+  // `init` here defaults to the `okf` bundle name; the write gate needs the
+  // manifest's declared bundle root to match where `init` actually creates it.
+  writeManifest(root, 'okf');
   const initResponse = run(initRequest(root, { project_mode: 'knowledge-only' }));
   assert.equal(initResponse.result, 'applied');
 

@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { binding } = require('../test-support/snapshot');
+const { binding, writeManifest } = require('../test-support/snapshot');
 const readWrapper = path.join(__dirname, '..', 'scripts', 'okf-read.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 const writeWrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
@@ -15,7 +15,7 @@ function bundle(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-62-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   return root;
 }
@@ -67,7 +67,7 @@ test('enumerate reports inline Markdown inbound links without writes', (t) => {
     incomplete_reasons: [],
     links: [{
       carrier: 'markdown.inline',
-      source: { bundle_alias: '.', path: 'source.md', byte_offset: source.indexOf('target.md') },
+      source: { bundle_alias: 'repo', path: 'source.md', byte_offset: source.indexOf('target.md') },
       reference: 'target.md',
       verdict: 'resolves',
     }],
@@ -188,18 +188,36 @@ attester:
   ]);
 });
 
+// #197: `enumerate` is not exempt from the activation gate the way `admit` is
+// (see `runtime.js`'s `activationBypassOperations` comment), so its admission
+// always resolves through the manifest -- an explicit `candidates` override
+// naming some other path is silently replaced by the manifest's own declared
+// bundle, same as any other gated operation. To reach "no admitted bundle"
+// here the manifest's own declared bundle must fail admission for real: reads
+// tolerate a missing `index.md` (PRESENCE allows it), so an ownerless bundle
+// (declared but trusted by nothing) is used instead -- it fails TRUST, the
+// same "no bundle could actually be examined" outcome the old, now-discarded
+// explicit candidate produced. Every declared bundle is required now (#197),
+// so a required-but-inactive bundle also makes `coverage` non-exhaustive,
+// which is its own additional, and accurate, `admission_incomplete` reason.
 test('enumerate reports incomplete discovery with no admitted bundle', (t) => {
-  const root = bundle(t);
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-62-no-bundle-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, '.git'));
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
+    repositories: [],
+    bundles: [{ alias: 'repo', owner: null, root: '.', okf_version: '0.2', project_mode: 'knowledge-only' }],
+  }));
 
-  const response = enumerate(root, {
-    candidates: [{ path: path.join(root, 'missing'), bundle: '.', declared: true, named_by_user: true }],
-  });
+  const response = enumerate(root, {});
 
   assert.equal(response.result, 'unavailable');
   assert.equal(response.data.coverage, 'non-exhaustive');
   assert.deepEqual(response.data.inbound_links, {
     complete: false,
-    incomplete_reasons: ['no_admitted_bundle'],
+    incomplete_reasons: ['no_admitted_bundle', 'admission_incomplete'],
     links: [],
   });
   assert.ok(response.findings.some((finding) => finding.detail && finding.detail.reason === 'no_admitted_bundle'));

@@ -8,14 +8,13 @@ const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-// `okf-setup`'s `inspect`/`repair` operations run even without a valid `.okf-active`
-// marker (that is one of the things `inspect` reports on), so fixtures here build a
-// bare Git repository directly rather than using the shared `repository()` helper,
-// which always creates the marker.
-function repo(t, { active = false } = {}) {
+// `okf-setup`'s `inspect`/`repair` operations run even without a valid manifest
+// (that is one of the things `inspect` reports on), so fixtures here build a bare
+// Git repository directly rather than using the shared `repository()` helper,
+// which always creates one.
+function repo(t) {
   const root = temporaryRoot(t, 'okf-138-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  if (active) fs.writeFileSync(path.join(root, '.okf-active'), '');
   return root;
 }
 
@@ -75,45 +74,37 @@ test('inspect honors a non-default bundle directory for index.md', (t) => {
   assert.deepEqual(run(inspectRequest(root)).data.index_md, { state: 'missing' });
 });
 
-// --------------------------------------------------------------- .okf-active
+// --------------------------------------------------------------- activation
 
-test('inspect reports .okf-active as missing, invalid, and ok', (t) => {
+// #197: `data.activation` reports the same valid/missing/invalid resolution the
+// runtime's own activation gate computes (`runtime.js`'s `activationState()`),
+// now sourced from the manifest instead of the retired `.okf-active` marker.
+test('inspect reports activation as missing, invalid, and ok, tracking the manifest', (t) => {
   const root = repo(t);
   assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'missing' });
 
-  fs.mkdirSync(path.join(root, '.okf-active'));
-  assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'invalid', reason: 'not_zero_byte_regular_file' });
-  fs.rmSync(path.join(root, '.okf-active'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
+  assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'invalid', reason: 'manifest_invalid' });
 
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  const workspaceId = '77777777-7777-4777-8777-777777777777';
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify(validManifest(workspaceId)));
   assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'ok' });
-
-  fs.writeFileSync(path.join(root, '.okf-active'), 'not empty');
-  assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'invalid', reason: 'not_zero_byte_regular_file' });
 });
 
-test('repair creates the missing zero-byte activation marker', (t) => {
+// `repair` has no write left to make for this target (#197: the marker it used to
+// create is gone) -- it is always a no-op report now, whatever the manifest's own
+// state happens to be. The manifest is the only thing `repair` still writes.
+test('repair never writes for the activation target', (t) => {
   const root = repo(t);
-  const response = run(repairRequest(root, ['activation']));
-  assert.equal(response.result, 'applied');
-  assert.deepEqual(response.data.activation, { written: true });
-  const stat = fs.statSync(path.join(root, '.okf-active'));
-  assert.equal(stat.isFile(), true);
-  assert.equal(stat.size, 0);
-});
+  const onMissing = run(repairRequest(root, ['activation']));
+  assert.equal(onMissing.result, 'no-op');
+  assert.deepEqual(onMissing.data.activation, { written: false });
 
-test('repair replaces an invalid activation marker and then leaves the fixed marker untouched', (t) => {
-  const root = repo(t);
-  fs.writeFileSync(path.join(root, '.okf-active'), 'garbage');
-
-  const fixed = run(repairRequest(root, ['activation']));
-  assert.equal(fixed.result, 'applied');
-  assert.deepEqual(fixed.data.activation, { written: true });
-  assert.equal(fs.readFileSync(path.join(root, '.okf-active'), 'utf8'), '');
-
-  const noop = run(repairRequest(root, ['activation']));
-  assert.equal(noop.result, 'no-op');
-  assert.deepEqual(noop.data.activation, { written: false });
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
+  const onInvalid = run(repairRequest(root, ['activation']));
+  assert.equal(onInvalid.result, 'no-op');
+  assert.deepEqual(onInvalid.data.activation, { written: false });
+  assert.equal(fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8'), 'not json');
 });
 
 // --------------------------------------------------------------- .okf-workspace.json
@@ -302,7 +293,7 @@ test('repair does both targets in one call and reports each independently', (t) 
   const root = repo(t);
   const response = run(repairRequest(root, ['activation', 'manifest'], { project_mode: 'code-backed' }));
   assert.equal(response.result, 'applied');
-  assert.deepEqual(response.data.activation, { written: true });
+  assert.deepEqual(response.data.activation, { written: false });
   assert.equal(response.data.manifest.written, true);
 });
 
@@ -315,14 +306,14 @@ test('inspect and repair report not-configured entirely outside a Git repository
   assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
 });
 
-test('inspect and repair run without a valid activation marker, unlike every other operation', (t) => {
+test('inspect and repair run without a valid manifest, unlike every other operation', (t) => {
   const root = repo(t);
   assert.equal(run(inspectRequest(root)).result, 'ok');
-  assert.equal(run(repairRequest(root, ['activation'])).result, 'applied');
+  assert.equal(run(repairRequest(root, ['activation'])).result, 'no-op');
 });
 
 test('automatic invocation of inspect or repair is silent, matching every operation\'s automatic behavior when OKF is not active', (t) => {
-  const root = repo(t, { active: true });
+  const root = repo(t);
   for (const request of [inspectRequest(root), repairRequest(root, ['activation'])]) {
     const result = spawnWrapper(wrapper, { ...request, invocation: 'automatic' });
     assert.equal(result.status, 0);
@@ -357,10 +348,10 @@ test('the generic okf router reaches inspect and repair too, and also bypasses t
   assert.equal(inspected.result, 'ok');
   assert.deepEqual(inspected.data.activation, { state: 'missing' });
 
-  const repaired = runWrapper(routerWrapper, { ...repairRequest(root, ['activation']), skill: 'okf' });
+  const repaired = runWrapper(routerWrapper, { ...repairRequest(root, ['manifest'], { project_mode: 'knowledge-only' }), skill: 'okf' });
   assert.equal(repaired.skill, 'okf');
   assert.equal(repaired.result, 'applied');
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), true);
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), true);
 });
 
 // --------------------------------------------------------------- full chain

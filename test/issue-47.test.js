@@ -42,12 +42,17 @@ test('invalid manifests reject federation but retain the current repository cand
     assert.equal(result.response.data.federation, 'rejected', reason);
     assert.equal(result.response.data.federation_finding.detail.reason, reason, reason);
     if (reason === 'unknown_key' || reason === 'duplicate_repository_name') {
+      // #197: `resolve`, unlike `admit`, is not exempt from the activation
+      // gate -- it is a normal read, not the inspection primitive. An invalid
+      // manifest now refuses the operation itself ("does not fall back to an
+      // undeclared local bundle", #196) before this call reaches admission at
+      // all, so it no longer falls back to the current repository's own
+      // candidate the way `admit` (queried above, at the primitive layer)
+      // still does.
       concept(root, 'local');
       const resolved = runWrapper(readWrapper, request('okf-read', 'resolve', { cwd: root, candidates: [{ path: '.', declared: true, requires_repository: true }], target: 'local' }), root);
-      assert.equal(resolved.response.result, 'ok', reason);
-      assert.equal(resolved.response.data.selected.bundle_alias, '.', reason);
-      assert.equal(resolved.response.findings[0].origin, 'suite', reason);
-      assert.equal(resolved.response.findings[0].detail.gate, 'data validity', reason);
+      assert.equal(resolved.response.result, 'blocked', reason);
+      assert.equal(resolved.response.data.code, 'MANIFEST_INVALID', reason);
     }
     assert.equal(result.response.data.candidates[0].failed_gate, null, reason);
   }
@@ -66,7 +71,12 @@ test('manifest discovery selects the nearest manifest and does not merge', (t) =
 
 test('manifest discovery stops at the git root', (t) => {
   const parent = temporaryRoot(t, 'okf-47-parent-'); const root = path.join(parent, 'repo'); fs.mkdirSync(root); fs.mkdirSync(path.join(root, '.git'));
-  bundle(root); writeManifest(parent, manifest([localRepo()], [{ alias: 'above', owner: 'app', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' }]));
+  // #197: `test-support/snapshot.js`'s `bundle()` now writes its own manifest
+  // at `root`, which would defeat this test's point (that a manifest placed
+  // above the Git root is never discovered) -- write the bundle root by hand
+  // instead, so `root` genuinely has no manifest of its own.
+  fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  writeManifest(parent, manifest([localRepo()], [{ alias: 'above', owner: 'app', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' }]));
   const result = runWrapper(readWrapper, request('okf-read', 'admit', { cwd: root, candidates: [] }), root);
   assert.equal(result.response.data.manifest, undefined);
   assert.notEqual(result.response.data.federation, 'accepted');

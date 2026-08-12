@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const childProcess = require('node:child_process');
 const path = require('node:path');
-const { runWrapper, adapterManifest, temporaryRoot } = require('../test-support/snapshot');
+const { runWrapper, adapterManifest, temporaryRoot, writeManifest } = require('../test-support/snapshot');
 
 // #149: setup's orchestration adapter over the shared semantic contract seam.
 // `publish` is the operation under test -- the one thing in this skill that
@@ -27,7 +27,7 @@ const harnesses = ['claude-code', 'codex', 'opencode'];
 function repo(t) {
   const root = temporaryRoot(t, 'okf-149-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, 'okf');
   fs.mkdirSync(path.join(root, 'okf', 'decisions'), { recursive: true });
   fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   return root;
@@ -158,7 +158,7 @@ test('publish is blocked at one clear precheck, through a delegated read, when t
   // bundle directly, so nothing else here would have caught a bundle that
   // stopped being active. Only the delegated `okf-reader` `validate` call
   // this operation issues before any write is attempted does.
-  fs.rmSync(path.join(root, '.okf-active'));
+  fs.rmSync(path.join(root, '.okf-workspace.json'));
 
   const response = run(publishRequest(root, staged));
 

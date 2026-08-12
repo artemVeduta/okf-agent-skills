@@ -4,7 +4,7 @@ const cp = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { assertEnvelope, treeHash } = require('../test-support/snapshot');
+const { assertEnvelope, treeHash, writeManifest } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-read.js');
 const fallbackPhrase = 'v0.1 consumed using v0.2 fallback';
@@ -13,7 +13,7 @@ function rootFor(t, prefix = 'okf-49-') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
   return root;
 }
@@ -224,7 +224,19 @@ test('validate allows frontmatter-less reserved files during a read', (t) => {
 });
 
 test('validate reads an admitted symlinked bundle root', (t) => {
-  const root = rootFor(t, 'okf-49-symlinked-bundle-');
+  // #197: `validate` is not exempt from the activation gate the way `admit`
+  // is, so its admission always resolves through the manifest -- the
+  // manifest here must declare the symlinked path itself as the bundle root
+  // rather than relying on `bundle` overriding an unrelated default.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-49-symlinked-bundle-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, '.git'));
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: 'linked-bundle', okf_version: '0.2', project_mode: 'knowledge-only' }],
+  }));
   const target = path.join(root, 'real-bundle');
   const link = path.join(root, 'linked-bundle');
   fs.mkdirSync(target);

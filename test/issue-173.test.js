@@ -8,8 +8,9 @@ const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const router = path.join(__dirname, '..', 'scripts', 'okf.js');
 
 // #173 (decision #166): an explicit `init` is the one bootstrap exception to the
-// activation-marker gate. It may run while `.okf-active` is absent, so the documented
-// order `inspect -> consent -> init -> repair activation -> repair manifest -> discover`
+// activation gate. It may run while the manifest (#197: was `.okf-active`) is
+// absent, so the documented order
+// `inspect -> consent -> init -> repair activation -> repair manifest -> discover`
 // works on a repository that holds nothing but a Git root.
 function request(operation, root, payload = {}, extra = {}) {
   return {
@@ -47,8 +48,10 @@ test('the documented setup order bootstraps a repository that holds only a Git r
   // (#170) alone.
   assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
 
+  // #197: the activation repair target never writes anything anymore (the
+  // marker it used to create is gone), so it is always a no-op now.
   const activation = runWrapper(wrapper, request('repair', root, { targets: ['activation'] }));
-  assert.equal(activation.result, 'applied');
+  assert.equal(activation.result, 'no-op');
 
   const manifest = runWrapper(wrapper, request('repair', root, { targets: ['manifest'], project_mode: 'code-backed' }));
   assert.equal(manifest.result, 'applied');
@@ -69,13 +72,13 @@ test('an automatic init on a repository with no activation marker stays silent a
   assert.deepEqual(fs.readdirSync(root), ['.git']);
 });
 
-test('a malformed activation marker still blocks init', (t) => {
+test('a malformed manifest still blocks init', (t) => {
   const root = cleanRepository(t, 'okf-173-invalid-');
-  fs.writeFileSync(path.join(root, '.okf-active'), 'not empty');
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
 
   const response = runWrapper(wrapper, request('init', root));
   assert.equal(response.result, 'blocked');
-  assert.equal(response.data.code, 'ACTIVATION_MARKER_INVALID');
+  assert.equal(response.data.code, 'MANIFEST_INVALID');
   assert.equal(fs.existsSync(path.join(root, 'okf', 'index.md')), false);
 });
 

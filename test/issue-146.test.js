@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runWrapper, spawnWrapper, temporaryRoot } = require('../test-support/snapshot');
+const { runWrapper, spawnWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 
@@ -12,7 +12,7 @@ const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 function repo(t) {
   const root = temporaryRoot(t, 'okf-146-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   return root;
 }
 

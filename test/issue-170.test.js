@@ -55,7 +55,9 @@ function bootstrap(t) {
 
   assert.equal(setup(root, 'inspect').data.index_md.state, 'missing');
   assert.equal(setup(root, 'init', { project_mode: 'knowledge-only' }).result, 'applied');
-  assert.equal(setup(root, 'repair', { targets: ['activation'] }).result, 'applied');
+  // #197: the activation repair target never writes anything anymore (the
+  // marker it used to create is gone), so it is always a no-op now.
+  assert.equal(setup(root, 'repair', { targets: ['activation'] }).result, 'no-op');
   assert.equal(setup(root, 'repair', { targets: ['manifest'], project_mode: 'knowledge-only' }).result, 'applied');
   assert.equal(setup(root, 'discover').result, 'ok');
   return root;

@@ -21,7 +21,7 @@ const retiredLabels = ['insufficient', 'CLIPPED', 'MISS', 'UNDISCOVERED', 'UNSEA
 function repository(t, prefix = 'okf-50-') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  manifest(root, [{ alias: 'app', owner: 'app', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' }]);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -561,7 +561,7 @@ test('incomplete enumeration prevents a complete navigation coverage claim', (t)
 
 test('explicit navigation without activation keeps the navigation data shape', (t) => {
   const root = repository(t, 'okf-50-no-marker-');
-  fs.unlinkSync(path.join(root, '.okf-active'));
+  fs.unlinkSync(path.join(root, '.okf-workspace.json'));
 
   for (const [operation, value] of [['read', 'missing'], ['search', 'missing-query']]) {
     const response = assertProcess(runWrapper(directRequest(root, operation, value)));
@@ -573,7 +573,7 @@ test('explicit navigation without activation keeps the navigation data shape', (
 
 test('invalid activation keeps navigation in the fixed result vocabulary', (t) => {
   const root = repository(t, 'okf-50-invalid-marker-');
-  fs.writeFileSync(path.join(root, '.okf-active'), 'invalid');
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'invalid');
 
   const response = assertProcess(runWrapper(directRequest(root, 'read', 'missing')));
   assert.equal(response.result, 'unavailable');

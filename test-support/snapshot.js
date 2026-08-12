@@ -68,10 +68,30 @@ function temporaryRoot(t, prefix = 'okf-test-') {
   return root;
 }
 
+// #197: a fixed, valid `workspace_id` reused across fixtures that don't care
+// about a specific value -- the same constant `issue-47`/`issue-50`'s own
+// manifest fixtures already use.
+const TEST_WORKSPACE_ID = '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b';
+
+// #197: `.okf-workspace.json` replaces `.okf-active` as the runtime's activation
+// condition. One default single-bundle declaration, its `root` matching whatever
+// relative path the caller's bundle actually lives at. Overwrites any manifest
+// already at `root` -- callers that need a richer (multi-bundle/federated)
+// manifest write their own afterward, the same way they already overwrite a
+// marker-only fixture with a real one.
+function writeManifest(root, relative) {
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: TEST_WORKSPACE_ID,
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: relative, okf_version: '0.2', project_mode: 'knowledge-only' }],
+  }));
+}
+
 function repository(t, prefix = 'okf-test-repo-') {
   const root = temporaryRoot(t, prefix);
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   return root;
 }
 
@@ -79,7 +99,7 @@ function bundle(root, relative = '.', index = '---\nokf_version: "0.2"\n---\n# B
   const target = path.join(root, relative);
   fs.mkdirSync(target, { recursive: true });
   fs.writeFileSync(path.join(target, 'index.md'), index);
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, relative);
   return target;
 }
 
@@ -129,6 +149,7 @@ function adapterManifest(harness) {
 module.exports = {
   REQUIRED_BRIEF_FIELDS,
   RESPONSE_KEYS,
+  TEST_WORKSPACE_ID,
   adapterManifest,
   assertEnvelope,
   binding,
@@ -137,6 +158,7 @@ module.exports = {
   runSilent,
   runWrapper,
   snapshot,
+  writeManifest,
   spawnWrapper,
   temporaryRoot,
   treeHash,

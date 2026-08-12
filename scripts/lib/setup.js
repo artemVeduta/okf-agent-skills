@@ -153,33 +153,40 @@ function setupContext(request, services) {
 }
 
 // `/setup`'s deterministic state report for the three config files (#133/#138).
-// Read-only: it never writes, and it runs even when the activation marker itself is
+// Read-only: it never writes, and it runs even when the manifest itself is
 // what is being inspected, so `run()` reaches this directly rather than gating it
-// behind the very marker it reports on. `okf-setup`'s procedure owns the consent
+// behind the very manifest it reports on. `okf-setup`'s procedure owns the consent
 // prompts and the "fix all?" interaction; this function only reports state.
 const repairTargets = new Set(['activation', 'manifest']);
+
+// #197: the same valid/missing/invalid resolution `runtime.js`'s `activationState()`
+// computes for the shared activation gate, reused here so `/setup`'s own report of
+// "would OKF run normally here" can never drift from what the gate itself decides --
+// `runtime.js` cannot be required back from here (it requires this file), so this is
+// the same three calls (`gitRootOf`, `manifest.select`, the finding/manifest check),
+// not a second gate with its own rules.
+function manifestActivation(payload, gitRoot, services) {
+  const selected = manifest.select(payload, { cwd: path.resolve(payload.cwd), gitRoot }, services);
+  if (selected.finding) return { state: 'invalid', reason: 'manifest_invalid' };
+  return { state: selected.manifest ? 'ok' : 'missing' };
+}
 
 function executeInspect(request, services) {
   const context = setupContext(request, services);
   if (context.refusal) return context.refusal;
   const { gitRoot, bundleRoot } = context;
 
-  const marker = services.activationMarker(gitRoot);
-  const activation = marker === 'valid' ? { state: 'ok' }
-    : marker === 'absent' ? { state: 'missing' }
-      : { state: 'invalid', reason: 'not_zero_byte_regular_file' };
-
   return respond(request, 'ok', {
     index_md: validation.inspectIndex(bundleRoot, services),
-    activation,
+    activation: manifestActivation(request.payload, gitRoot, services),
     manifest: manifest.inspect(path.join(gitRoot, '.okf-workspace.json'), gitRoot, services),
   }, []);
 }
 
-// `/setup`'s approved-repair executor for the two plain-filesystem config files
-// (#133/#138). `.okf-active` and `.okf-workspace.json` are not OKF operations through
-// the write gate — no REACH/TRUST/ACCESS admission, no evidence, no atomic publish,
-// no `effects` vocabulary — they are exactly the plain filesystem actions #133 named.
+// `/setup`'s approved-repair executor for the plain-filesystem config file
+// (#133/#138). `.okf-workspace.json` is not an OKF operation through the write
+// gate — no REACH/TRUST/ACCESS admission, no evidence, no atomic publish, no
+// `effects` vocabulary — it is exactly the plain filesystem action #133 named.
 // `index.md` repair is not here at all: it goes through `init`. Consent lives in
 // `okf-setup`'s procedure, not here — reaching this function is itself the approval.
 // Idempotent like `init`: a target already in state `ok` is always left untouched.
@@ -229,14 +236,12 @@ function executeRepair(request, services) {
   const data = {};
   let wrote = false;
 
+  // #197: the activation marker this target used to write is gone. There is
+  // nothing left for `repair` to write here -- the manifest target below is
+  // now the only thing that changes whether OKF runs -- so this target is
+  // always a no-op report.
   if (targets.includes('activation')) {
-    if (services.activationMarker(gitRoot) === 'valid') {
-      data.activation = { written: false };
-    } else {
-      services.writeFile(path.join(gitRoot, '.okf-active'), '');
-      data.activation = { written: true };
-      wrote = true;
-    }
+    data.activation = { written: false };
   }
 
   if (targets.includes('manifest')) {
