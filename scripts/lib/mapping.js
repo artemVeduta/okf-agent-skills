@@ -158,16 +158,25 @@ function referencePathFor(sourcePath) {
 
 const LINK_PATTERN = /(\[[^\]\n]*\]\()(\s*)(?:<([^>\n]*)>|([^\s)\n]+))/g;
 
+// #188: a link target's *project-relative identity* is always resolved against
+// the source file's own directory -- or, for a root-relative `/foo` target,
+// against the repository root directly -- never against the bundle. Shared by
+// `rewriteLinks` below and `migration.js`'s own unresolved-link check, so the two
+// never compute two different answers for what a link "means".
+function resolveLinkTarget(sourcePath, targetPath) {
+  return targetPath.startsWith('/')
+    ? path.posix.normalize(targetPath.slice(1))
+    : path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), targetPath));
+}
+
 // Rewrites every link this migration can parse unambiguously: a parsed,
 // non-fenced, non-inline-code, non-image standard Markdown inline link (reusing
 // `validation.js`'s own `withoutFencedCode`/`bodyLinkPath` rather than a second
 // parser). Anything else -- an external URL, an anchor, fenced or inline code, an
 // image -- is left exactly as written, byte for byte.
 //
-// #188: the target's *project-relative identity* is always resolved against the
-// source file's own directory (or, for a root-relative `/foo` target, against the
-// repository root directly) -- never against the bundle. That identity then
-// splits two ways:
+// #188: once a link's target identity is resolved (`resolveLinkTarget`, above),
+// it splits two ways:
 //   - the target is itself another source this same call is migrating
 //     (`conceptOf` has it): the link becomes a path to that target's concept,
 //     computed bundle-relative-to-bundle-relative (unaffected by either file's
@@ -176,12 +185,14 @@ const LINK_PATTERN = /(\[[^\]\n]*\]\()(\s*)(?:<([^>\n]*)>|([^\s)\n]+))/g;
 //     that resolves to nothing at all): the link is re-expressed as a path from
 //     the concept's own new directory -- `bundleDir/ownConceptDir` -- to that
 //     same project-relative identity, so a depth change between the source's old
-//     directory and the concept's new one no longer breaks it. A target that
-//     resolves to nothing stays exactly as unresolvable after this rewrite as
-//     before it; `okf-read validate` is what reports that (#188 lands the "report
-//     it, and say which class" requirement there, not here -- see `validation.js`
-//     `UNRESOLVED_INTERNAL_LINK`, which already fires once the rewritten path is
-//     wrong).
+//     directory and the concept's new one no longer breaks it.
+//
+// This function never touches disk and never decides whether a target actually
+// exists -- it is a pure string transform. Whether a rewritten link resolves to
+// nothing is `migration.js`'s `deriveUnresolvedLinks`' job (it has the `services`
+// and `gitRoot` this function deliberately does not), surfaced as the
+// `plan_link_unresolved` finding `setup.js` adds to `migration-plan`'s response --
+// before anything is written, per the brief's "report ... before publication".
 //
 // Reference-style link *definitions* (`[label]: target`) are out of scope: neither
 // shared helper parses that syntax, and writing a second link parser to reach it
@@ -210,9 +221,7 @@ function rewriteLinks(sourcePath, body, conceptOf, bundleDir) {
       const targetPath = validation.bodyLinkPath(rawTarget);
       if (!targetPath || !ownConcept) return whole;
 
-      const resolved = targetPath.startsWith('/')
-        ? path.posix.normalize(targetPath.slice(1))
-        : path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), targetPath));
+      const resolved = resolveLinkTarget(sourcePath, targetPath);
       const targetConcept = conceptOf.get(resolved);
       const ownConceptDir = path.posix.dirname(`${ownConcept}.md`);
       const newTargetPath = targetConcept
@@ -230,4 +239,4 @@ function rewriteLinks(sourcePath, body, conceptOf, bundleDir) {
   }).join('\n');
 }
 
-module.exports = { inferType, conceptPathFor, extractProvenance, referencePathFor, rewriteLinks };
+module.exports = { inferType, conceptPathFor, extractProvenance, referencePathFor, rewriteLinks, resolveLinkTarget };

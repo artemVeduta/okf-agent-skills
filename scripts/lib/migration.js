@@ -237,6 +237,47 @@ function deriveDuplicates(entries, read) {
   return groups;
 }
 
+// #188 bullet 4: a link that resolves to nothing, found before anything is
+// written -- the same seam `deriveDuplicates` already reports through
+// (`derivePlan`'s return, mapped to a finding by `setup.js`), not a second
+// mechanism. `rewriteLinks` stays a pure string transform with no filesystem
+// access (see `mapping.js`); this function is where `services`/`gitRoot` -- the
+// only place in this call that can ask "does that file actually exist" -- get
+// used for that question.
+//
+// For every `migrate` entry's own (pre-rewrite) body, every link target this
+// migration would otherwise rewrite (`mapping.resolveLinkTarget`, the same
+// resolution `rewriteLinks` itself uses, so the two never disagree about what a
+// link "means") is checked two ways, mirroring the brief's own two rewrite
+// classes: is it another source this call is migrating (`conceptOf` has it --
+// bullet 2, fine, not reported), or does it exist as a real file in the project
+// (`services.exists`/`isFile` against `gitRoot` -- bullet 3, fine, not reported).
+// Neither holds: the link resolves to nothing, and is reported with a `class` --
+// the resolved path's own disposition (`skip`, `residue`,
+// `blocked_pending_decision`) when it names a source this same call already
+// classified one way or the other, or `unknown` when it names no source this
+// call has ever seen at all. `migrate` never appears as a class: a `migrate`
+// target is always in `conceptOf`, so it never reaches this branch.
+function deriveUnresolvedLinks(entries, gitRoot, services, read) {
+  const conceptOf = conceptIndex(entries);
+  const dispositionOf = new Map(entries.map((item) => [item.path, item.disposition]));
+  const unresolved = [];
+  for (const item of entries) {
+    if (item.disposition !== 'migrate') continue;
+    const { body } = read(item.path);
+    for (const resource of validation.markdownLinks(body)) {
+      const targetPath = validation.bodyLinkPath(resource);
+      if (!targetPath) continue;
+      const resolved = mapping.resolveLinkTarget(item.path, targetPath);
+      if (conceptOf.has(resolved)) continue;
+      const onDisk = path.join(gitRoot, resolved);
+      if (services.exists(onDisk) && services.isFile(onDisk)) continue;
+      unresolved.push({ path: item.path, resource, class: dispositionOf.get(resolved) || 'unknown' });
+    }
+  }
+  return unresolved;
+}
+
 // `sources` is exactly `discover`'s (#142) own output shape, unmodified; this
 // module never re-walks or re-classifies the filesystem itself. `answers`, when
 // supplied, is a plain object keyed by source path (one open question per
@@ -290,6 +331,7 @@ function derivePlan(sources, gitRoot, bundleRoot, services, answers) {
     mapping: deriveMapping(entries, bundleDir, read),
     references: deriveReferences(entries),
     duplicates: deriveDuplicates(entries, read),
+    unresolvedLinks: deriveUnresolvedLinks(entries, gitRoot, services, read),
   };
 }
 

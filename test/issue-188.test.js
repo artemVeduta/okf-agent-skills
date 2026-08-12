@@ -45,6 +45,10 @@ function mappingFor(response, sourcePath) {
   return response.data.mapping.find((item) => item.path === sourcePath);
 }
 
+function unresolvedLinkFindings(response) {
+  return response.findings.filter((f) => f.code === 'plan_link_unresolved');
+}
+
 test('a link to an unmigrated target is re-expressed from the concept\'s new (deeper) directory', (t) => {
   const root = repo(t);
   // Source sits one level below the repo root ("docs/"); its concept
@@ -86,7 +90,7 @@ test('a root-relative link target is resolved against the repository root, not t
   assert.ok(body.includes('[the eval setup](../../eval/README.md)'), body);
 });
 
-test('a link to a migrated target still rewrites to that target\'s concept path', (t) => {
+test('a link to a migrated target still rewrites to that target\'s concept path, and is not reported unresolved', (t) => {
   const root = repo(t);
   write(root, 'notes.md', [
     '---', 'type: Research', '---', '# Notes', '',
@@ -94,19 +98,59 @@ test('a link to a migrated target still rewrites to that target\'s concept path'
   ].join('\n'));
   write(root, 'other.md', '---\ntype: Research\n---\n# Other\n\nBody.\n');
 
-  const body = mappingFor(planned(root), 'notes.md').body;
+  const response = planned(root);
+  const body = mappingFor(response, 'notes.md').body;
   assert.ok(body.includes('[the comparison](other.md)'), body);
+  assert.deepEqual(unresolvedLinkFindings(response), []);
 });
 
-test('a link whose target is not part of this migration at all is still re-expressed from the concept\'s new directory', (t) => {
+test('a link whose target is not part of this migration at all is still re-expressed from the concept\'s new directory, and reported unresolved as class "unknown" before anything is written', (t) => {
   const root = repo(t);
   write(root, 'notes.md', [
     '---', 'type: Research', '---', '# Notes', '',
     'See [nothing here](missing/nowhere.md).', '',
   ].join('\n'));
 
-  const body = mappingFor(planned(root), 'notes.md').body;
+  const response = planned(root);
+  const body = mappingFor(response, 'notes.md').body;
   assert.ok(body.includes('[nothing here](../../missing/nowhere.md)'), body);
+  assert.deepEqual(unresolvedLinkFindings(response), [{
+    code: 'plan_link_unresolved',
+    origin: 'suite',
+    severity: 'warning',
+    blocks: false,
+    detail: { path: 'notes.md', resource: 'missing/nowhere.md', class: 'unknown' },
+  }]);
+});
+
+// #188 bullet 4: a link's target can also name a source this same batch already
+// classified one way or the other -- its own disposition is the reported class,
+// distinguishing "this used to be reachable and this migration decided not to
+// bring it in" from "this never existed at all" (the `unknown` class above).
+// The target source is never written to disk: `classify` reads a markdown
+// source's own file gracefully-empty when it is missing (see `readSource` in
+// migration.js), and a non-markdown `sources` entry is never read at all, so a
+// hand-built entry exercises this without needing a real file on disk -- the
+// same fixture shape discovery.js's own classifiers would have produced.
+test('a link to a source this batch chose not to migrate is reported unresolved with that source\'s own disposition as its class', (t) => {
+  const root = repo(t);
+  write(root, 'notes.md', [
+    '---', 'type: Research', '---', '# Notes', '',
+    'See [an unsupported note](wiki.md) and [an unresolved type](untyped.md).', '',
+  ].join('\n'));
+
+  const sources = [
+    ...discoverSources(root),
+    { path: 'wiki.md', category: 'unsupported', format: 'obsidian', reason: 'obsidian_construct' },
+    { path: 'untyped.md', category: 'markdown', format: 'markdown', reason: 'markdown' },
+  ];
+  const response = run({ protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'migration-plan', payload: { cwd: root, sources } });
+
+  const classes = unresolvedLinkFindings(response).map((f) => f.detail).sort((a, b) => (a.path + a.resource).localeCompare(b.path + b.resource));
+  assert.deepEqual(classes, [
+    { path: 'notes.md', resource: 'untyped.md', class: 'blocked_pending_decision' },
+    { path: 'notes.md', resource: 'wiki.md', class: 'residue' },
+  ]);
 });
 
 test('a link inside a fenced code block is left untouched even when the concept moves directories', (t) => {

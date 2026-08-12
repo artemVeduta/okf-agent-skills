@@ -693,6 +693,17 @@ function executeMigrationPlan(request, services) {
       blocks: false,
       detail: { paths: d.paths },
     })),
+    // #188: a migrating body's link that resolves to nothing -- neither another
+    // source this same call is migrating nor a real file staying in the project --
+    // reported before anything is written, never blocking (a broken link is a
+    // tolerated warning here, same tier as an open question or a duplicate).
+    ...outcome.unresolvedLinks.map((l) => ({
+      code: 'plan_link_unresolved',
+      origin: 'suite',
+      severity: 'warning',
+      blocks: false,
+      detail: { path: l.path, resource: l.resource, class: l.class },
+    })),
   ];
   return respond(request, 'ok', {
     plan: { entries: outcome.entries, executable: outcome.executable, duplicates: outcome.duplicates },
