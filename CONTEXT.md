@@ -158,11 +158,14 @@ must reproduce the frontmatter's parsed semantics through the suite's own
 writer. Reported with origin `suite`, never as an OKF conformance error.
 _Avoid_: OKF conformance, product extension
 
-**Activation marker**:
-The explicit project-local `.okf-active` marker at a Git worktree root that
-selects whether harness adapters provide automatic OKF behavior. It does not
-grant trust, authority, access, write ownership, approval, or permission. A
-cross-repository operation requires valid markers in both affected worktrees.
+**Workspace manifest**:
+The `.okf-workspace.json` file at a Git worktree root that declares the OKF
+bundle's activation state and federation. It specifies bundle locations, versions,
+project modes, and the workspace structure across one or many repositories and
+bundles. Its presence activates harness adapters to provide automatic OKF behavior;
+its absence disables automatic invocation. It does not grant trust, authority,
+access, write ownership, approval, or permission. A cross-repository operation
+requires valid manifests in both affected worktrees.
 _Avoid_: Authorization marker, permission flag, automatic setup
 
 **Harness adapter**:
@@ -339,7 +342,7 @@ _Avoid_: Workspace merge, shared write scope
 The target-side, uncommitted grant that permits one exact source repository
 instance to perform a bounded operation against one exact foreign bundle. It
 is separate from reach, presence, trust, filesystem access, federation,
-`.okf-active`, project mode, approval, and the guard ledger. It is scoped to
+workspace manifest, project mode, approval, and the guard ledger. It is scoped to
 allowed effects, can be revoked by an authorized target owner, and never
 permits automatic mutation. The specification's target-owner consent is the
 same grant named for the act of issuing it, not a second concept.

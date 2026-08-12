@@ -122,21 +122,24 @@ Either `okf-setup` `init` writes that file for you, or you author it by hand
 at the bundle root. One of the two must happen before your first `okf-write`
 call can pass the write gate.
 
-### 2. Create the zero-byte activation marker
+### 2. Create the workspace manifest and bundle root
 
 Automatic behavior — the read-only orientation a native adapter injects at
-session start — stays off until a zero-byte regular file named
-`.okf-active` exists at the Git worktree root:
+session start — activates the OKF bundle only when a valid `.okf-workspace.json`
+manifest exists at the Git worktree root. The manifest declares the bundle's
+location, version, and federated workspace structure. Create the manifest and
+initialize the bundle root:
 
 ```
-touch .okf-active
+okf-setup init
+okf-setup repair --targets manifest
 ```
 
 Neither installing the base suite nor installing a native adapter creates
-or modifies this file, and neither does entering a harness session.
-Installing an adapter arms nothing by itself. Without the marker, automatic
+or modifies the manifest, and neither does entering a harness session.
+Installing an adapter arms nothing by itself. Without a valid manifest, automatic
 behavior is a silent no-op and an explicit read reports `not-configured`;
-mutation stays blocked either way until the marker exists.
+mutation stays blocked either way until the manifest exists.
 
 ## Limitations
 
