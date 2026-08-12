@@ -131,8 +131,8 @@ location, version, and federated workspace structure. Create the manifest and
 initialize the bundle root:
 
 ```
-okf-setup init
 okf-setup repair --targets manifest
+okf-setup init
 ```
 
 Neither installing the base suite nor installing a native adapter creates
