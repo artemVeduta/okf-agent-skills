@@ -1,7 +1,7 @@
-const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const delegation = require('./lib/delegation');
+const { dispatchWrapper } = require('./lib/wrapper-dispatch');
 
 const NEXT_ACTION = 'Retry the delegated request or escalate to a human.';
 
@@ -19,19 +19,12 @@ function dispatch(request) {
   if (!fs.existsSync(wrapperPath)) {
     return { status: 'blocked: missing-skill', findings: [dispatchFinding('MISSING_SKILL', skill)], next_action: NEXT_ACTION };
   }
-  // A delegated response grows with the bundle: `okf-read validate` on a bundle of a
-  // few hundred concepts already exceeds Node's 1 MiB default `maxBuffer`, and the
-  // overflow arrives as a SIGTERM kill indistinguishable from a crashed wrapper. Size
-  // the buffer past any single JSON response instead of reporting a large bundle as
-  // an indeterminate dispatch failure.
-  const result = childProcess.spawnSync(process.execPath, [wrapperPath], {
-    input: JSON.stringify(request), encoding: 'utf8', maxBuffer: 1 << 30,
-  });
-  let response = null;
-  try { response = JSON.parse(result.stdout); } catch { response = null; }
-  if (result.signal || !response) {
-    return { status: 'indeterminate', findings: [dispatchFinding('DELEGATED_DISPATCH_FAILED', skill, { signal: result.signal, exit_code: result.status })], next_action: NEXT_ACTION };
+  const dispatched = dispatchWrapper(wrapperPath, request);
+  if (!dispatched.ok) {
+    const code = dispatched.truncated ? 'DELEGATED_RESPONSE_TRUNCATED' : 'DELEGATED_DISPATCH_FAILED';
+    return { status: 'indeterminate', findings: [dispatchFinding(code, skill, { signal: dispatched.signal, exit_code: dispatched.exitCode })], next_action: NEXT_ACTION };
   }
+  const response = dispatched.response;
   if (response.protocol !== 'okf-wrapper/1') {
     return { status: 'blocked: incompatible-skill', findings: [dispatchFinding('INCOMPATIBLE_SKILL', skill)], next_action: NEXT_ACTION };
   }

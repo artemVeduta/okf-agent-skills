@@ -4,7 +4,7 @@
 
 const path = require('node:path');
 const crypto = require('node:crypto');
-const childProcess = require('node:child_process');
+const { dispatchWrapper } = require('./wrapper-dispatch');
 const validation = require('./validation');
 const admission = require('./admission');
 const manifest = require('./manifest');
@@ -1134,19 +1134,17 @@ function validPublishStagedRef(item) {
 }
 
 function dispatchBrief(brief) {
-  const result = childProcess.spawnSync(process.execPath, [DELEGATE_WRAPPER], {
-    input: JSON.stringify(brief), encoding: 'utf8',
-  });
-  try {
-    const parsed = JSON.parse(result.stdout);
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch {
-    return null;
-  }
+  return dispatchWrapper(DELEGATE_WRAPPER, brief);
 }
 
-function dispatchFailure(role) {
-  return { status: 'indeterminate', findings: [suiteFinding('PUBLISH_DISPATCH_FAILED', { gate: 'publish', role })] };
+// Distinguishes a truncated response (`dispatched.truncated`) from every other reason
+// `dispatched.ok` came back false -- a crashed wrapper, a killed process, a non-JSON
+// reply -- in the reported finding, rather than collapsing both into one opaque code.
+function dispatchFailure(role, dispatched) {
+  return {
+    status: 'indeterminate',
+    findings: [suiteFinding('PUBLISH_DISPATCH_FAILED', { gate: 'publish', role, truncated: !!(dispatched && dispatched.truncated) })],
+  };
 }
 
 // #149: the one delegation brief `publish` issues as a *reader*, a fail-fast
@@ -1272,7 +1270,8 @@ function executePublish(request, services) {
   const cwd = payload.cwd;
   const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
 
-  const precheck = dispatchBrief(publishPrecheckBrief(cwd, bundleName, payload.task_kind)) || dispatchFailure('okf-reader');
+  const precheckDispatch = dispatchBrief(publishPrecheckBrief(cwd, bundleName, payload.task_kind));
+  const precheck = precheckDispatch.ok ? precheckDispatch.response : dispatchFailure('okf-reader', precheckDispatch);
   if (precheck.status !== 'ok') {
     return respond(request, 'blocked', { code: 'PUBLISH_PRECHECK_FAILED' }, precheck.findings || []);
   }
@@ -1296,7 +1295,8 @@ function executePublish(request, services) {
       return { concept: item.concept, status: 'blocked: staged-file-unparseable', findings: [] };
     }
     const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, parsed.tree, parsed.body, item.sources || []);
-    const outcome = dispatchBrief(brief) || dispatchFailure('okf-writer');
+    const writeDispatch = dispatchBrief(brief);
+    const outcome = writeDispatch.ok ? writeDispatch.response : dispatchFailure('okf-writer', writeDispatch);
     return { concept: item.concept, status: outcome.status, findings: outcome.findings || [] };
   });
 
