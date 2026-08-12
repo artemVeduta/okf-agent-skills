@@ -20,13 +20,12 @@ description: Bootstraps an OKF bundle from an existing project, including a mono
   "operation": "init",
   "payload": {
     "cwd": "<absolute path to the working tree>",
-    "bundle": "<optional bundle directory name, defaults to \"okf\">",
-    "project_mode": "<optional \"code-backed\" or \"knowledge-only\">"
+    "bundle": "<optional bundle directory name, defaults to \"okf\">"
   }
 }
 ```
 
-`payload.cwd` is the only required field. `payload.bundle`, when omitted, defaults to `okf`. `payload.project_mode`, when supplied, must be exactly `code-backed` or `knowledge-only`; any other value returns `UNSUPPORTED_INPUT`. Omitting it writes `okf_version` alone, and a later `init` call may add `project_mode` by naming it — the second call merges the new key into the already-valid root rather than refusing it.
+`payload.cwd` is the only required field. `payload.bundle`, when omitted, defaults to `okf`. `payload.project_mode` is not accepted here at all: `init` refuses any request naming it, `UNSUPPORTED_INPUT` with `{"gate": "project mode", "operation": "init"}`, whatever value is supplied — `project_mode` belongs entirely to the manifest bundle record `repair` writes (step 4), and the navigation-only root `init` writes has no field left to put it in.
 
 When `init` creates a bundle root that did not exist yet, it also writes the **agent connector** (#170): the root body links to `agents/index.md`, `agents/index.md` is navigation only and links to `agents/okf.md`, and `agents/okf.md` is a `Playbook` concept carrying the stable suite rules an external skill needs — read through `okf-read`, prepare one complete proposal through `okf-lifecycle`, call `okf-write` once for each accepted concept, never edit a bundle file directly, treat every nested `index.md` as navigation, keep the type taxonomy open and never default to `Note`, cite only meaningful evidence, own no subtree, and find project-specific agent policy through the `agents` index. The connector holds no wrapper request schema and no executable harness configuration. An `init` call against a root whose `index.md` already exists never adds it: an existing bundle gets the connector through setup's target-tree proposal instead.
 
