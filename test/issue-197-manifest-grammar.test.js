@@ -68,6 +68,18 @@ test('a bundle record carrying the removed "required" or "mode" field is rejecte
   }
 });
 
+// #196 defines `project_mode` as required, always present, and two-valued
+// (`code-backed`/`knowledge-only`). `null` is not one of those two values and is
+// not itself a documented third state, so it is rejected the same way an absent
+// `project_mode` is (`invalid_field_combination`), not admitted as a legal
+// "undecided" value. See `manifest.template()`, which now requires every caller
+// to supply a real `projectMode` for exactly this reason.
+test('a bundle record with project_mode: null is rejected, the same as a missing project_mode', (t) => {
+  const root = repository(t); bundle(root);
+  writeManifest(root, manifestOf([validBundle({ project_mode: null })]));
+  assert.equal(federationFindingReason(root), 'invalid_field_combination');
+});
+
 // -------------------------------------------------------------- settings resolution
 
 test('an absent settings object resolves to the built-in default with no findings', (t) => {

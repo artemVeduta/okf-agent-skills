@@ -56,7 +56,7 @@ function bootstrap(t) {
   assert.equal(setup(root, 'inspect').data.index_md.state, 'missing');
   assert.equal(setup(root, 'init', { project_mode: 'knowledge-only' }).result, 'applied');
   assert.equal(setup(root, 'repair', { targets: ['activation'] }).result, 'applied');
-  assert.equal(setup(root, 'repair', { targets: ['manifest'] }).result, 'applied');
+  assert.equal(setup(root, 'repair', { targets: ['manifest'], project_mode: 'knowledge-only' }).result, 'applied');
   assert.equal(setup(root, 'discover').result, 'ok');
   return root;
 }

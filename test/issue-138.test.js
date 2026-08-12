@@ -169,7 +169,7 @@ test('inspect warns of a monorepo from .gitmodules when the manifest is missing,
 
 test('repair generates a validated single-bundle manifest template when missing', (t) => {
   const root = repo(t);
-  const response = run(repairRequest(root, ['manifest']));
+  const response = run(repairRequest(root, ['manifest'], { project_mode: 'code-backed' }));
   assert.equal(response.result, 'applied');
   assert.equal(response.data.manifest.written, true);
   assert.match(response.data.manifest.workspace_id, uuid);
@@ -185,13 +185,24 @@ test('repair generates a validated single-bundle manifest template when missing'
   assert.equal(written.bundles[0].alias, 'okf');
   assert.equal(written.bundles[0].root, 'okf');
   assert.equal(written.bundles[0].okf_version, '0.2');
-  assert.equal(written.bundles[0].project_mode, null);
+  assert.equal(written.bundles[0].project_mode, 'code-backed');
   assert.equal(written.bundles[0].owner, written.repositories[0].name);
 });
 
+test('repair refuses to generate a manifest without a recognized project_mode', (t) => {
+  const root = repo(t);
+  for (const projectMode of [undefined, 'sandbox']) {
+    const payload = projectMode === undefined ? {} : { project_mode: projectMode };
+    const response = run(repairRequest(root, ['manifest'], payload));
+    assert.equal(response.result, 'blocked', JSON.stringify(payload));
+    assert.equal(response.data.code, 'UNSUPPORTED_INPUT', JSON.stringify(payload));
+    assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false, JSON.stringify(payload));
+  }
+});
+
 test('repair templates a fresh workspace_id each time the manifest is missing, never a fixed value', (t) => {
-  const first = run(repairRequest(repo(t), ['manifest'])).data.manifest.workspace_id;
-  const second = run(repairRequest(repo(t), ['manifest'])).data.manifest.workspace_id;
+  const first = run(repairRequest(repo(t), ['manifest'], { project_mode: 'code-backed' })).data.manifest.workspace_id;
+  const second = run(repairRequest(repo(t), ['manifest'], { project_mode: 'code-backed' })).data.manifest.workspace_id;
   assert.match(first, uuid);
   assert.match(second, uuid);
   assert.notEqual(first, second);
@@ -209,7 +220,7 @@ test('repair regenerates an invalid manifest only once the caller supplies the s
 
   // The approval and the choice to keep the salvaged value both happen above the
   // runtime, in `okf-setup`'s procedure; `repair` only ever does what it is told.
-  const response = run(repairRequest(root, ['manifest'], { workspace_id: reported.salvage.workspace_id }));
+  const response = run(repairRequest(root, ['manifest'], { workspace_id: reported.salvage.workspace_id, project_mode: 'code-backed' }));
   assert.equal(response.result, 'applied');
   assert.equal(response.data.manifest.workspace_id, workspaceId);
   const written = JSON.parse(fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8'));
@@ -221,10 +232,13 @@ test('repair regenerates an invalid manifest only once the caller supplies the s
 
 test('repair leaves an already-ok manifest untouched and ignores a redundant payload', (t) => {
   const root = repo(t);
-  run(repairRequest(root, ['manifest']));
+  run(repairRequest(root, ['manifest'], { project_mode: 'code-backed' }));
   const before = fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8');
 
-  const response = run(repairRequest(root, ['manifest'], { workspace_id: '55555555-5555-4555-8555-555555555555' }));
+  // The manifest already exists and is `ok`, so the template `repair` builds to
+  // compare against is never written -- but it is still built and validated, so a
+  // repeat call still needs a recognized `project_mode` to reach the no-op check.
+  const response = run(repairRequest(root, ['manifest'], { workspace_id: '55555555-5555-4555-8555-555555555555', project_mode: 'code-backed' }));
   assert.equal(response.result, 'no-op');
   assert.deepEqual(response.data.manifest, { written: false });
   assert.equal(fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8'), before);
@@ -286,7 +300,7 @@ test('repair refuses unrecognized or duplicate targets without writing anything'
 
 test('repair does both targets in one call and reports each independently', (t) => {
   const root = repo(t);
-  const response = run(repairRequest(root, ['activation', 'manifest']));
+  const response = run(repairRequest(root, ['activation', 'manifest'], { project_mode: 'code-backed' }));
   assert.equal(response.result, 'applied');
   assert.deepEqual(response.data.activation, { written: true });
   assert.equal(response.data.manifest.written, true);
@@ -356,7 +370,7 @@ test('a full setup chain (inspect, repair, init) leaves all three files ok and a
   const before = run(inspectRequest(root)).data;
   assert.deepEqual([before.index_md.state, before.activation.state, before.manifest.state], ['missing', 'missing', 'missing']);
 
-  const repaired = run(repairRequest(root, ['activation', 'manifest']));
+  const repaired = run(repairRequest(root, ['activation', 'manifest'], { project_mode: 'knowledge-only' }));
   assert.equal(repaired.result, 'applied');
   const initResponse = run(initRequest(root, { project_mode: 'knowledge-only' }));
   assert.equal(initResponse.result, 'applied');
@@ -367,6 +381,6 @@ test('a full setup chain (inspect, repair, init) leaves all three files ok and a
   assert.equal(after.manifest.state, 'ok');
 
   // A second inspect/repair pass over an already-fixed project is a pure no-op.
-  const secondRepair = run(repairRequest(root, ['activation', 'manifest']));
+  const secondRepair = run(repairRequest(root, ['activation', 'manifest'], { project_mode: 'knowledge-only' }));
   assert.equal(secondRepair.result, 'no-op');
 });

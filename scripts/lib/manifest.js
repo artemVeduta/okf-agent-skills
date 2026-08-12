@@ -93,13 +93,17 @@ function validate(raw) {
     if (typeof bundle.alias !== 'string' || bundle.alias === '' || aliases.has(bundle.alias)) return invalid('duplicate_bundle_alias');
     const rootReason = relativePathReason(bundle.root);
     if (rootReason) return invalid(rootReason);
-    // Structural presence only: `okf_version`/`project_mode` are the format and
-    // authority-model target, not an admission decision. The manifest grants no
-    // trust or write authority (#196), so an unsupported value here is not rejected
-    // -- the runtime's existing read tolerance for an unsupported format or project
-    // mode, and the write gate that requires a recognized one, both stay untouched.
+    // Structural presence and non-emptiness only: `okf_version`/`project_mode` are
+    // the format and authority-model target, not an admission decision, and the
+    // manifest grants no trust or write authority (#196). Neither is enum-checked
+    // here -- the runtime's existing read tolerance for an unsupported format or
+    // project mode, and the write gate that requires a recognized one, both stay
+    // untouched. `project_mode` is always one of the two named values or another
+    // non-empty string; #196 defines it as a required, always-present, two-valued
+    // field, so `null` (a silent third "undecided" state, not itself a value #196
+    // names) is not accepted -- every `template()` caller must supply a real one.
     if (typeof bundle.okf_version !== 'string' || bundle.okf_version === '') return invalid('invalid_field_combination');
-    if (bundle.project_mode !== null && (typeof bundle.project_mode !== 'string' || bundle.project_mode === '')) return invalid('invalid_field_combination');
+    if (typeof bundle.project_mode !== 'string' || bundle.project_mode === '') return invalid('invalid_field_combination');
     if (bundle.owner !== null && (typeof bundle.owner !== 'string' || !names.has(bundle.owner))) return invalid('invalid_field_combination');
     aliases.add(bundle.alias);
   }
@@ -183,20 +187,24 @@ function inspect(file, gitRoot, services) {
 // and owns its bundle directly; a package sharing the workspace repository is
 // owned by the root repository at its package-relative bundle path. Every bundle
 // is required and `source` by construction now (#197: those fields are gone from
-// the grammar). `project_mode` is `null` here -- no caller of this template has a
-// per-bundle authority model to supply yet, and inventing one is not this
-// generator's call; the task that threads a real decision through owns that
-// change. The workspace still declares every detected package as an intended
-// bundle, so a package whose worker did not yet produce one is `degraded`, not
-// silently absent, through the same federation health check every other
-// required-but-inactive bundle already gets.
-function template({ repoName, bundleAlias, workspaceId, packages, bundleName }) {
+// the grammar). `projectMode` is the caller's own already-validated
+// `code-backed`/`knowledge-only` decision (`setup.js`'s `repair`/`aggregate`
+// validate `payload.project_mode` the same way `init`/`plan` already do, before
+// reaching here) -- every generated bundle in one call shares it, the same way
+// `monorepo.buildBriefs()` already applies one `project_mode` to every package
+// brief. This builder never invents a value: an omitted `projectMode` becomes
+// `undefined` here, which fails `validate()`'s required-field check the same as
+// any other missing required field, exactly as intended. The workspace still
+// declares every detected package as an intended bundle, so a package whose
+// worker did not yet produce one is `degraded`, not silently absent, through the
+// same federation health check every other required-but-inactive bundle gets.
+function template({ repoName, bundleAlias, workspaceId, packages, bundleName, projectMode }) {
   if (!packages) {
     return {
       schema_version: 1,
       workspace_id: workspaceId,
       repositories: [{ name: repoName, path: '.', local: true }],
-      bundles: [{ alias: bundleAlias, owner: repoName, root: bundleAlias, okf_version: OKF_VERSION, project_mode: null }],
+      bundles: [{ alias: bundleAlias, owner: repoName, root: bundleAlias, okf_version: OKF_VERSION, project_mode: projectMode }],
     };
   }
   const directory = bundleName || 'okf';
@@ -209,9 +217,9 @@ function template({ repoName, bundleAlias, workspaceId, packages, bundleName }) 
         repositories.push({ name: pkg.alias, path: pkg.path, local: true });
         seenRepositories.add(pkg.alias);
       }
-      bundles.push({ alias: pkg.alias, owner: pkg.alias, root: directory, okf_version: OKF_VERSION, project_mode: null });
+      bundles.push({ alias: pkg.alias, owner: pkg.alias, root: directory, okf_version: OKF_VERSION, project_mode: projectMode });
     } else {
-      bundles.push({ alias: pkg.alias, owner: repoName, root: `${pkg.path}/${directory}`, okf_version: OKF_VERSION, project_mode: null });
+      bundles.push({ alias: pkg.alias, owner: repoName, root: `${pkg.path}/${directory}`, okf_version: OKF_VERSION, project_mode: projectMode });
     }
   }
   return { schema_version: 1, workspace_id: workspaceId, repositories, bundles };

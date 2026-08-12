@@ -196,6 +196,9 @@ function executeRepair(request, services) {
   if (payload.manifest !== undefined && !targets.includes('manifest')) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  if (payload.project_mode !== undefined && payload.project_mode !== 'code-backed' && payload.project_mode !== 'knowledge-only') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
 
   let manifestContent = null;
   if (targets.includes('manifest')) {
@@ -212,6 +215,7 @@ function executeRepair(request, services) {
         repoName: path.basename(gitRoot),
         bundleAlias: bundleName,
         workspaceId: payload.workspace_id || crypto.randomUUID(),
+        projectMode: payload.project_mode,
       });
     }
     const finding = manifest.validate(manifestContent);
@@ -329,6 +333,9 @@ function executeAggregate(request, services) {
   if (payload.workspace_id !== undefined && typeof payload.workspace_id !== 'string') {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  if (payload.project_mode !== undefined && payload.project_mode !== 'code-backed' && payload.project_mode !== 'knowledge-only') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
 
   const detected = monorepo.detect(gitRoot, services);
   if (!detected.monorepo || detected.ambiguous) {
@@ -349,6 +356,7 @@ function executeAggregate(request, services) {
     bundleName,
     workspaceId: payload.workspace_id || crypto.randomUUID(),
     packages: detected.packages,
+    projectMode: payload.project_mode,
   });
   const finding = manifest.validate(manifestContent);
   if (finding) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [finding]);

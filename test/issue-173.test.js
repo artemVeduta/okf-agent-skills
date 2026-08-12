@@ -50,7 +50,7 @@ test('the documented setup order bootstraps a repository that holds only a Git r
   const activation = runWrapper(wrapper, request('repair', root, { targets: ['activation'] }));
   assert.equal(activation.result, 'applied');
 
-  const manifest = runWrapper(wrapper, request('repair', root, { targets: ['manifest'] }));
+  const manifest = runWrapper(wrapper, request('repair', root, { targets: ['manifest'], project_mode: 'code-backed' }));
   assert.equal(manifest.result, 'applied');
 
   const after = runWrapper(wrapper, request('inspect', root));
