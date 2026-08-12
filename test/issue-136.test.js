@@ -7,7 +7,7 @@ const { runWrapper, spawnWrapper, temporaryRoot } = require('../test-support/sna
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 
-// `report` runs without a valid `.okf-active` marker, like `inspect`/`plan`/
+// `report` runs without a valid manifest, like `inspect`/`plan`/
 // `aggregate` (#133/#135/#138), so this builds a bare Git repository directly.
 function repo(t) {
   return temporaryRoot(t, 'okf-136-repo-');

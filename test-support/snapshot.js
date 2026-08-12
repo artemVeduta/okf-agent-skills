@@ -73,12 +73,10 @@ function temporaryRoot(t, prefix = 'okf-test-') {
 // manifest fixtures already use.
 const TEST_WORKSPACE_ID = '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b';
 
-// #197: `.okf-workspace.json` replaces `.okf-active` as the runtime's activation
-// condition. One default single-bundle declaration, its `root` matching whatever
+// #197: One default single-bundle declaration, the `root` matching whatever
 // relative path the caller's bundle actually lives at. Overwrites any manifest
 // already at `root` -- callers that need a richer (multi-bundle/federated)
-// manifest write their own afterward, the same way they already overwrite a
-// marker-only fixture with a real one.
+// manifest write their own afterward.
 function writeManifest(root, relative) {
   fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
     schema_version: 1,

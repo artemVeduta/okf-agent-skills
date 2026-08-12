@@ -52,10 +52,9 @@ so the fixture must
 supply it.
 
 Each fixture also carries a minimal conforming bundle: an `index.md` with
-`okf_version: "0.2"`, the `.okf-active` activation marker, one evidence file,
-and one concept file (`note.md`). A fresh fixture repository is built for
-every case, mutating or not, because a Flue conversation reset does not
-reset files.
+`okf_version: "0.2"`, one evidence file, and one concept file (`note.md`).
+A fresh fixture repository is built for every case, mutating or not, because
+a Flue conversation reset does not reset files.
 
 ## The seven cases
 

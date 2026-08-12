@@ -8,7 +8,7 @@ const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-// `plan`/`aggregate` run without a valid `.okf-active` marker (like `inspect`/
+// `plan`/`aggregate` run without a valid manifest (like `inspect`/
 // `repair`), so this builds a bare Git repository directly.
 function repo(t) {
   return temporaryRoot(t, 'okf-135-repo-');

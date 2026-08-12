@@ -219,7 +219,7 @@ test('okf-setup gains no role in the delegation bridge: still absent from bridge
 
 test('assemble and migration-validate still need no admitted bundle at all: staging is not, and never was, gated by activation', (t) => {
   const root = bareRepo(t);
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
   assert.equal(fs.existsSync(path.join(root, 'okf', 'index.md')), false);
 
   const brief = {

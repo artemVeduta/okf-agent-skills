@@ -8,12 +8,11 @@ const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const router = path.join(__dirname, '..', 'scripts', 'okf.js');
 
 // #173 (decision #166, kept by #196/#197): an explicit `init` is the one
-// bootstrap exception to the activation gate. It may run while the manifest
-// (#197: was `.okf-active`) is absent, so a caller can still create the bundle
-// root before ever writing a manifest at all -- the explicit pre-manifest setup
-// path #196 keeps alongside its own documented order
-// `inspect -> consent -> repair manifest -> init -> discover`, which
-// `test/issue-170.test.js` covers instead.
+// bootstrap exception to the manifest gate. It may run while the manifest
+// is absent, so a caller can still create the bundle root before ever writing
+// a manifest at all -- the explicit pre-manifest setup path #196 keeps
+// alongside its own documented order `inspect -> consent -> repair manifest ->
+// init -> discover`, which `test/issue-170.test.js` covers instead.
 function request(operation, root, payload = {}, extra = {}) {
   return {
     protocol: 'okf-wrapper/1',

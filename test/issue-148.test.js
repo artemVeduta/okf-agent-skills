@@ -10,7 +10,12 @@ const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 function repo(t) {
   const root = temporaryRoot(t, 'okf-148-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: 'okf', okf_version: '0.2', project_mode: 'knowledge-only' }],
+  }));
   return root;
 }
 

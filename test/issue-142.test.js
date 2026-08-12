@@ -8,9 +8,8 @@ const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 
 // `discover` needs an active bundle (it excludes the bundle root from its own scan),
-// so the fixture always writes a valid manifest (#197: was `.okf-active`) unless a
-// test asks for an inactive one, the opposite default from #138's `inspect`/`repair`
-// fixtures.
+// so the fixture always writes a valid manifest unless a test asks for an inactive
+// one, the opposite default from #138's `inspect`/`repair` fixtures.
 function repo(t, { active = true } = {}) {
   const root = temporaryRoot(t, 'okf-142-repo-');
   fs.mkdirSync(path.join(root, '.git'));

@@ -79,21 +79,21 @@ test('inspect honors a non-default bundle directory for index.md', (t) => {
   assert.deepEqual(run(inspectRequest(root)).data.index_md, { state: 'missing' });
 });
 
-// --------------------------------------------------------------- activation
+// --------------------------------------------------------------- activation gate
 
-// #197: `data.activation` reports the same valid/missing/invalid resolution the
-// runtime's own activation gate computes (`runtime.js`'s `activationState()`),
-// now sourced from the manifest instead of the retired `.okf-active` marker.
-test('inspect reports activation as missing, invalid, and ok, tracking the manifest', (t) => {
+test('discover and migration-plan require a valid manifest: missing or invalid manifest blocks', (t) => {
   const root = repo(t);
-  assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'missing' });
+  const discoverRequest = { protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'discover', payload: { cwd: root, bundle: 'okf' } };
+  assert.equal(run(discoverRequest).result, 'not-configured');
 
   fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
-  assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'invalid', reason: 'manifest_invalid' });
+  assert.equal(run(discoverRequest).result, 'blocked');
 
-  const workspaceId = '77777777-7777-4777-8777-777777777777';
+  const workspaceId = '99999999-9999-4999-8999-999999999999';
   fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify(validManifest(workspaceId)));
-  assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'ok' });
+  fs.mkdirSync(path.join(root, 'okf'));
+  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  assert.equal(run(discoverRequest).result, 'ok');
 });
 
 // --------------------------------------------------------------- .okf-workspace.json

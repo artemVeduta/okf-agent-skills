@@ -40,8 +40,7 @@ const EXCLUDED_DIR_NAMES = new Set(['.git', 'node_modules', '.okf-staging']);
 // same or a rerun setup session would otherwise report the files it had just
 // written as candidate migration sources. Matched by `gitRoot`-relative path, so a
 // user document that merely shares one of these names deeper in the tree is
-// untouched. `.okf-active` is gone (#197): the runtime never reads it, and
-// discovery gives it no special treatment either.
+// untouched.
 const EXCLUDED_ROOT_FILES = new Set(['.okf-workspace.json', '.okf-occurrences.json']);
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown']);
