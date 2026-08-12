@@ -504,4 +504,8 @@ function build({ plan, selected, revision = {}, gitRoot, bundleRoot, services })
   };
 }
 
-module.exports = { build, validRevision };
+// `renderIndex` is exported for exactly one reason (#180): the conformance gate
+// re-derives an accepted group index from the same renderer that produced it, so a
+// staged or published `index.md` is compared against this module's own output rather
+// than against a second renderer's idea of the same body.
+module.exports = { build, validRevision, renderIndex };

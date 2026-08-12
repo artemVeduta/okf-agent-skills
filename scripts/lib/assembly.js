@@ -60,8 +60,14 @@ const partition = require('./partition');
 // plus `status: "draft"`, the same status every freshly created concept gets
 // (`validation.evaluateCreate`). Reuses `validation.serializeFrontmatter`
 // rather than a second YAML writer.
+//
+// #195 carves out one exception, and it is carved out here rather than patched
+// afterwards: a migrated Glossary is stable by default, so it carries no `status`
+// at all. Writing the draft stamp first and stripping it later would make the
+// staged bytes -- the exact bytes #180's conformance gate compares against the
+// accepted proposal -- state something no accepted row ever said.
 function renderConcept(type, sources, body) {
-  const tree = { type, status: 'draft' };
+  const tree = type === 'Glossary' ? { type } : { type, status: 'draft' };
   if (Array.isArray(sources) && sources.length > 0) tree.sources = sources;
   return validation.serializeFrontmatter(tree) + body;
 }
