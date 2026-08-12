@@ -84,16 +84,21 @@ test('inspect honors a non-default bundle directory for index.md', (t) => {
 test('discover and migration-plan require a valid manifest: missing or invalid manifest blocks', (t) => {
   const root = repo(t);
   const discoverRequest = { protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'discover', payload: { cwd: root, bundle: 'okf' } };
+  const migrationPlanRequest = { protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'migration-plan', payload: { cwd: root, sources: [] } };
+
   assert.equal(run(discoverRequest).result, 'not-configured');
+  assert.equal(run(migrationPlanRequest).result, 'not-configured');
 
   fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
   assert.equal(run(discoverRequest).result, 'blocked');
+  assert.equal(run(migrationPlanRequest).result, 'blocked');
 
   const workspaceId = '99999999-9999-4999-8999-999999999999';
   fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify(validManifest(workspaceId)));
   fs.mkdirSync(path.join(root, 'okf'));
   fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
   assert.equal(run(discoverRequest).result, 'ok');
+  assert.equal(run(migrationPlanRequest).result, 'ok');
 });
 
 // --------------------------------------------------------------- .okf-workspace.json
