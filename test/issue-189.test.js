@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runWrapper, repository, bundle } = require('../test-support/snapshot');
+const { runWrapper, repository, bundle, temporaryRoot } = require('../test-support/snapshot');
+const { dispatchWrapper } = require('../scripts/lib/wrapper-dispatch');
 
 // `scripts/okf-delegate.js`'s own spawn of a skill wrapper was sized past Node's 1 MiB
 // default `maxBuffer` by #132 (test/delegate-response-size.test.js). `scripts/lib/setup.js`'s
@@ -108,4 +109,23 @@ test('publish survives a pre-publish precheck whose delegated validate answer ex
   assert.equal(response.result, 'ok');
   assert.equal(response.data.status, 'complete');
   assert.deepEqual(response.data.published, ['decisions/a']);
+});
+
+// The `truncated: true` branch above is unreachable at production's 1 GiB `MAX_BUFFER`
+// without a fixture sized past a gigabyte -- disproportionate for a unit test. This
+// drives the shared classification itself (permitted: "Unit tests on scripts/lib/ are
+// permitted, carry no contract", docs/spec/okf-agent-skills-v0.1.0-completion.md) with
+// a small, fast overflow: a real child process, a real `spawnSync`, a real `maxBuffer`
+// too small for what it writes, through `dispatchWrapper`'s own optional override
+// (never used by any production call site, which all stay hard-wired to the one
+// shared constant).
+test('dispatchWrapper classifies a real maxBuffer overflow as truncated, not a crash', (t) => {
+  const dir = temporaryRoot(t, 'okf-189-overflow-');
+  const overflowingChild = path.join(dir, 'overflow.js');
+  fs.writeFileSync(overflowingChild, "process.stdout.write('x'.repeat(20000));\n");
+
+  const dispatched = dispatchWrapper(overflowingChild, {}, 1024);
+
+  assert.equal(dispatched.ok, false, 'an overflowing child has no usable response');
+  assert.equal(dispatched.truncated, true, 'a maxBuffer overflow must be classified as truncated, not a generic crash');
 });

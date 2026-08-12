@@ -20,9 +20,14 @@ const MAX_BUFFER = 1 << 30;
 // classifies the outcome. `ok: true` means `response` is the parsed body. `ok: false`
 // means the caller has no usable response; `truncated` distinguishes an oversized
 // answer (buffer overflow) from anything else (a crash, a signal, a non-JSON reply).
-function dispatchWrapper(wrapperPath, request) {
+//
+// `maxBuffer` defaults to the one shared `MAX_BUFFER` -- every production call site
+// omits it and stays hard-wired to that constant. It exists as a parameter only so a
+// test can drive the `truncated` branch with a small, fast overflow instead of a
+// response sized past `MAX_BUFFER` itself.
+function dispatchWrapper(wrapperPath, request, maxBuffer = MAX_BUFFER) {
   const result = childProcess.spawnSync(process.execPath, [wrapperPath], {
-    input: JSON.stringify(request), encoding: 'utf8', maxBuffer: MAX_BUFFER,
+    input: JSON.stringify(request), encoding: 'utf8', maxBuffer,
   });
   const truncated = !!(result.error && result.error.code === 'ENOBUFS');
   let response = null;
