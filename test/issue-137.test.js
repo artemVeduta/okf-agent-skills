@@ -24,9 +24,13 @@ function indexFile(root, bundle = 'okf') {
   return path.join(root, bundle, 'index.md');
 }
 
-test('happy path: init on a clean repository creates the bundle root with okf_version and project_mode', (t) => {
+// #196/#197: the bundle root `init` creates is navigation only now -- no
+// `okf_version`/`project_mode` frontmatter, both of which moved entirely to the
+// manifest bundle record `repair` writes. `init` never accepts `project_mode`
+// anymore either: there is no field left on the root to put it in.
+test('happy path: init on a clean repository creates a navigation-only bundle root, defaulting the bundle to "okf"', (t) => {
   const root = repository(t, 'okf-137-happy-');
-  const response = run(initRequest(root, { project_mode: 'code-backed' }));
+  const response = run(initRequest(root));
 
   assert.equal(response.result, 'applied');
   assert.equal(response.data.authorization, 'notice');
@@ -38,22 +42,16 @@ test('happy path: init on a clean repository creates the bundle root with okf_ve
 
   const written = fs.readFileSync(indexFile(root), 'utf8');
   // #170: a bundle root created here is a new bundle, so it carries the agent connector.
-  assert.equal(written, '---\nokf_version: "0.2"\nproject_mode: code-backed\n---\n# Bundle\n\n- [Agents](agents/index.md)\n');
+  assert.equal(written, '# Bundle\n\n- [Agents](agents/index.md)\n');
   assert.equal(fs.readFileSync(path.join(root, 'okf', 'agents', 'okf.md'), 'utf8').includes('type: Playbook'), true);
 });
 
-test('init defaults the bundle to "okf" and writes okf_version alone when project_mode is omitted', (t) => {
-  const root = repository(t, 'okf-137-default-bundle-');
-  const response = run(initRequest(root));
-
-  assert.equal(response.result, 'applied');
-  const written = fs.readFileSync(indexFile(root), 'utf8');
-  assert.equal(written, '---\nokf_version: "0.2"\n---\n# Bundle\n\n- [Agents](agents/index.md)\n');
-});
-
-test('no-op: init against an already-valid root changes nothing', (t) => {
+test('no-op: init against an already-parseable root changes nothing', (t) => {
   const root = repository(t, 'okf-137-noop-');
   fs.mkdirSync(path.join(root, 'okf'));
+  // Legacy frontmatter, an existing hand-authored body, or nothing at all --
+  // navigation only means `init` no longer inspects the content, only whether
+  // it parses.
   fs.writeFileSync(indexFile(root), '---\nokf_version: "0.2"\n---\n# Bundle\n');
   const before = treeHash(root);
 
@@ -73,7 +71,7 @@ test('repair: a bundle directory that exists without index.md is completed, not 
   const response = run(initRequest(root));
 
   assert.equal(response.result, 'applied');
-  assert.equal(fs.readFileSync(indexFile(root), 'utf8'), '---\nokf_version: "0.2"\n---\n# Bundle\n\n- [Agents](agents/index.md)\n');
+  assert.equal(fs.readFileSync(indexFile(root), 'utf8'), '# Bundle\n\n- [Agents](agents/index.md)\n');
 });
 
 test('idempotent both ways: a second call is a no-op, and a corrupted root is repaired by overwrite', (t) => {
@@ -87,41 +85,28 @@ test('idempotent both ways: a second call is a no-op, and a corrupted root is re
   assert.equal(second.result, 'no-op');
   assert.equal(fs.readFileSync(indexFile(root), 'utf8'), afterFirst);
 
-  // Corrupt the root out from under init: wrong version and an unparseable variant.
-  fs.writeFileSync(indexFile(root), '---\nokf_version: "0.1"\n---\n# Legacy\n');
+  // Corrupt the root out from under init: unterminated frontmatter is genuinely
+  // unparseable, whatever it once declared.
+  fs.writeFileSync(indexFile(root), '---\nokf_version: [\n---\n# Legacy\n');
   const repaired = run(initRequest(root));
   assert.equal(repaired.result, 'applied');
-  assert.equal(fs.readFileSync(indexFile(root), 'utf8'), '---\nokf_version: "0.2"\n---\n# Legacy\n');
-
-  fs.writeFileSync(indexFile(root), '---\nokf_version: "0.2"\n  bad indent\n---\n# Garbage\n');
-  const overwritten = run(initRequest(root));
-  assert.equal(overwritten.result, 'applied');
-  assert.equal(fs.readFileSync(indexFile(root), 'utf8'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  // Repairing an existing (non-fresh) root resets it to the plain navigational
+  // body alone.
+  assert.equal(fs.readFileSync(indexFile(root), 'utf8'), '# Bundle\n');
 });
 
-test('preserves the existing Markdown body and merges project_mode into an already-valid root on a second call', (t) => {
-  const root = repository(t, 'okf-137-merge-');
-  fs.mkdirSync(path.join(root, 'okf'));
-  fs.writeFileSync(indexFile(root), '---\nokf_version: "0.2"\n---\n# Custom Bundle\n\nSome hand-authored text.\n');
+// #196/#197: `project_mode` moved entirely to the manifest bundle record, so
+// `init` refuses it outright now -- a recognized value is refused exactly like
+// an unrecognized one, because the field itself no longer belongs here.
+test('refuses any project_mode payload as UNSUPPORTED_INPUT without writing, recognized value or not', (t) => {
+  for (const projectMode of ['code-backed', 'sandbox']) {
+    const root = repository(t, 'okf-137-bad-mode-');
+    const response = run(initRequest(root, { project_mode: projectMode }));
 
-  const withMode = run(initRequest(root, { project_mode: 'knowledge-only' }));
-  assert.equal(withMode.result, 'applied');
-  assert.equal(
-    fs.readFileSync(indexFile(root), 'utf8'),
-    '---\nokf_version: "0.2"\nproject_mode: knowledge-only\n---\n# Custom Bundle\n\nSome hand-authored text.\n',
-  );
-
-  const again = run(initRequest(root, { project_mode: 'knowledge-only' }));
-  assert.equal(again.result, 'no-op');
-});
-
-test('refuses an unsupported project_mode value as UNSUPPORTED_INPUT without writing', (t) => {
-  const root = repository(t, 'okf-137-bad-mode-');
-  const response = run(initRequest(root, { project_mode: 'sandbox' }));
-
-  assert.equal(response.result, 'blocked');
-  assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
-  assert.equal(fs.existsSync(indexFile(root)), false);
+    assert.equal(response.result, 'blocked', projectMode);
+    assert.equal(response.data.code, 'UNSUPPORTED_INPUT', projectMode);
+    assert.equal(fs.existsSync(indexFile(root)), false, projectMode);
+  }
 });
 
 test('init is refused when combined with a derived effect', (t) => {
@@ -175,9 +160,9 @@ test('REACH/writability refusal: a non-writable bundle parent blocks init with a
   assert.equal(fs.existsSync(path.join(root, 'okf')), false);
 });
 
-test('round-trip: the written root re-reads to the exact tree init wrote', (t) => {
+test('round-trip: the written root re-reads to the exact bytes init wrote', (t) => {
   const root = repository(t, 'okf-137-round-trip-');
-  const response = run(initRequest(root, { project_mode: 'knowledge-only' }));
+  const response = run(initRequest(root));
 
   assert.equal(response.result, 'applied');
   assert.equal(response.data.validation, 'valid');
@@ -186,8 +171,8 @@ test('round-trip: the written root re-reads to the exact tree init wrote', (t) =
     false,
   );
   // A second call is a clean no-op only if the first call's bytes actually
-  // parse back to the tree init believes it wrote.
-  const again = run(initRequest(root, { project_mode: 'knowledge-only' }));
+  // re-parse the way `init` believes they do.
+  const again = run(initRequest(root));
   assert.equal(again.result, 'no-op');
 });
 
@@ -196,7 +181,7 @@ test('precondition chain: after init succeeds, a normal create passes the full o
   // `init` here defaults to the `okf` bundle name; the write gate needs the
   // manifest's declared bundle root to match where `init` actually creates it.
   writeManifest(root, 'okf');
-  const initResponse = run(initRequest(root, { project_mode: 'knowledge-only' }));
+  const initResponse = run(initRequest(root));
   assert.equal(initResponse.result, 'applied');
 
   fs.writeFileSync(path.join(root, 'okf', 'evidence.md'), 'observed evidence\n');

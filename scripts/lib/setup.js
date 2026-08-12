@@ -41,8 +41,9 @@ function initEffects(payload) {
 // `init` bootstraps the bundle root itself, so it cannot go through `executeBounded`:
 // there is no bundle-root precondition to check yet, no evidence to cite, and no
 // concept scope. Per #133/#134 it owns a slimmer admission of its own — ownership,
-// REACH, TRUST, ACCESS and the activation-marker gate (run by `run()` before this is
-// reached) — skipping PRESENCE (no bundle to find yet) and the evidence gate.
+// REACH, TRUST, ACCESS and the activation gate (run by `run()` before this is
+// reached, over the manifest now -- #197: was the activation marker) — skipping
+// PRESENCE (no bundle to find yet) and the evidence gate.
 function executeInit(request, services) {
   const payload = request.payload;
   const effectsResult = initEffects(payload);
@@ -57,7 +58,10 @@ function executeInit(request, services) {
   });
 
   if (effectsResult.invalid) return refuse('UNSUPPORTED_INPUT', { gate: 'effects', operation: 'init' });
-  if (payload.project_mode !== undefined && payload.project_mode !== 'code-backed' && payload.project_mode !== 'knowledge-only') {
+  // #197: `project_mode` moved entirely to the manifest bundle record, `repair`'s
+  // to write -- the navigation-only root `init` creates has no field left to put
+  // it in, so a caller still naming it here is refused, not silently ignored.
+  if (payload.project_mode !== undefined) {
     return refuse('UNSUPPORTED_INPUT', { gate: 'project mode', operation: 'init' });
   }
   const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
@@ -129,7 +133,7 @@ function executeInit(request, services) {
     return settle('failed/incomplete', [...outcome.findings, finding], { completed: completedEffects });
   }
 
-  const checked = validation.postWriteInit(bundleRoot, services, outcome.data.tree);
+  const checked = validation.postWriteInit(bundleRoot, services, outcome.data.rendered);
   if (!checked.valid) {
     return settle('failed/incomplete', [...outcome.findings, ...checked.findings], { completed: completedEffects });
   }
@@ -157,7 +161,9 @@ function setupContext(request, services) {
 // what is being inspected, so `run()` reaches this directly rather than gating it
 // behind the very manifest it reports on. `okf-setup`'s procedure owns the consent
 // prompts and the "fix all?" interaction; this function only reports state.
-const repairTargets = new Set(['activation', 'manifest']);
+// #197: `manifest` is the only repair target left -- the activation-marker
+// target this once shared the set with is gone, not made a permanent no-op.
+const repairTargets = new Set(['manifest']);
 
 // #197: the same valid/missing/invalid resolution `runtime.js`'s `activationState()`
 // computes for the shared activation gate, reused here so `/setup`'s own report of
@@ -200,9 +206,9 @@ function executeRepair(request, services) {
   const validShape = Array.isArray(targets) && targets.length > 0 &&
     new Set(targets).size === targets.length && targets.every((target) => repairTargets.has(target));
   if (!validShape) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
-  if (payload.manifest !== undefined && !targets.includes('manifest')) {
-    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
-  }
+  // `manifest` is the only target left, so `validShape` already forces `targets`
+  // to be exactly `['manifest']` -- there is no other target left to name a
+  // `manifest` payload without.
   if (payload.project_mode !== undefined && payload.project_mode !== 'code-backed' && payload.project_mode !== 'knowledge-only') {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
@@ -235,14 +241,6 @@ function executeRepair(request, services) {
 
   const data = {};
   let wrote = false;
-
-  // #197: the activation marker this target used to write is gone. There is
-  // nothing left for `repair` to write here -- the manifest target below is
-  // now the only thing that changes whether OKF runs -- so this target is
-  // always a no-op report.
-  if (targets.includes('activation')) {
-    data.activation = { written: false };
-  }
 
   if (targets.includes('manifest')) {
     const manifestFile = path.join(gitRoot, '.okf-workspace.json');

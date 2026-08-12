@@ -718,10 +718,11 @@ function nearestExistingDir(dir, services) {
   }
 }
 
-// `init` writes only the bundle root. It is idempotent (a valid root with nothing
-// to add is a no-op, not an error) and repairing (an absent, wrong, or unparseable
-// `okf_version` is overwritten). `project_mode` is optional and merges into an
-// already-valid root on a second call.
+// `init` writes only the bundle root, which is navigation only now (#196/#197):
+// the root carries no `okf_version`/`project_mode` frontmatter -- those moved to
+// the manifest bundle record entirely, `repair`'s to write, never `init`'s. It is
+// idempotent (a parseable root is a no-op) and repairing (an unparseable root is
+// reset to a clean navigational body).
 function evaluateInit(request, services) {
   const bundleRoot = path.resolve(request.payload.bundle);
   const indexPath = path.join(bundleRoot, 'index.md');
@@ -734,46 +735,28 @@ function evaluateInit(request, services) {
   }
 
   let currentText = null;
-  let currentTree = null;
-  let currentBody = null;
   let parseable = false;
   if (services.exists(indexPath)) {
     currentText = services.readFile(indexPath);
     try {
-      const parsed = parseTreeFromText(currentText);
-      currentTree = parsed.tree;
-      currentBody = parsed.body;
+      parseTreeFromText(currentText);
       parseable = true;
     } catch {
       parseable = false;
     }
   }
 
-  const projectMode = request.payload.project_mode;
-  const baseTree = parseable ? currentTree : {};
-  const tree = { ...baseTree, okf_version: '0.2' };
-  if (projectMode !== undefined) tree.project_mode = projectMode;
-
-  const alreadyValid = parseable && currentTree.okf_version === '0.2' &&
-    (projectMode === undefined || currentTree.project_mode === projectMode);
-  if (alreadyValid) return done('ok', { written: false, tree: currentTree });
-
-  const serialized = serializeFrontmatter(tree);
-  const mismatch = roundTripMismatch(tree, serialized);
-  if (mismatch) {
-    findings.push(blocker('PARSE_TREE_MISMATCH', 'suite', { path: 'index.md', ...mismatch }));
-    return done('blocked', {});
-  }
+  if (parseable) return done('ok', { written: false });
 
   // A bundle root that does not exist yet is a new bundle, so it gets the agent
   // connector (#170): a root body linking to `agents/index.md`, and the two connector
-  // files themselves. An existing root keeps its own body and gets the connector
-  // through setup's target-tree proposal instead.
+  // files themselves. An existing-but-unparseable root keeps neither its own body
+  // nor the connector -- it is reset to the same minimal navigational body a
+  // repaired root always got, just without the frontmatter nothing reads anymore.
   const fresh = currentText === null;
-  const body = parseable ? currentBody : (fresh ? connector.ROOT_BODY : '# Bundle\n');
+  const rendered = fresh ? connector.ROOT_BODY : '# Bundle\n';
   return done('ok', {
     written: true,
-    tree,
     // A connector file already on disk is left exactly as it is: `init` never
     // overwrites one, so a bundle root missing only `index.md` is repaired without
     // a partial write and without a `TARGET_CHANGED` refusal for content it does
@@ -783,22 +766,23 @@ function evaluateInit(request, services) {
         .map(([relative, text]) => ({ file: path.join(bundleRoot, relative), rendered: text }))
         .filter((item) => !services.exists(item.file))
       : [],
-    rendered: serialized + body,
+    rendered,
     expected: currentText,
     file: indexPath,
   });
 }
 
-// Post-write for `init` re-reads only the root declaration and confirms the saved
-// parse tree matches what was written; it is not a concept, so `postWrite`'s
-// concept-shaped checks (type, sources, links, upstreams) do not apply.
-function postWriteInit(bundleRoot, services, expectedTree) {
+// Post-write for `init` re-reads only the root and confirms the saved bytes match
+// what was published; it is not a concept, so `postWrite`'s concept-shaped checks
+// (type, sources, links, upstreams) do not apply, and it is not a frontmatter tree
+// anymore (#197) either -- the root carries none, so an exact-bytes comparison is
+// the whole check.
+function postWriteInit(bundleRoot, services, expectedText) {
   const findings = [];
   try {
-    const current = readTree(path.join(bundleRoot, 'index.md'), services);
-    const comparison = parseTreeEqual(expectedTree, current.tree);
-    if (!comparison.equal) {
-      findings.push(blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: 'index.md', construct: comparison.path, reason: 'saved tree mismatch' }));
+    const current = services.readFile(path.join(bundleRoot, 'index.md'));
+    if (current !== expectedText) {
+      findings.push(blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: 'index.md', reason: 'saved bytes mismatch' }));
     }
     return { valid: !findings.some((finding) => finding.blocks), findings: sortFindings(findings) };
   } catch (error) {
@@ -808,20 +792,17 @@ function postWriteInit(bundleRoot, services, expectedTree) {
 
 // Read-only counterpart to `evaluateInit`: `/setup`'s inspection report for the
 // bundle root. Reuses the same parser as `evaluateInit` so the two never drift on
-// what counts as parseable or valid; unlike `evaluateInit` it never touches disk.
-// #197 task 3 owns making `init`/`inspect` treat the root as navigation-only; this
-// task only moves the write gate itself off this file, so `inspectIndex` (setup-only,
-// bypassed by the activation gate) is left exactly as task 3 will find it.
+// what counts as parseable; unlike `evaluateInit` it never touches disk. #197: the
+// root is navigation only, so there is no `okf_version` left to check here -- only
+// whether the file parses at all.
 function inspectIndex(bundleRoot, services) {
   const indexPath = path.join(bundleRoot, 'index.md');
   if (!services.exists(indexPath)) return { state: 'missing' };
-  let tree;
   try {
-    tree = parseTreeFromText(services.readFile(indexPath)).tree;
+    parseTreeFromText(services.readFile(indexPath));
   } catch (error) {
     return { state: 'invalid', reason: error.reason || 'unparseable_frontmatter' };
   }
-  if (tree.okf_version !== '0.2') return { state: 'invalid', reason: 'missing_or_wrong_okf_version' };
   return { state: 'ok' };
 }
 

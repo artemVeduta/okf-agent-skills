@@ -45,15 +45,20 @@ function validManifest(workspaceId) {
 
 // --------------------------------------------------------------- index.md
 
+// #196/#197: the root is navigation only now, so there is no `okf_version` left
+// to check -- an old-format declaration is just parseable content, not a wrong
+// version, and inspect reports it `ok` like any other parseable root.
 test('inspect reports index.md as missing, invalid, and ok', (t) => {
   const root = repo(t);
   assert.deepEqual(run(inspectRequest(root)).data.index_md, { state: 'missing' });
 
   fs.mkdirSync(path.join(root, 'okf'));
-  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.1"\n---\n# Bundle\n');
-  assert.deepEqual(run(inspectRequest(root)).data.index_md, { state: 'invalid', reason: 'missing_or_wrong_okf_version' });
+  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: [\n---\n# Bundle\n');
+  const state = run(inspectRequest(root)).data.index_md;
+  assert.equal(state.state, 'invalid');
+  assert.ok(state.reason);
 
-  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.1"\n---\n# Bundle\n');
   assert.deepEqual(run(inspectRequest(root)).data.index_md, { state: 'ok' });
 });
 
@@ -89,22 +94,6 @@ test('inspect reports activation as missing, invalid, and ok, tracking the manif
   const workspaceId = '77777777-7777-4777-8777-777777777777';
   fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify(validManifest(workspaceId)));
   assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'ok' });
-});
-
-// `repair` has no write left to make for this target (#197: the marker it used to
-// create is gone) -- it is always a no-op report now, whatever the manifest's own
-// state happens to be. The manifest is the only thing `repair` still writes.
-test('repair never writes for the activation target', (t) => {
-  const root = repo(t);
-  const onMissing = run(repairRequest(root, ['activation']));
-  assert.equal(onMissing.result, 'no-op');
-  assert.deepEqual(onMissing.data.activation, { written: false });
-
-  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
-  const onInvalid = run(repairRequest(root, ['activation']));
-  assert.equal(onInvalid.result, 'no-op');
-  assert.deepEqual(onInvalid.data.activation, { written: false });
-  assert.equal(fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8'), 'not json');
 });
 
 // --------------------------------------------------------------- .okf-workspace.json
@@ -262,14 +251,6 @@ test('repair refuses a hand-authored manifest that fails validation, without wri
   assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
 });
 
-test('repair refuses a manifest payload named without "manifest" in targets', (t) => {
-  const root = repo(t);
-  const response = run(repairRequest(root, ['activation'], { manifest: { schema_version: 1 } }));
-  assert.equal(response.result, 'blocked');
-  assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
-});
-
 // --------------------------------------------------------------- repair input shape
 
 test('repair rejects a structurally empty targets list at the protocol layer, before the runtime', (t) => {
@@ -279,22 +260,17 @@ test('repair rejects a structurally empty targets list at the protocol layer, be
   assert.equal(result.stdout, '');
 });
 
+// #197: `manifest` is the only recognized target left -- `activation` (the target
+// that used to write the now-retired marker) is unrecognized input exactly like
+// any other unknown target name, not a special case.
 test('repair refuses unrecognized or duplicate targets without writing anything', (t) => {
   const root = repo(t);
-  for (const targets of [['index_md'], ['activation', 'activation']]) {
+  for (const targets of [['index_md'], ['activation'], ['manifest', 'manifest']]) {
     const response = run(repairRequest(root, targets));
     assert.equal(response.result, 'blocked', JSON.stringify(targets));
     assert.equal(response.data.code, 'UNSUPPORTED_INPUT', JSON.stringify(targets));
   }
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
-});
-
-test('repair does both targets in one call and reports each independently', (t) => {
-  const root = repo(t);
-  const response = run(repairRequest(root, ['activation', 'manifest'], { project_mode: 'code-backed' }));
-  assert.equal(response.result, 'applied');
-  assert.deepEqual(response.data.activation, { written: false });
-  assert.equal(response.data.manifest.written, true);
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
 });
 
 // --------------------------------------------------------------- ownership, activation bypass, automatic invocation
@@ -302,19 +278,19 @@ test('repair does both targets in one call and reports each independently', (t) 
 test('inspect and repair report not-configured entirely outside a Git repository, exactly like every other operation', (t) => {
   const root = temporaryRoot(t, 'okf-138-no-repo-');
   assert.equal(run(inspectRequest(root)).result, 'not-configured');
-  assert.equal(run(repairRequest(root, ['activation'])).result, 'not-configured');
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
+  assert.equal(run(repairRequest(root, ['manifest'])).result, 'not-configured');
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
 });
 
 test('inspect and repair run without a valid manifest, unlike every other operation', (t) => {
   const root = repo(t);
   assert.equal(run(inspectRequest(root)).result, 'ok');
-  assert.equal(run(repairRequest(root, ['activation'])).result, 'no-op');
+  assert.equal(run(repairRequest(root, ['manifest'], { project_mode: 'code-backed' })).result, 'applied');
 });
 
 test('automatic invocation of inspect or repair is silent, matching every operation\'s automatic behavior when OKF is not active', (t) => {
   const root = repo(t);
-  for (const request of [inspectRequest(root), repairRequest(root, ['activation'])]) {
+  for (const request of [inspectRequest(root), repairRequest(root, ['manifest'])]) {
     const result = spawnWrapper(wrapper, { ...request, invocation: 'automatic' });
     assert.equal(result.status, 0);
     assert.equal(result.stdout, '');
@@ -332,13 +308,13 @@ test('a non-writable Git root blocks repair with a blocking finding, without tou
   fs.chmodSync(root, 0o555);
   let response;
   try {
-    response = run(repairRequest(root, ['activation']));
+    response = run(repairRequest(root, ['manifest'], { project_mode: 'code-backed' }));
   } finally {
     fs.chmodSync(root, 0o755);
   }
   assert.equal(response.result, 'blocked');
   assert.ok(response.findings.some((item) => item.code === 'PARENT_DIRECTORY_NOT_WRITABLE'));
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
 });
 
 test('the generic okf router reaches inspect and repair too, and also bypasses the activation gate', (t) => {
@@ -356,14 +332,17 @@ test('the generic okf router reaches inspect and repair too, and also bypasses t
 
 // --------------------------------------------------------------- full chain
 
+// #196's documented order (inspect -> consent -> repair manifest -> init ->
+// discover) writes the manifest before `init` ever runs; this test's own name
+// already matches that order for free.
 test('a full setup chain (inspect, repair, init) leaves all three files ok and a normal create then passes the write gate', (t) => {
   const root = repo(t);
   const before = run(inspectRequest(root)).data;
   assert.deepEqual([before.index_md.state, before.activation.state, before.manifest.state], ['missing', 'missing', 'missing']);
 
-  const repaired = run(repairRequest(root, ['activation', 'manifest'], { project_mode: 'knowledge-only' }));
+  const repaired = run(repairRequest(root, ['manifest'], { project_mode: 'knowledge-only' }));
   assert.equal(repaired.result, 'applied');
-  const initResponse = run(initRequest(root, { project_mode: 'knowledge-only' }));
+  const initResponse = run(initRequest(root));
   assert.equal(initResponse.result, 'applied');
 
   const after = run(inspectRequest(root)).data;
@@ -372,6 +351,6 @@ test('a full setup chain (inspect, repair, init) leaves all three files ok and a
   assert.equal(after.manifest.state, 'ok');
 
   // A second inspect/repair pass over an already-fixed project is a pure no-op.
-  const secondRepair = run(repairRequest(root, ['activation', 'manifest'], { project_mode: 'knowledge-only' }));
+  const secondRepair = run(repairRequest(root, ['manifest'], { project_mode: 'knowledge-only' }));
   assert.equal(secondRepair.result, 'no-op');
 });

@@ -28,12 +28,13 @@ const routerOwners = new Map([
 
 // `inspect`, `repair`, `plan`, `aggregate`, `report`, `partition`, `assemble`, and
 // `publish` all report on or compute around state that exists before or independently
-// of the activation marker, so all eight bypass the shared activation gate the same way
-// (#133/#138/#135/#136/#146/#147/#149). `discover` (#142) and `migration-plan` (#144)
-// deliberately do NOT: unlike those eight, each needs a bundle root to already exist
-// -- `discover` to exclude it from the scan, `migration-plan` to check a candidate
-// target path for a collision -- and each runs as a step of an already-active setup
-// session rather than something that inspects or repairs the marker itself.
+// of the manifest (#197: was the activation marker), so all eight bypass the shared
+// activation gate the same way (#133/#138/#135/#136/#146/#147/#149). `discover`
+// (#142) and `migration-plan` (#144) deliberately do NOT: unlike those eight, each
+// needs a bundle root to already exist -- `discover` to exclude it from the scan,
+// `migration-plan` to check a candidate target path for a collision -- and each
+// runs as a step of an already-active setup session rather than something that
+// inspects or repairs the manifest itself.
 // `partition` (#146) needs no bundle root at all: it only groups an already-determined
 // plan the caller supplies (or validates a worker's returned shard against the brief
 // the caller supplies), never touching the bundle or the filesystem beyond resolving
@@ -501,13 +502,14 @@ function runActive(skill, request, services) {
 function run(skill, request, services) {
   if (!skills.has(skill)) return respond(request, 'blocked', { code: 'UNKNOWN_SKILL' }, []);
 
-  // `inspect` and `repair` report and fix the activation marker itself, `plan` and
-  // `aggregate` plan and report around a workspace that may not have one yet, and
-  // `report` only classifies caller-supplied migration signals, so all five run
-  // ahead of the shared activation gate below rather than being gated behind it,
-  // whether reached directly through `okf-setup` or through the `okf` router; an
-  // automatic caller still gets silence, matching every other operation's automatic
-  // behavior when OKF is not yet active here (#138/#135/#136).
+  // `inspect` and `repair` report and fix the manifest itself (#197: was the
+  // activation marker), `plan` and `aggregate` plan and report around a workspace
+  // that may not have one yet, and `report` only classifies caller-supplied
+  // migration signals, so all five run ahead of the shared activation gate below
+  // rather than being gated behind it, whether reached directly through
+  // `okf-setup` or through the `okf` router; an automatic caller still gets
+  // silence, matching every other operation's automatic behavior when OKF is not
+  // yet active here (#138/#135/#136).
   if (activationBypassOperations.has(request.operation)) {
     if (skill === 'okf-setup') {
       if (request.invocation === 'automatic') return null;
@@ -529,13 +531,19 @@ function run(skill, request, services) {
   const activation = activationState(request, services);
   if (activation === 'absent') {
     if (request.invocation === 'automatic') return null;
-    // The bootstrap exception (#166/#173): an explicit `init` runs while the manifest is
-    // *absent* (#197: was the activation marker), because there is no bundle yet for a
-    // manifest to declare active, and the
-    // documented order `inspect -> consent -> init -> repair activation -> ...` would
-    // otherwise be unreachable on a clean repository. It is narrower than the bypass set
-    // above: an invalid manifest still blocks below, `init` still creates only the bundle
-    // root, and the manifest still gets written by a separate explicit `repair`.
+    // The pre-manifest bootstrap exception (#166/#173, kept by #196/#197): an
+    // explicit `init` may run while the manifest is *absent* (#197: was the
+    // activation marker), because there is no bundle yet for a manifest to
+    // declare active. The documented order is now
+    // `inspect -> consent -> repair manifest -> init -> discover` (#196), which
+    // writes the manifest before `init` ever runs, so a normal run no longer
+    // needs this exception to reach `init` at all -- it stays so an explicit
+    // `init` still works standalone on a repository that holds nothing but a
+    // Git root, the explicit pre-manifest setup path #196 keeps alongside the
+    // documented order (`test/issue-173.test.js`). It is narrower than the
+    // bypass set above: an invalid manifest still blocks below, `init` still
+    // creates only the bundle root, and the manifest still gets written by a
+    // separate explicit `repair`.
     // A Git repository is still the precondition every operation shares: outside one,
     // `init` keeps answering `not-configured` rather than reaching ownership.
     if (request.operation === 'init' && (skill === 'okf-setup' || skill === 'okf') &&
