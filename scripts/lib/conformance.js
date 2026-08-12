@@ -54,11 +54,6 @@ const monorepo = require('./monorepo');
 const { inside } = require('./paths');
 const { suiteFinding } = require('./response');
 
-// Every finding this gate raises blocks: an accepted proposal is one complete
-// decision (#156), so a staged bundle that does not match it is not a lesser
-// version of the accepted one -- it is a different bundle nobody accepted.
-const finding = (code, detail) => suiteFinding(code, detail);
-
 function byKey(key) {
   return (a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
 }
@@ -172,7 +167,7 @@ const ACCEPTED_DISPOSITIONS = new Set(['migrate', 'skip', 'residue']);
 function checkDispositions(input, findings) {
   for (const row of sortedBy(input.sources, (item) => item.path)) {
     if (ACCEPTED_DISPOSITIONS.has(row.disposition)) continue;
-    findings.push(finding('SOURCE_DISPOSITION_UNRESOLVED', { path: row.path, disposition: row.disposition }));
+    findings.push(suiteFinding('SOURCE_DISPOSITION_UNRESOLVED', { path: row.path, disposition: row.disposition }));
   }
 }
 
@@ -183,16 +178,16 @@ function checkOutputSet(outputs, staged, findings) {
   const stagedConcepts = new Set(staged.map((item) => item.concept));
   const proposedConcepts = new Set(outputs.map((item) => item.concept));
   for (const output of outputs) {
-    if (!stagedConcepts.has(output.concept)) findings.push(finding('OUTPUT_NOT_STAGED', { concept: output.concept }));
+    if (!stagedConcepts.has(output.concept)) findings.push(suiteFinding('OUTPUT_NOT_STAGED', { concept: output.concept }));
   }
   for (const item of staged) {
-    if (!proposedConcepts.has(item.concept)) findings.push(finding('STAGED_OUTPUT_UNPROPOSED', { concept: item.concept }));
+    if (!proposedConcepts.has(item.concept)) findings.push(suiteFinding('STAGED_OUTPUT_UNPROPOSED', { concept: item.concept }));
   }
 }
 
 function checkStagedFiles(staged, findings) {
   for (const item of staged) {
-    if (item.ok === false) findings.push(finding('STAGED_FILE_INVALID', { concept: item.concept, reason: item.error }));
+    if (item.ok === false) findings.push(suiteFinding('STAGED_FILE_INVALID', { concept: item.concept, reason: item.error }));
   }
 }
 
@@ -205,7 +200,7 @@ function checkTypes(pairs, findings) {
     const stagedRefType = item.type === undefined ? null : item.type;
     const frontmatterType = item.tree.type === undefined ? null : item.tree.type;
     if (output.type === stagedRefType && stagedRefType === frontmatterType) continue;
-    findings.push(finding('OUTPUT_TYPE_MISMATCH', {
+    findings.push(suiteFinding('OUTPUT_TYPE_MISMATCH', {
       concept: output.concept,
       proposal_type: output.type === undefined ? null : output.type,
       staged_ref_type: stagedRefType,
@@ -222,7 +217,7 @@ function checkTargets(pairs, findings) {
   for (const [output] of pairs) {
     const actual = `${output.concept}.md`;
     if (actual === output.target_path) continue;
-    findings.push(finding('OUTPUT_TARGET_PATH_MISMATCH', { concept: output.concept, expected: output.target_path, actual }));
+    findings.push(suiteFinding('OUTPUT_TARGET_PATH_MISMATCH', { concept: output.concept, expected: output.target_path, actual }));
   }
 }
 
@@ -230,7 +225,7 @@ function checkGroups(pairs, findings) {
   for (const [output] of pairs) {
     const derived = groupOf(output.concept);
     if (output.group === derived) continue;
-    findings.push(finding('OUTPUT_GROUP_MISMATCH', { concept: output.concept, proposal_group: output.group, derived_group: derived }));
+    findings.push(suiteFinding('OUTPUT_GROUP_MISMATCH', { concept: output.concept, proposal_group: output.group, derived_group: derived }));
   }
 }
 
@@ -246,11 +241,11 @@ function checkIndexes(input, findings) {
   for (const group of sortedBy(input.groups, (item) => item.group)) {
     const row = navigationByPath.get(group.index_path);
     if (row === undefined) {
-      findings.push(finding('GROUP_INDEX_MISSING', { group: group.group, index_path: group.index_path }));
+      findings.push(suiteFinding('GROUP_INDEX_MISSING', { group: group.group, index_path: group.index_path }));
     } else if (group.purpose !== null && row.body !== proposal.renderIndex(group.group, group.purpose, group.children)) {
-      findings.push(finding('GROUP_INDEX_MISMATCH', { group: group.group, index_path: group.index_path }));
+      findings.push(suiteFinding('GROUP_INDEX_MISMATCH', { group: group.group, index_path: group.index_path }));
     }
-    if (group.purpose === null) findings.push(finding('GROUP_PURPOSE_UNRESOLVED', { group: group.group }));
+    if (group.purpose === null) findings.push(suiteFinding('GROUP_PURPOSE_UNRESOLVED', { group: group.group }));
   }
 }
 
@@ -264,7 +259,7 @@ function checkStatus(pairs, findings) {
     const expected = output.type === 'Glossary' ? null : 'draft';
     const actual = item.tree.status === undefined ? null : item.tree.status;
     if (actual === expected) continue;
-    findings.push(finding('OUTPUT_STATUS_MISMATCH', { concept: output.concept, expected, actual }));
+    findings.push(suiteFinding('OUTPUT_STATUS_MISMATCH', { concept: output.concept, expected, actual }));
   }
 }
 
@@ -278,7 +273,7 @@ function checkSourceBindings(pairs, observations, findings) {
     const expected = expectedBinding(output, observations);
     const recorded = item.sources === undefined ? [] : item.sources;
     if (observations.get(output.source) && isDeepStrictEqual(recorded, expected)) continue;
-    findings.push(finding('SOURCE_BINDING_MISMATCH', { concept: output.concept, expected, recorded }));
+    findings.push(suiteFinding('SOURCE_BINDING_MISMATCH', { concept: output.concept, expected, recorded }));
   }
 }
 
@@ -296,7 +291,7 @@ function checkProvenance(pairs, findings) {
     const expected = output.provenance === undefined ? null : output.provenance;
     const actual = item.tree.sources === undefined ? null : item.tree.sources;
     if (isDeepStrictEqual(actual, expected)) continue;
-    findings.push(finding('PROVENANCE_MISMATCH', { concept: output.concept, expected, actual }));
+    findings.push(suiteFinding('PROVENANCE_MISMATCH', { concept: output.concept, expected, actual }));
   }
 }
 
@@ -315,10 +310,10 @@ function checkLinks(pairs, findings) {
     const unexpected = [...actual].filter((link) => !expected.has(link)).sort();
     const missing = [...expected].filter((link) => !actual.has(link)).sort();
     if (unexpected.length > 0 || missing.length > 0) {
-      findings.push(finding('LINK_TARGET_MISMATCH', { concept: output.concept, unexpected, missing }));
+      findings.push(suiteFinding('LINK_TARGET_MISMATCH', { concept: output.concept, unexpected, missing }));
     }
     for (const row of sortedBy(rows.filter((entry) => entry.decision !== 'rewritten'), (entry) => entry.target_source)) {
-      findings.push(finding('LINK_DECISION_UNRESOLVED', { concept: output.concept, target_source: row.target_source }));
+      findings.push(suiteFinding('LINK_DECISION_UNRESOLVED', { concept: output.concept, target_source: row.target_source }));
     }
   }
 }
@@ -337,20 +332,20 @@ function checkLinks(pairs, findings) {
  */
 function verdictFindings(kind, subject, verdict, bindings, findings) {
   if (verdict === undefined) {
-    findings.push(finding('REVIEW_VERDICT_MISSING', { kind, ...subject }));
+    findings.push(suiteFinding('REVIEW_VERDICT_MISSING', { kind, ...subject }));
     return;
   }
   if (verdict.verdict === 'fail') {
-    findings.push(finding('REVIEW_VERDICT_FAILED', { kind, ...subject, verdict: verdict.verdict }));
+    findings.push(suiteFinding('REVIEW_VERDICT_FAILED', { kind, ...subject, verdict: verdict.verdict }));
     return;
   }
   if (verdict.verdict !== 'pass') {
-    findings.push(finding('REVIEW_VERDICT_UNCERTAIN', { kind, ...subject, verdict: verdict.verdict }));
+    findings.push(suiteFinding('REVIEW_VERDICT_UNCERTAIN', { kind, ...subject, verdict: verdict.verdict }));
     return;
   }
   const broken = bindings.find((binding) => !binding.holds);
   if (broken !== undefined) {
-    findings.push(finding('REVIEW_VERDICT_STALE', { kind, ...subject, binding: broken.field }));
+    findings.push(suiteFinding('REVIEW_VERDICT_STALE', { kind, ...subject, binding: broken.field }));
   }
 }
 
