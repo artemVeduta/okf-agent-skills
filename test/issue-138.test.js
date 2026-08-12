@@ -113,7 +113,7 @@ test('inspect reports .okf-workspace.json as missing, invalid, and ok', (t) => {
   const workspaceId = '11111111-1111-4111-8111-111111111111';
   fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify(validManifest(workspaceId)));
   assert.deepEqual(run(inspectRequest(root)).data.manifest, {
-    state: 'ok', monorepo: false, settings: { max_words_per_file: 1000 }, settingsFindings: [],
+    state: 'ok', monorepo: false, settings: { max_words_per_file: 1000 }, settings_findings: [],
   });
 });
 
@@ -211,7 +211,7 @@ test('repair regenerates an invalid manifest only once the caller supplies the s
   const written = JSON.parse(fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8'));
   assert.equal(written.workspace_id, workspaceId);
   assert.deepEqual(run(inspectRequest(root)).data.manifest, {
-    state: 'ok', monorepo: false, settings: { max_words_per_file: 1000 }, settingsFindings: [],
+    state: 'ok', monorepo: false, settings: { max_words_per_file: 1000 }, settings_findings: [],
   });
 });
 

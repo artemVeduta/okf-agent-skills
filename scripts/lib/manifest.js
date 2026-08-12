@@ -112,9 +112,9 @@ function validate(raw) {
 
 function read(file, services) {
   let raw;
-  try { raw = JSON.parse(services.readFile(file)); } catch { return { finding: invalid('invalid_json') }; }
+  try { raw = JSON.parse(services.readFile(file)); } catch { return { finding: invalid('invalid_json'), path: file }; }
   const finding = validate(raw);
-  return finding ? { finding } : { manifest: raw, root: path.dirname(file), path: file };
+  return finding ? { finding, path: file } : { manifest: raw, root: path.dirname(file), path: file };
 }
 
 function discover(cwd, gitRoot, services) {
@@ -173,7 +173,7 @@ function inspect(file, gitRoot, services) {
     return { state: 'invalid', reason: finding.detail.reason, salvage, monorepo };
   }
   const resolved = resolveSettings(raw.settings);
-  return { state: 'ok', monorepo, settings: resolved.effective, settingsFindings: resolved.findings };
+  return { state: 'ok', monorepo, settings: resolved.effective, settings_findings: resolved.findings };
 }
 
 // The single-bundle template named by #133's resolution: one repository — the

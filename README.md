@@ -127,16 +127,21 @@ call can pass the write gate.
 Automatic behavior — the read-only orientation a native adapter injects at
 session start — activates the OKF bundle only when a valid `.okf-workspace.json`
 manifest exists at the Git worktree root. The manifest declares the bundle's
-location, version, and federated workspace structure. Create the manifest and
-initialize the bundle root:
+location, version, and federated workspace structure. There is no CLI flag
+surface — every wrapper, `okf-setup`'s included, reads one JSON request line
+from stdin, exactly as `skills/okf-setup/SKILL.md` documents. Create the
+manifest and initialize the bundle root:
 
 ```
-okf-setup repair --targets manifest
-okf-setup init
+echo '{"protocol":"okf-wrapper/1","skill":"okf-setup","operation":"repair","payload":{"cwd":"<absolute path to your working tree>","targets":["manifest"],"project_mode":"code-backed"}}' | node <skill-root>/scripts/okf-setup.js
+echo '{"protocol":"okf-wrapper/1","skill":"okf-setup","operation":"init","payload":{"cwd":"<absolute path to your working tree>"}}' | node <skill-root>/scripts/okf-setup.js
 ```
 
-Neither installing the base suite nor installing a native adapter creates
-or modifies the manifest, and neither does entering a harness session.
+`project_mode` (`code-backed` or `knowledge-only`) is required on `repair`'s
+`payload` whenever it generates the manifest itself, as above — the manifest
+grammar requires every bundle record to declare one. Neither installing the
+base suite nor installing a native adapter creates or modifies the manifest,
+and neither does entering a harness session.
 Installing an adapter arms nothing by itself. Without a valid manifest, automatic
 behavior is a silent no-op and an explicit read reports `not-configured`;
 mutation stays blocked either way until the manifest exists.

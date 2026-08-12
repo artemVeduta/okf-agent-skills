@@ -807,18 +807,18 @@ function inspectIndex(bundleRoot, services) {
   return { state: 'ok' };
 }
 
-// `bundleRecord` is the manifest bundle record the caller already resolved for
-// this write (#197) -- `{ okf_version, project_mode }` at minimum. `undefined`
-// (no record) is treated the same as an absent/unrecognized declaration.
-function postWrite(bundleRoot, rel, services, expectedTree, bundleRecord) {
+// Root-declaration and project-mode re-checks used to live here (#197), but
+// fix round 2 (Minor) deletes them: `executeBounded` (runtime.js) already
+// validates the same selected manifest bundle record's `okf_version` (through
+// `evaluate`/`evaluateCreate`'s own `checkRoot` call) and `project_mode`
+// (its own `PROJECT_MODE_INVALID` refusal) before the write even starts, off
+// the identical resolved `bundleRecord` this function would have re-tested --
+// a failing value here was structurally unreachable, exactly as
+// `test/issue-78.test.js` already documents.
+function postWrite(bundleRoot, rel, services, expectedTree) {
   const findings = [];
   const file = path.resolve(bundleRoot, rel);
   try {
-    const root = checkRoot(bundleRecord && bundleRecord.okf_version);
-    if (root) findings.push(root);
-    if (!projectMode(bundleRecord && bundleRecord.project_mode)) {
-      findings.push(blocker('PROJECT_MODE_INVALID', 'suite', { gate: 'project mode' }));
-    }
     const current = readConcept(file, rel, services);
     if (current.finding) {
       findings.push(current.finding);

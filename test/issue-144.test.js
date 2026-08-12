@@ -381,7 +381,7 @@ test('migration-plan exposes the built-in max_words_per_file default when the ma
   const response = run(planRequest(root, []));
   assert.equal(response.result, 'ok');
   assert.deepEqual(response.data.settings, { max_words_per_file: 1000 });
-  assert.deepEqual(response.data.settingsFindings, []);
+  assert.deepEqual(response.data.settings_findings, []);
 });
 
 test('migration-plan exposes an override value from .okf-workspace.json as the effective max_words_per_file', (t) => {
@@ -391,7 +391,7 @@ test('migration-plan exposes an override value from .okf-workspace.json as the e
   const response = run(planRequest(root, []));
   assert.equal(response.result, 'ok');
   assert.deepEqual(response.data.settings, { max_words_per_file: 250 });
-  assert.deepEqual(response.data.settingsFindings, []);
+  assert.deepEqual(response.data.settings_findings, []);
 });
 
 test('migration-plan keeps the built-in max_words_per_file default effective and reports SETTING_INVALID when the override is invalid', (t) => {
@@ -401,7 +401,7 @@ test('migration-plan keeps the built-in max_words_per_file default effective and
   const response = run(planRequest(root, []));
   assert.equal(response.result, 'ok');
   assert.deepEqual(response.data.settings, { max_words_per_file: 1000 });
-  assert.deepEqual(response.data.settingsFindings, [{
+  assert.deepEqual(response.data.settings_findings, [{
     code: 'SETTING_INVALID', origin: 'suite', severity: 'warning', blocks: false,
     detail: { gate: 'settings', reason: 'invalid_setting_value', key: 'max_words_per_file' },
   }]);

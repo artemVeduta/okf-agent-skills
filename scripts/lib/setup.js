@@ -156,7 +156,7 @@ function setupContext(request, services) {
   return { gitRoot, bundleName, bundleRoot: path.resolve(payload.cwd, bundleName) };
 }
 
-// `/setup`'s deterministic state report for the three config files (#133/#138).
+// `/setup`'s deterministic state report for the two config files (#133/#138).
 // Read-only: it never writes, and it runs even when the manifest itself is
 // what is being inspected, so `run()` reaches this directly rather than gating it
 // behind the very manifest it reports on. `okf-setup`'s procedure owns the consent
@@ -177,6 +177,19 @@ function manifestActivation(payload, gitRoot, services) {
   return { state: selected.manifest ? 'ok' : 'missing' };
 }
 
+// The activation gate resolves `.okf-workspace.json` by walking `cwd` upward to
+// the Git root (`manifest.select()`'s own `discover()`), so a manifest living in
+// an intermediate directory activates the bundle from there, not from a
+// hardcoded `<gitRoot>/.okf-workspace.json` that may not exist at all. Every
+// caller that reports on, or reads settings out of, "the manifest" must resolve
+// the same file the gate just activated against -- this is that one resolution,
+// reused rather than re-derived, so the two halves of one response can never
+// disagree about which file is "the manifest" (fix round 2, Important 3).
+function resolveManifestFile(payload, gitRoot, services) {
+  const selected = manifest.select(payload, { cwd: path.resolve(payload.cwd), gitRoot }, services);
+  return selected.path || path.join(gitRoot, '.okf-workspace.json');
+}
+
 function executeInspect(request, services) {
   const context = setupContext(request, services);
   if (context.refusal) return context.refusal;
@@ -185,7 +198,7 @@ function executeInspect(request, services) {
   return respond(request, 'ok', {
     index_md: validation.inspectIndex(bundleRoot, services),
     activation: manifestActivation(request.payload, gitRoot, services),
-    manifest: manifest.inspect(path.join(gitRoot, '.okf-workspace.json'), gitRoot, services),
+    manifest: manifest.inspect(resolveManifestFile(request.payload, gitRoot, services), gitRoot, services),
   }, []);
 }
 
@@ -691,8 +704,10 @@ function executeMigrationPlan(request, services) {
   // the same way `inspect` already exposes them for the manifest itself (#197 task
   // 1) -- `migration-plan` is never bypass-gated (see `runtime.js`'s
   // `activationBypassOperations`), so a valid manifest is already guaranteed by the
-  // time this line runs and `inspect` always reports `state: 'ok'` here.
-  const settingsReport = manifest.inspect(path.join(gitRoot, '.okf-workspace.json'), gitRoot, services);
+  // time this line runs and `inspect` always reports `state: 'ok'` here. Resolved
+  // through the same upward-walking `manifest.select()` the activation gate itself
+  // used, not a hardcoded `<gitRoot>/.okf-workspace.json` (fix round 2, Important 3).
+  const settingsReport = manifest.inspect(resolveManifestFile(payload, gitRoot, services), gitRoot, services);
 
   const findings = [
     ...outcome.questions.map((q) => ({
@@ -730,7 +745,7 @@ function executeMigrationPlan(request, services) {
     mapping: outcome.mapping,
     references: outcome.references,
     settings: settingsReport.settings,
-    settingsFindings: settingsReport.settingsFindings,
+    settings_findings: settingsReport.settings_findings,
   }, findings);
 }
 

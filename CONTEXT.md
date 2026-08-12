@@ -158,14 +158,15 @@ must reproduce the frontmatter's parsed semantics through the suite's own
 writer. Reported with origin `suite`, never as an OKF conformance error.
 _Avoid_: OKF conformance, product extension
 
-**Workspace manifest**:
-The `.okf-workspace.json` file at a Git worktree root that declares the OKF
-bundle's activation state and federation. It specifies bundle locations, versions,
-project modes, and the workspace structure across one or many repositories and
-bundles. Its presence activates harness adapters to provide automatic OKF behavior;
-its absence disables automatic invocation. It does not grant trust, authority,
-access, write ownership, approval, or permission. A cross-repository operation
-requires valid manifests in both affected worktrees.
+**Activation**:
+The condition under which harness adapters provide automatic OKF behavior: a
+valid `.okf-workspace.json` manifest resolved for the current worktree, with
+an admitted bundle record. It does not grant trust, authority, access, write
+ownership, approval, or permission. A missing manifest leaves automatic
+behavior silent and makes an explicit call report `not-configured`; an
+invalid manifest reports `MANIFEST_INVALID` and blocks mutation. A
+cross-repository operation requires a valid manifest in both affected
+worktrees.
 _Avoid_: Authorization marker, permission flag, automatic setup
 
 **Harness adapter**:
@@ -352,9 +353,12 @@ target-owner consent
 **Workspace manifest**:
 The user-authored `.okf-workspace.json` federation declaration whose containing
 directory is the workspace root, and of which exactly one is active. It names
-which bundles may be read and under which aliases; it does not grant trust,
-filesystem access, discovery authority, or write ownership, and it records no
-operation.
+which bundles may be read and under which aliases, and each bundle record
+declares its own `okf_version` and `project_mode`. A valid manifest with an
+admitted bundle record is also the activation condition for automatic OKF
+behavior, and it may carry an optional `settings` object. It does not grant
+trust, filesystem access, discovery authority, or write ownership, and it
+records no operation.
 _Avoid_: Operation manifest, trust store, permission file
 
 **Bundle admission**:

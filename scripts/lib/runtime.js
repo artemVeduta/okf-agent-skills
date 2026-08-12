@@ -270,7 +270,7 @@ function executeBounded(request, services, operation, requireScope = false) {
     const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: writeFailureReason(error) });
     return settle('failed/incomplete', [...outcome.findings, finding], { completed: completedEffects });
   }
-  const checked = validation.postWrite(bundleRoot, payload.concept, services, outcome.data.tree, bundleRecord);
+  const checked = validation.postWrite(bundleRoot, payload.concept, services, outcome.data.tree);
   if (!checked.valid) {
     return settle('failed/incomplete', [...outcome.findings, ...checked.findings], { completed: completedEffects });
   }

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { bundle, repository, runWrapper } = require('../test-support/snapshot');
+const { bundle, repository, runWrapper, temporaryRoot } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const readWrapper = path.join(repo, 'scripts', 'okf-read.js');
@@ -87,7 +87,7 @@ test('an absent settings object resolves to the built-in default with no finding
   writeManifest(root, manifestOf([validBundle()]));
   const response = runWrapper(setupWrapper, inspectRequest(root), { cwd: root });
   assert.deepEqual(response.data.manifest, {
-    state: 'ok', monorepo: false, settings: { max_words_per_file: 1000 }, settingsFindings: [],
+    state: 'ok', monorepo: false, settings: { max_words_per_file: 1000 }, settings_findings: [],
   });
 });
 
@@ -96,7 +96,7 @@ test('a valid settings override resolves to the override value with no findings'
   writeManifest(root, manifestOf([validBundle()], { settings: { max_words_per_file: 250 } }));
   const response = runWrapper(setupWrapper, inspectRequest(root), { cwd: root });
   assert.deepEqual(response.data.manifest, {
-    state: 'ok', monorepo: false, settings: { max_words_per_file: 250 }, settingsFindings: [],
+    state: 'ok', monorepo: false, settings: { max_words_per_file: 250 }, settings_findings: [],
   });
 });
 
@@ -106,7 +106,7 @@ test('an unknown setting key reports a finding, keeps the default effective, and
   const response = runWrapper(setupWrapper, inspectRequest(root), { cwd: root });
   assert.equal(response.data.manifest.state, 'ok');
   assert.deepEqual(response.data.manifest.settings, { max_words_per_file: 1000 });
-  assert.deepEqual(response.data.manifest.settingsFindings, [{
+  assert.deepEqual(response.data.manifest.settings_findings, [{
     code: 'SETTING_INVALID', origin: 'suite', severity: 'warning', blocks: false,
     detail: { gate: 'settings', reason: 'unknown_setting_key', key: 'max_words_per_words' },
   }]);
@@ -119,9 +119,46 @@ test('an invalid max_words_per_file value reports a finding, keeps the default e
     const response = runWrapper(setupWrapper, inspectRequest(root), { cwd: root });
     assert.equal(response.data.manifest.state, 'ok', JSON.stringify(value));
     assert.deepEqual(response.data.manifest.settings, { max_words_per_file: 1000 }, JSON.stringify(value));
-    assert.deepEqual(response.data.manifest.settingsFindings, [{
+    assert.deepEqual(response.data.manifest.settings_findings, [{
       code: 'SETTING_INVALID', origin: 'suite', severity: 'warning', blocks: false,
       detail: { gate: 'settings', reason: 'invalid_setting_value', key: 'max_words_per_file' },
     }], JSON.stringify(value));
   }
+});
+
+// The activation gate resolves the manifest by walking `cwd` upward to the Git
+// root (`manifest.select()`'s own `discover()`), so a manifest living in an
+// intermediate directory below the Git root still activates the bundle. Both
+// `inspect` and `migration-plan` read settings back out of that exact same
+// file -- never a hardcoded `<gitRoot>/.okf-workspace.json`, which does not
+// exist in this fixture at all, so a caller that still hardcoded it would see
+// `settings`/`settings_findings` silently missing from the response while
+// `data.activation.state` (and `data.plan`, for `migration-plan`) still
+// reported the bundle as active (fix round 2, Important 3).
+test('inspect and migration-plan read settings from a manifest below the Git root, agreeing with the walked-upward activation gate', (t) => {
+  const root = temporaryRoot(t, 'okf-197-nested-manifest-');
+  fs.mkdirSync(path.join(root, '.git'));
+  const pkgDir = path.join(root, 'pkg');
+  const cwd = path.join(pkgDir, 'nested');
+  fs.mkdirSync(cwd, { recursive: true });
+  // Deliberately no `.okf-workspace.json` at `root` -- only below it, one
+  // level above `cwd`, so the settings-resolving code path must actually walk
+  // upward rather than read `<gitRoot>/.okf-workspace.json` directly.
+  writeManifest(pkgDir, manifestOf([validBundle()], { settings: { max_words_per_file: 250 } }));
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
+
+  const inspectResponse = runWrapper(setupWrapper, {
+    protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'inspect', payload: { cwd },
+  }, { cwd });
+  assert.equal(inspectResponse.data.activation.state, 'ok');
+  assert.deepEqual(inspectResponse.data.manifest, {
+    state: 'ok', monorepo: false, settings: { max_words_per_file: 250 }, settings_findings: [],
+  });
+
+  const planResponse = runWrapper(setupWrapper, {
+    protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'migration-plan', payload: { cwd, sources: [] },
+  }, { cwd });
+  assert.equal(planResponse.result, 'ok');
+  assert.deepEqual(planResponse.data.settings, { max_words_per_file: 250 });
+  assert.deepEqual(planResponse.data.settings_findings, []);
 });
