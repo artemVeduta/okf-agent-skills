@@ -246,8 +246,8 @@ test('a degraded workspace is reported degraded, not masked by an unreadable roo
     workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
     repositories: [{ name: 'app', path: '.', local: true }],
     bundles: [
-      { alias: 'root', owner: 'app', root: '.', required: false, mode: 'source' },
-      { alias: 'b', owner: 'app', root: 'b', required: true, mode: 'source' },
+      { alias: 'root', owner: 'app', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' },
+      { alias: 'b', owner: 'app', root: 'b', okf_version: '0.2', project_mode: 'knowledge-only' },
     ],
   }));
   const before = snapshot(root);

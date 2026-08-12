@@ -83,7 +83,7 @@ test('enumerate discovers each required link carrier', (t) => {
     schema_version: 1,
     workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
     repositories: [{ name: 'app', path: '.', local: true }],
-    bundles: [{ alias: 'main', owner: 'app', root: '.', required: true, mode: 'source' }],
+    bundles: [{ alias: 'main', owner: 'app', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' }],
   }));
   fs.writeFileSync(path.join(root, 'target.md'), '---\ntype: Note\n---\n# Target\n');
   const source = `---
@@ -251,8 +251,8 @@ test('enumerate diagnoses missing and inactive workspace aliases without suppres
     workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
     repositories: [{ name: 'app', path: '.', local: true }],
     bundles: [
-      { alias: 'main', owner: 'app', root: '.', required: true, mode: 'source' },
-      { alias: 'inactive', owner: 'app', root: 'absent', required: false, mode: 'source' },
+      { alias: 'main', owner: 'app', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' },
+      { alias: 'inactive', owner: 'app', root: 'absent', okf_version: '0.2', project_mode: 'knowledge-only' },
     ],
   }));
   fs.writeFileSync(path.join(root, 'source.md'), '---\ntype: Note\n---\n[missing](okf-workspace://missing/note)\n[inactive](okf-workspace://inactive/note)\n');

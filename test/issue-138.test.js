@@ -40,7 +40,7 @@ function validManifest(workspaceId) {
     schema_version: 1,
     workspace_id: workspaceId,
     repositories: [{ name: 'repo', path: '.', local: true }],
-    bundles: [{ alias: 'okf', owner: 'repo', root: 'okf', required: true, mode: 'source' }],
+    bundles: [{ alias: 'okf', owner: 'repo', root: 'okf', okf_version: '0.2', project_mode: 'knowledge-only' }],
   };
 }
 
@@ -127,7 +127,9 @@ test('inspect reports .okf-workspace.json as missing, invalid, and ok', (t) => {
 
   const workspaceId = '11111111-1111-4111-8111-111111111111';
   fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify(validManifest(workspaceId)));
-  assert.deepEqual(run(inspectRequest(root)).data.manifest, { state: 'ok', monorepo: false });
+  assert.deepEqual(run(inspectRequest(root)).data.manifest, {
+    state: 'ok', monorepo: false, settings: { max_words_per_file: 1000 }, settingsFindings: [],
+  });
 });
 
 test('inspect salvages a well-formed workspace_id from an otherwise invalid manifest, and reports none when there is nothing to salvage', (t) => {
@@ -158,7 +160,7 @@ test('inspect warns of a monorepo from .gitmodules when the manifest is missing,
     schema_version: 1,
     workspace_id: '33333333-3333-4333-8333-333333333333',
     repositories: [{ name: 'a', path: 'a', local: true }, { name: 'b', path: 'b', local: true }],
-    bundles: [{ alias: 'a', owner: 'a', root: 'a', required: true, mode: 'source' }],
+    bundles: [{ alias: 'a', owner: 'a', root: 'a', okf_version: '0.2', project_mode: 'knowledge-only' }],
   }));
   const report = run(inspectRequest(root)).data.manifest;
   assert.equal(report.state, 'ok', 'the manifest itself is well-formed; only the hint is asserted here');
@@ -182,7 +184,8 @@ test('repair generates a validated single-bundle manifest template when missing'
   assert.equal(written.bundles.length, 1);
   assert.equal(written.bundles[0].alias, 'okf');
   assert.equal(written.bundles[0].root, 'okf');
-  assert.equal(written.bundles[0].mode, 'source');
+  assert.equal(written.bundles[0].okf_version, '0.2');
+  assert.equal(written.bundles[0].project_mode, null);
   assert.equal(written.bundles[0].owner, written.repositories[0].name);
 });
 
@@ -211,7 +214,9 @@ test('repair regenerates an invalid manifest only once the caller supplies the s
   assert.equal(response.data.manifest.workspace_id, workspaceId);
   const written = JSON.parse(fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8'));
   assert.equal(written.workspace_id, workspaceId);
-  assert.deepEqual(run(inspectRequest(root)).data.manifest, { state: 'ok', monorepo: false });
+  assert.deepEqual(run(inspectRequest(root)).data.manifest, {
+    state: 'ok', monorepo: false, settings: { max_words_per_file: 1000 }, settingsFindings: [],
+  });
 });
 
 test('repair leaves an already-ok manifest untouched and ignores a redundant payload', (t) => {
@@ -235,8 +240,8 @@ test('repair accepts a hand-authored manifest for a monorepo, validated the same
       { name: 'lib', path: 'lib', local: true },
     ],
     bundles: [
-      { alias: 'app', owner: 'app', root: 'app/okf', required: true, mode: 'source' },
-      { alias: 'lib', owner: 'lib', root: 'lib/okf', required: false, mode: 'source' },
+      { alias: 'app', owner: 'app', root: 'app/okf', okf_version: '0.2', project_mode: 'knowledge-only' },
+      { alias: 'lib', owner: 'lib', root: 'lib/okf', okf_version: '0.2', project_mode: 'knowledge-only' },
     ],
   };
   const response = run(repairRequest(root, ['manifest'], { manifest: custom }));

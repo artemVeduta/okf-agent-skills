@@ -334,8 +334,8 @@ test('broad search returns relevant concepts from every admitted bundle without 
   const firstConcept = writeConcept(first, 'same.md', 'type: Note', '# federated-body-query-50 from first\n');
   const secondConcept = writeConcept(second, 'same.md', 'type: Note', '# federated-body-query-50 from second\n');
   manifest(root, [
-    { alias: 'first', owner: 'app', root: 'first', required: true, mode: 'source' },
-    { alias: 'second', owner: 'app', root: 'second', required: true, mode: 'source' },
+    { alias: 'first', owner: 'app', root: 'first', okf_version: '0.2', project_mode: 'knowledge-only' },
+    { alias: 'second', owner: 'app', root: 'second', okf_version: '0.2', project_mode: 'knowledge-only' },
   ]);
 
   const response = runRuntime(request(root, 'search', 'federated-body-query-50', { candidates: [] }), {
@@ -441,27 +441,34 @@ test('search without observed status is degraded and discloses the unevaluated a
   assert.equal(readRecord(response, 'unknown-status.md').content, concept.content);
 });
 
-test('optional inactive bundles do not degrade an active read', (t) => {
+test('a missing declared bundle degrades coverage but does not block an active read', (t) => {
   const root = repository(t);
   const live = bundle(root, 'live');
   const concept = writeConcept(live, 'note.md', 'type: Note', '# partial-admission-50\n');
   manifest(root, [
-    { alias: 'live', owner: 'app', root: 'live', required: false, mode: 'source' },
-    { alias: 'missing', owner: 'app', root: 'missing', required: false, mode: 'source' },
+    { alias: 'live', owner: 'app', root: 'live', okf_version: '0.2', project_mode: 'knowledge-only' },
+    { alias: 'missing', owner: 'app', root: 'missing', okf_version: '0.2', project_mode: 'knowledge-only' },
   ]);
 
   const response = runRuntime(request(root, 'read', 'note', { candidates: [] }));
   assertNavigation(response);
-  assert.equal(response.result, 'ok');
-  assert.equal(response.data.coverage, 'complete');
+  // Every declared bundle is required now (#197): the missing sibling degrades
+  // the overall result and coverage, but the runtime still serves the read the
+  // active bundle can answer.
+  assert.equal(response.result, 'degraded');
+  assert.equal(response.data.coverage, 'non-exhaustive');
   assert.equal(readRecord(response, 'note.md').content, concept.content);
-  assert.equal(response.findings.some((item) => item.code === 'unreadable'), false);
+  // The missing bundle is required now (#197), so admission is only partial:
+  // navigation reports one summary `unreadable`/`admission_incomplete` finding,
+  // without blocking the read the still-active `live` bundle can answer. The
+  // per-candidate PRESENCE finding stays on the redacted candidate, not here.
+  assert.equal(response.findings.some((item) => item.code === 'unreadable'), true);
   assert.equal(response.findings.some((item) => item.code === 'BUNDLE_MISSING'), false);
 });
 
 test('navigation is unavailable with no active admitted bundle and exposes only fixed findings', (t) => {
   const root = repository(t);
-  manifest(root, [{ alias: 'missing', owner: 'app', root: 'missing', required: true, mode: 'source' }]);
+  manifest(root, [{ alias: 'missing', owner: 'app', root: 'missing', okf_version: '0.2', project_mode: 'knowledge-only' }]);
 
   const response = runRuntime(request(root, 'read', 'missing', { candidates: [] }));
   assertNavigation(response);

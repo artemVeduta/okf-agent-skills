@@ -330,8 +330,8 @@ test('aggregate reports "complete" and a valid multi-package manifest when every
   assert.deepEqual(
     manifest.bundles.sort((a, b) => (a.alias < b.alias ? -1 : 1)),
     [
-      { alias: 'bar', owner: path.basename(root), root: 'packages/bar/okf', required: true, mode: 'source' },
-      { alias: 'foo', owner: path.basename(root), root: 'packages/foo/okf', required: true, mode: 'source' },
+      { alias: 'bar', owner: path.basename(root), root: 'packages/bar/okf', okf_version: '0.2', project_mode: null },
+      { alias: 'foo', owner: path.basename(root), root: 'packages/foo/okf', okf_version: '0.2', project_mode: null },
     ],
   );
 

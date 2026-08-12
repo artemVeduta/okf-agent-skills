@@ -267,7 +267,7 @@ test('validate does not expose bundle_root for an unnamed manifest candidate', (
     schema_version: 1,
     workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
     repositories: [{ name: 'app', path: '.', local: true }],
-    bundles: [{ alias: 'docs', owner: 'app', root: 'docs', required: false, mode: 'source' }],
+    bundles: [{ alias: 'docs', owner: 'app', root: 'docs', okf_version: '0.2', project_mode: 'knowledge-only' }],
   }));
 
   const result = validateUnchanged(root, null);

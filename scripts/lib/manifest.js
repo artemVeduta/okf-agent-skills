@@ -11,11 +11,44 @@ const path = require('node:path');
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const repositoryKeys = new Set(['name', 'path', 'remote', 'aliases', 'local', 'revision']);
-const bundleKeys = new Set(['alias', 'owner', 'root', 'required', 'mode']);
-const rootKeys = new Set(['schema_version', 'workspace_id', 'repositories', 'bundles']);
+const bundleKeys = new Set(['alias', 'owner', 'root', 'okf_version', 'project_mode']);
+const rootKeys = new Set(['schema_version', 'workspace_id', 'repositories', 'bundles', 'settings']);
+
+// The suite's current per-bundle format target (#197). `manifest.template()` stamps
+// every bundle it generates with this constant, the same value `partition.js` and
+// `monorepo.js` already hardcode for the worker-brief `okf_version` field.
+const OKF_VERSION = '0.2';
+
+// #200: one built-in default per setting, one optional `.okf-workspace.json`
+// override, no other precedence layer.
+const DEFAULT_SETTINGS = { max_words_per_file: 1000 };
+const settingKeys = new Set(Object.keys(DEFAULT_SETTINGS));
 
 function invalid(reason) {
   return { code: 'INVALID', origin: 'suite', severity: 'error', blocks: true, detail: { gate: 'data validity', reason } };
+}
+
+function settingFinding(reason, key) {
+  return { code: 'SETTING_INVALID', origin: 'suite', severity: 'warning', blocks: false, detail: { gate: 'settings', reason, key } };
+}
+
+// Resolves `raw.settings` (already known to be an object or absent -- `validate()`
+// rejects any other shape as `invalid_field_combination` before this runs) against
+// the built-in defaults. An unknown key or an out-of-range value never blocks: it
+// reports one finding and the built-in default stays effective for that key (#200).
+function resolveSettings(settings) {
+  const effective = { ...DEFAULT_SETTINGS };
+  const findings = [];
+  if (!settings) return { effective, findings };
+  for (const key of Object.keys(settings)) {
+    if (!settingKeys.has(key)) findings.push(settingFinding('unknown_setting_key', key));
+  }
+  if (Object.hasOwn(settings, 'max_words_per_file')) {
+    const value = settings.max_words_per_file;
+    if (Number.isInteger(value) && value > 0) effective.max_words_per_file = value;
+    else findings.push(settingFinding('invalid_setting_value', 'max_words_per_file'));
+  }
+  return { effective, findings };
 }
 
 // null when the value is a usable relative path, otherwise the reason it is not.
@@ -36,6 +69,7 @@ function validate(raw) {
   if (raw.schema_version !== 1) return invalid('unsupported_schema_version');
   if (typeof raw.workspace_id !== 'string' || !uuid.test(raw.workspace_id)) return invalid('invalid_field_combination');
   if (!Array.isArray(raw.repositories) || !Array.isArray(raw.bundles)) return invalid('invalid_field_combination');
+  if (raw.settings !== undefined && (!raw.settings || typeof raw.settings !== 'object' || Array.isArray(raw.settings))) return invalid('invalid_field_combination');
 
   const names = new Set();
   const paths = new Set();
@@ -59,7 +93,13 @@ function validate(raw) {
     if (typeof bundle.alias !== 'string' || bundle.alias === '' || aliases.has(bundle.alias)) return invalid('duplicate_bundle_alias');
     const rootReason = relativePathReason(bundle.root);
     if (rootReason) return invalid(rootReason);
-    if (typeof bundle.required !== 'boolean' || !['source', 'generated', 'vendored'].includes(bundle.mode)) return invalid('invalid_field_combination');
+    // Structural presence only: `okf_version`/`project_mode` are the format and
+    // authority-model target, not an admission decision. The manifest grants no
+    // trust or write authority (#196), so an unsupported value here is not rejected
+    // -- the runtime's existing read tolerance for an unsupported format or project
+    // mode, and the write gate that requires a recognized one, both stay untouched.
+    if (typeof bundle.okf_version !== 'string' || bundle.okf_version === '') return invalid('invalid_field_combination');
+    if (bundle.project_mode !== null && (typeof bundle.project_mode !== 'string' || bundle.project_mode === '')) return invalid('invalid_field_combination');
     if (bundle.owner !== null && (typeof bundle.owner !== 'string' || !names.has(bundle.owner))) return invalid('invalid_field_combination');
     aliases.add(bundle.alias);
   }
@@ -107,6 +147,10 @@ function monorepoSignal(gitRoot, raw, services) {
 // `workspace_id` is surfaced as `salvage` when it is at least a well-formed UUIDv4,
 // so a regenerated manifest can keep workspace identity instead of minting a new one
 // — `/setup`'s procedure decides whether to use it, this function only reports it.
+// An `ok` manifest also carries the resolved `settings` (#200): the effective value
+// for every supported setting, and one finding per unknown key or invalid override.
+// This reports the resolution; using the effective value to change setup or
+// proposal-first behavior is exposure, left to the task that owns it.
 function inspect(file, gitRoot, services) {
   if (!services.exists(file)) {
     return { state: 'missing', monorepo: services.exists(path.join(gitRoot, '.gitmodules')) };
@@ -124,7 +168,8 @@ function inspect(file, gitRoot, services) {
       typeof raw.workspace_id === 'string' && uuid.test(raw.workspace_id) ? { workspace_id: raw.workspace_id } : null;
     return { state: 'invalid', reason: finding.detail.reason, salvage, monorepo };
   }
-  return { state: 'ok', monorepo };
+  const resolved = resolveSettings(raw.settings);
+  return { state: 'ok', monorepo, settings: resolved.effective, settingsFindings: resolved.findings };
 }
 
 // The single-bundle template named by #133's resolution: one repository — the
@@ -137,17 +182,21 @@ function inspect(file, gitRoot, services) {
 // repository (a submodule, `separateRepo: true`) gets its own repository entry
 // and owns its bundle directly; a package sharing the workspace repository is
 // owned by the root repository at its package-relative bundle path. Every bundle
-// is `required: true` and `mode: "source"` — the workspace declares every
-// detected package as an intended bundle, so a package whose worker did not yet
-// produce one is `degraded`, not silently absent, through the same federation
-// health check every other required-but-inactive bundle already gets.
+// is required and `source` by construction now (#197: those fields are gone from
+// the grammar). `project_mode` is `null` here -- no caller of this template has a
+// per-bundle authority model to supply yet, and inventing one is not this
+// generator's call; the task that threads a real decision through owns that
+// change. The workspace still declares every detected package as an intended
+// bundle, so a package whose worker did not yet produce one is `degraded`, not
+// silently absent, through the same federation health check every other
+// required-but-inactive bundle already gets.
 function template({ repoName, bundleAlias, workspaceId, packages, bundleName }) {
   if (!packages) {
     return {
       schema_version: 1,
       workspace_id: workspaceId,
       repositories: [{ name: repoName, path: '.', local: true }],
-      bundles: [{ alias: bundleAlias, owner: repoName, root: bundleAlias, required: true, mode: 'source' }],
+      bundles: [{ alias: bundleAlias, owner: repoName, root: bundleAlias, okf_version: OKF_VERSION, project_mode: null }],
     };
   }
   const directory = bundleName || 'okf';
@@ -160,9 +209,9 @@ function template({ repoName, bundleAlias, workspaceId, packages, bundleName }) 
         repositories.push({ name: pkg.alias, path: pkg.path, local: true });
         seenRepositories.add(pkg.alias);
       }
-      bundles.push({ alias: pkg.alias, owner: pkg.alias, root: directory, required: true, mode: 'source' });
+      bundles.push({ alias: pkg.alias, owner: pkg.alias, root: directory, okf_version: OKF_VERSION, project_mode: null });
     } else {
-      bundles.push({ alias: pkg.alias, owner: repoName, root: `${pkg.path}/${directory}`, required: true, mode: 'source' });
+      bundles.push({ alias: pkg.alias, owner: repoName, root: `${pkg.path}/${directory}`, okf_version: OKF_VERSION, project_mode: null });
     }
   }
   return { schema_version: 1, workspace_id: workspaceId, repositories, bundles };
