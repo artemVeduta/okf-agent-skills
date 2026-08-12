@@ -14,7 +14,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { binding, runWrapper, temporaryRoot } = require('../test-support/snapshot');
+const { acceptedMigration, binding, runWrapper, temporaryRoot } = require('../test-support/snapshot');
 
 const writeWrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
 const setupWrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
@@ -258,31 +258,37 @@ function migrationRepo(t) {
   return root;
 }
 
-function stagedRef(root, concept, sources) {
-  const file = path.join(root, '.okf-staging', 'okf', `${concept}.md`);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, '---\ntype: Decision\n---\n# A\n\nBody text.\n');
-  return { path: 'docs/a.md', concept, type: 'Decision', shard: 'x', file: path.relative(root, file), sources };
+// #180: `publish` runs the proposal-conformance gate before its first write, so a
+// fixture states the whole accepted migration and not just its staged refs. The
+// staged bytes are written here; every binding in the payload is recomputed from
+// what is actually on disk by `acceptedMigration`.
+function stagedMigration(root, concepts) {
+  for (const concept of concepts) {
+    const file = path.join(root, '.okf-staging', 'okf', `${concept}.md`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '---\ntype: Decision\nstatus: draft\n---\n# A\n\nBody text.\n');
+  }
+  return acceptedMigration(root, concepts.map((concept) => ({ source: 'docs/a.md', concept, type: 'Decision' })));
 }
 
-function publish(root, staged) {
+function publish(root, migrated) {
   return runWrapper(setupWrapper, {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'publish',
-    payload: { cwd: root, task_kind: 'feature work', staged },
+    payload: { cwd: root, task_kind: 'feature work', ...migrated },
   });
 }
 
 test('publish binds each concept to its actual source file, and one source serves a split', (t) => {
   const root = migrationRepo(t);
+  const migrated = stagedMigration(root, ['decisions/a', 'decisions/b']);
   const source = binding(root, path.join('docs', 'a.md'));
-  const staged = [
-    stagedRef(root, 'decisions/a', [source]),
-    stagedRef(root, 'decisions/b', [source]),
-  ];
 
-  const response = publish(root, staged);
+  // One source, hashed once, carried into both concepts' write briefs.
+  assert.deepEqual(migrated.staged.map((item) => item.sources), [[source], [source]]);
+
+  const response = publish(root, migrated);
 
   assert.equal(response.data.status, 'complete');
   assert.deepEqual(response.data.published, ['decisions/a', 'decisions/b']);
@@ -290,14 +296,24 @@ test('publish binds each concept to its actual source file, and one source serve
   assert.equal(fs.existsSync(path.join(root, 'okf', 'decisions', 'b.md')), true);
 });
 
-test('publish carries the real binding to the write gate: a stale source identity blocks the concept', (t) => {
+// #180 moved where this is caught, not whether it is: a staged ref whose recorded
+// binding no longer matches the source's current bytes is now refused by the
+// conformance gate, before the write gate is ever reached and before any file is
+// written. The write gate's own `EVIDENCE_CHANGED` refusal is unchanged and is
+// asserted directly above ("bytes that no longer hash to the accepted identity").
+test('publish never reaches the write gate with a stale source binding: the conformance gate refuses it first', (t) => {
   const root = migrationRepo(t);
-  const staged = [stagedRef(root, 'decisions/a', [{ path: 'docs/a.md', sha256: DIGEST }])];
+  const migrated = stagedMigration(root, ['decisions/a']);
+  migrated.staged[0].sources = [{ path: 'docs/a.md', sha256: DIGEST }];
 
-  const response = publish(root, staged);
+  const response = publish(root, migrated);
 
-  assert.equal(response.data.status, 'partial');
-  assert.deepEqual(response.data.published, []);
-  assert.ok(response.findings.some((finding) => finding.code === 'EVIDENCE_CHANGED'), JSON.stringify(response.findings));
+  assert.equal(response.result, 'blocked');
+  assert.equal(response.data.code, 'PROPOSAL_CONFORMANCE_FAILED');
+  const finding = response.findings.find((item) => item.code === 'SOURCE_BINDING_MISMATCH');
+  assert.ok(finding, JSON.stringify(response.findings));
+  assert.equal(finding.blocks, true);
+  assert.equal(finding.detail.concept, 'decisions/a');
+  assert.deepEqual(finding.detail.recorded, [{ path: 'docs/a.md', sha256: DIGEST }]);
   assert.equal(fs.existsSync(path.join(root, 'okf', 'decisions', 'a.md')), false);
 });

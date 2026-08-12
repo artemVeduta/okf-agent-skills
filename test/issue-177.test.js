@@ -174,9 +174,23 @@ test('a residue source reaches no worker brief, no staged file, and is left byte
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'migration-validate',
-    payload: { cwd: root, selected: sources.map((item) => item.path), plan: accepted.plan, semantic_review: { performed: false } },
+    // #180: the accepted proposal itself, never the plan it was derived from, and
+    // the staged set `assemble` actually produced. No semantic review was performed
+    // here, so the caller has no verdicts to carry either.
+    payload: {
+      cwd: root,
+      selected: sources.map((item) => item.path),
+      proposal: accepted.proposal,
+      navigation: accepted.navigation,
+      staged: assembled.data.staged,
+      review: { outputs: [], sources: [] },
+      semantic_review: { performed: false },
+    },
   });
   assert.equal(validated.result, 'ok', JSON.stringify(validated.findings));
+  // The residue source is named in the accepted source table and reaches the gate as
+  // a settled disposition, never as an unresolved one.
+  assert.equal(validated.findings.some((item) => item.code === 'SOURCE_DISPOSITION_UNRESOLVED'), false);
 
   // No copy exists anywhere: not in staging, not in the bundle. The original file
   // is still exactly where it was, with exactly the bytes it had.

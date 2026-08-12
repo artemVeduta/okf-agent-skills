@@ -6,6 +6,11 @@ const childProcess = require('node:child_process');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
+// #180: a fixture's group index body and staged body digest are derived through the
+// runtime's own renderer and parser, never a second copy of either (see
+// `acceptedMigration` below). Neither module has a load-time effect.
+const { parseFrontmatter } = require('../scripts/lib/validation');
+const { renderIndex } = require('../scripts/lib/proposal');
 
 const repo = path.resolve(__dirname, '..');
 const RESPONSE_KEYS = ['protocol', 'skill', 'operation', 'result', 'scope', 'evidence_limits', 'data', 'findings', 'next_action'];
@@ -116,6 +121,127 @@ function runSilent(wrapper, value, options) {
   assert.equal(result.stdout, '');
 }
 
+/*
+ * #180: every semantic verdict the conformance gate demands of a caller, each one
+ * bound to the artifact it was formed against -- the staged body's digest, the
+ * accepted content scope, and the migrating source's current bytes. A fixture never
+ * types a digest: a verdict here is `pass` and current by construction, so a test
+ * asserting something else fails on the thing it is about rather than on a binding
+ * that quietly went stale. `proposal` is the accepted proposal (`propose`'s own
+ * `data.proposal`, or `acceptedMigration`'s below), `staged` the staged refs.
+ */
+function passingReview(root, proposal, staged) {
+  const files = new Map(staged.map((item) => [item.concept, item.file]));
+  const observed = new Map(proposal.sources
+    .filter((item) => item.disposition === 'migrate')
+    .map((item) => [item.path, binding(root, item.path)]));
+  return {
+    outputs: proposal.outputs.filter((output) => output.origin === 'migration').map((output) => ({
+      concept: output.concept,
+      verdict: 'pass',
+      body_sha256: crypto.createHash('sha256')
+        .update(Buffer.from(parseFrontmatter(fs.readFileSync(path.join(root, files.get(output.concept)), 'utf8')).body, 'utf8'))
+        .digest('hex'),
+      content_scope: output.content_scope,
+      sources: [observed.get(output.source)],
+    })),
+    sources: [...observed].map(([item, bound]) => ({ source: item, verdict: 'pass', sha256: bound.sha256 })),
+  };
+}
+
+/*
+ * #180: the accepted-migration payload `migration-validate` and `publish` are now
+ * both refused without -- the accepted proposal (`{sources, outputs, groups}`), the
+ * navigation it bound, the staged set under test, and the caller's semantic review.
+ *
+ * A fixture states only what it accepted and what it staged. Every digest here is
+ * recomputed from the file the fixture actually wrote, never typed out, so a test
+ * that changes a fixture's bytes cannot leave a stale binding behind and silently
+ * start asserting a conformance failure instead of the thing it is about. Group
+ * index bodies come from `propose`'s own `renderIndex`, never a second renderer,
+ * for the same reason the gate itself re-derives them through it.
+ *
+ * `rows` are `{source, concept, type, content_scope?, provenance?, links?}`, one per
+ * accepted migration output. `options.skipped` carries `{path, reason}` rows for
+ * sources deliberately not migrated, `options.purposes` the accepted reader purpose
+ * per group, and `options.navigation` extra navigation rows the proposal bound
+ * beyond the group indexes.
+ */
+function acceptedMigration(root, rows, options = {}) {
+  const bundleName = options.bundle || 'okf';
+  const purposes = options.purposes || {};
+
+  const outputs = rows.map((row, index) => {
+    const cut = row.concept.lastIndexOf('/');
+    return {
+      id: `o${index + 1}`,
+      origin: 'migration',
+      source: row.source,
+      concept: row.concept,
+      type: row.type,
+      group: cut < 0 ? '' : row.concept.slice(0, cut),
+      name: row.concept.slice(cut + 1),
+      target_path: `${row.concept}.md`,
+      content_scope: row.content_scope || 'whole_document',
+      source_anchors: [],
+      provenance: row.provenance === undefined ? null : row.provenance,
+      provenance_assignment: row.provenance === undefined ? 'none' : 'inherited',
+      evidence: [],
+      links: row.links || [],
+    };
+  });
+
+  const sources = [
+    ...[...new Set(rows.map((row) => row.source))].map((item) => ({
+      path: item,
+      disposition: 'migrate',
+      reason: 'type_preserved',
+      outputs: outputs.filter((output) => output.source === item).map((output) => output.id),
+    })),
+    ...(options.skipped || []).map((item) => ({
+      path: item.path, disposition: 'skip', reason: item.reason, outputs: [],
+    })),
+  ];
+
+  const groups = [...new Set(outputs.map((output) => output.group).filter((group) => group !== ''))]
+    .sort()
+    .map((group) => ({
+      group,
+      purpose: purposes[group] === undefined ? `Everything about ${group}.` : purposes[group],
+      children: outputs
+        .filter((output) => output.group === group)
+        .map((output) => ({ label: output.name, href: `${output.name}.md`, kind: 'concept' }))
+        .sort((a, b) => (a.href < b.href ? -1 : a.href > b.href ? 1 : 0)),
+      index_path: `${group}/index.md`,
+    }));
+
+  const staged = outputs.map((output) => ({
+    path: output.source,
+    concept: output.concept,
+    type: output.type,
+    shard: 'x',
+    file: path.join('.okf-staging', bundleName, `${output.concept}.md`),
+    sources: [binding(root, output.source)],
+  }));
+
+  return {
+    proposal: { sources, outputs, groups },
+    review: passingReview(root, { sources, outputs }, staged),
+    navigation: [
+      ...groups.map((group) => ({
+        path: group.index_path,
+        body: renderIndex(group.group, group.purpose, group.children),
+      })),
+      ...(options.navigation || []),
+    ],
+    staged,
+  };
+}
+
+// The payload shape the conformance gate refuses nothing on and finds nothing in:
+// no accepted output, nothing staged, no navigation, no verdict owed.
+const NO_MIGRATION = { proposal: { sources: [], outputs: [], groups: [] }, navigation: [], staged: [], review: { outputs: [], sources: [] } };
+
 const manifests = {
   'claude-code': path.join(repo, 'manifest.json'),
   codex: path.join(repo, 'packages', 'codex', 'manifest.json'),
@@ -127,12 +253,15 @@ function adapterManifest(harness) {
 }
 
 module.exports = {
+  NO_MIGRATION,
   REQUIRED_BRIEF_FIELDS,
   RESPONSE_KEYS,
+  acceptedMigration,
   adapterManifest,
   assertEnvelope,
   binding,
   bundle,
+  passingReview,
   repository,
   runSilent,
   runWrapper,

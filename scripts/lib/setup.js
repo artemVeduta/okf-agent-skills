@@ -12,6 +12,7 @@ const monorepo = require('./monorepo');
 const discovery = require('./discovery');
 const migration = require('./migration');
 const proposal = require('./proposal');
+const conformance = require('./conformance');
 const partition = require('./partition');
 const assembly = require('./assembly');
 const lifecycle = require('./lifecycle');
@@ -1143,19 +1144,24 @@ function executeAssemble(request, services) {
  *   - completeness: never a file-count comparison (#131: raw parity is not a
  *     success measure, most visibly for `code-backed` filtering, where
  *     code-recoverable material is deliberately never migrated). Instead,
- *     `payload.plan` is exactly `migration-plan`'s own `data.plan` shape,
- *     reused as-is via this same file's own `validPartitionPlan` (`partition`
- *     already demands the identical shape for the identical reason: every
- *     entry already carries its own intentional disposition and a non-empty
- *     reason, or the whole payload is refused before anything is computed).
- *     What that reuse cannot see on its own is a source that fell off the
- *     plan entirely -- an entry simply never recorded for it -- so
- *     `payload.selected` (the full set `discover` actually found this run)
- *     is cross-checked against `plan.entries`' own paths independently; a
- *     `skip`-disposition entry with a real reason (a `code-backed` filter,
- *     for example) satisfies completeness exactly as intentionally as a
- *     `migrate` one, while a `selected` path with no entry at all is the one
- *     thing this leg refuses to let pass unnoticed.
+ *     `payload.proposal.sources` -- the accepted proposal's own authoritative
+ *     source table (#156), every row carrying the disposition its user
+ *     accepted -- is cross-checked against `payload.selected` (the full set
+ *     `discover` actually found this run); a `skip`-disposition row with a
+ *     real reason (a `code-backed` filter, for example) satisfies
+ *     completeness exactly as intentionally as a `migrate` one, while a
+ *     `selected` path with no row at all is the one thing this leg refuses
+ *     to let pass unnoticed. #180 removed `payload.plan` from this operation
+ *     entirely: the plan is `propose`'s own upstream, and accepting both here
+ *     would have given the gate two authorities to disagree about which
+ *     disposition a source actually carries.
+ *   - conformance: #180's gate, `conformance.check` over
+ *     `conformance.buildInput`, comparing what was actually staged against
+ *     the proposal that was actually accepted -- the leg `validateRead`
+ *     structurally cannot supply, because it only ever asks whether staging
+ *     is *a* bundle, never whether it is *this* one. `publish` reruns the
+ *     identical gate itself before its first write; running it here is a
+ *     report, never a receipt the later run may skip.
  *   - semantic fidelity: `payload.semantic_review` is `report`'s own shape
  *     and is mandatory here for the same reason it is mandatory there --
  *     never inferred true from a clean structural pass. This is deliberately
@@ -1184,24 +1190,73 @@ function validSelectedPath(item) {
   return typeof item === 'string' && item !== '';
 }
 
+/*
+ * #180: the one payload shape the conformance gate runs on, and the one refusal
+ * both its callers make against it.
+ *
+ * `migration-validate` and `publish` run the *identical* gate -- the second one
+ * cannot be allowed to trust that the first one ran, because nothing on this path
+ * carries a receipt, a token or a checkpoint (#131: git owns recovery). Two
+ * callers running the same check is only worth anything if they are also refused
+ * on the same shape, so the guard and the call are each written once here and
+ * used twice below rather than copied into either operation. A payload either
+ * carries the accepted proposal, the navigation it bound, the staged set under
+ * test and the caller's semantic review, or it is refused before anything is
+ * read -- the gate has no defaults to fall back on, because every default would
+ * be an invented value for a row the accepted proposal already answered.
+ */
+function validAcceptedProposal(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) &&
+    Array.isArray(value.sources) && Array.isArray(value.outputs) && Array.isArray(value.groups);
+}
+
+// Read-only here and nowhere derived from: `payload.review` is the caller's own
+// semantic verdicts, which the gate holds to the artifacts they name and never
+// reads as evidence of semantic truth. It is a separate field from
+// `payload.semantic_review`, which alone drives the `semantic_fidelity`
+// disclosure below, and neither is ever computed from the other.
+function validConformanceReview(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) &&
+    Array.isArray(value.outputs) && Array.isArray(value.sources);
+}
+
+function validConformanceInput(payload) {
+  return validAcceptedProposal(payload.proposal) &&
+    Array.isArray(payload.navigation) && payload.navigation.every(validPublishNavigation) &&
+    Array.isArray(payload.staged) && payload.staged.every(validPublishStagedRef) &&
+    validConformanceReview(payload.review);
+}
+
+function conformanceFindings(payload, gitRoot, stagingRoot, services) {
+  return conformance.check(conformance.buildInput({
+    proposal: payload.proposal,
+    navigation: payload.navigation,
+    staged: payload.staged,
+    review: payload.review,
+    gitRoot,
+    stagingRoot,
+    services,
+  })).findings;
+}
+
 function executeMigrationValidate(request, services) {
   const payload = request.payload;
   const context = setupContext(request, services);
   if (context.refusal) return context.refusal;
   const { gitRoot, bundleName } = context;
 
-  const selected =payload.selected === undefined ? [] : payload.selected;
+  const selected = payload.selected === undefined ? [] : payload.selected;
   if (!Array.isArray(selected) || !selected.every(validSelectedPath)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (!validPartitionPlan(payload.plan)) {
+  if (!validConformanceInput(payload)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
   if (!validSemanticReview(payload.semantic_review)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
 
-  const disposed = new Set(payload.plan.entries.map((item) => item.path));
+  const disposed = new Set(payload.proposal.sources.map((item) => item.path));
   const missingDisposition = [...new Set(selected.filter((item) => !disposed.has(item)))].sort();
   const findings = missingDisposition.map((item) => suiteFinding('SOURCE_DISPOSITION_MISSING', { path: item }));
 
@@ -1216,6 +1271,9 @@ function executeMigrationValidate(request, services) {
     : { data: { concepts: [] }, findings: [] };
   findings.push(...structural.findings);
 
+  const conformanceResult = conformanceFindings(payload, gitRoot, stagingRoot, services);
+  findings.push(...conformanceResult);
+
   const assessed = payload.semantic_review.performed === true;
   if (!assessed) findings.push(reportFinding('semantic_fidelity_not_assessed', 'warning', { scope: 'bundle' }));
 
@@ -1225,6 +1283,9 @@ function executeMigrationValidate(request, services) {
     publishable,
     missing_disposition: missingDisposition,
     concepts_checked: structural.data.concepts.map((item) => item.path),
+    // Not a receipt and not an approval: a count of what this run found, in a
+    // response `publish` never reads. `publish` runs the gate itself.
+    conformance: { checked: true, findings: conformanceResult.length },
     semantic_fidelity: { assessed },
   }, findings);
 }
@@ -1391,16 +1452,17 @@ function executePublish(request, services) {
   if (!lifecycle.isWritableTaskKind(payload.task_kind)) {
     return respond(request, 'blocked', { code: 'TASK_KIND_NOT_WRITE_ELIGIBLE' }, []);
   }
-  if (!Array.isArray(payload.staged) || payload.staged.length === 0 || !payload.staged.every(validPublishStagedRef)) {
+  // #180: the one shape both gate callers refuse on, so neither can accept a
+  // payload the other would have turned away.
+  if (!validConformanceInput(payload)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (new Set(payload.staged.map((item) => item.concept)).size !== payload.staged.length) {
+  // Two rules `publish` alone adds: an empty staged set has nothing to publish, and
+  // a set naming one concept twice would dispatch two `create` briefs at one target.
+  if (payload.staged.length === 0 || new Set(payload.staged.map((item) => item.concept)).size !== payload.staged.length) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  const navigation = payload.navigation === undefined ? [] : payload.navigation;
-  if (!Array.isArray(navigation) || !navigation.every(validPublishNavigation)) {
-    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
-  }
+  const navigation = payload.navigation;
 
   const cwd = payload.cwd;
   const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
@@ -1408,6 +1470,23 @@ function executePublish(request, services) {
   const precheck = dispatchBrief(publishPrecheckBrief(cwd, bundleName, payload.task_kind)) || dispatchFailure('okf-reader');
   if (precheck.status !== 'ok') {
     return respond(request, 'blocked', { code: 'PUBLISH_PRECHECK_FAILED' }, precheck.findings || []);
+  }
+
+  /*
+   * #180: the same gate `migration-validate` runs, rerun here in full, after the
+   * precheck and before the first write of any kind -- before the per-concept
+   * `create` briefs and before `publishNavigation`. Nothing is cached from the
+   * earlier run and nothing records that this run happened: `migration-validate`
+   * may never have been called at all, may have been called against a staging
+   * area that has changed since, or may have been called with a different
+   * proposal. The only honest answer is to ask again with the accepted proposal
+   * in hand, and to write nothing at all when the answer is no -- a partial
+   * publication of a bundle that does not match what was accepted is worse than
+   * no publication, and git, not a rollback path here, is what undoes a write.
+   */
+  const conformanceResult = conformanceFindings(payload, gitRoot, stagingRoot, services);
+  if (conformanceResult.length > 0) {
+    return respond(request, 'blocked', { code: 'PROPOSAL_CONFORMANCE_FAILED' }, conformanceResult);
   }
 
   const results = payload.staged.map((item) => {

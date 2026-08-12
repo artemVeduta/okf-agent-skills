@@ -2,7 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runWrapper, spawnWrapper, temporaryRoot } = require('../test-support/snapshot');
+const {
+  NO_MIGRATION, acceptedMigration, runWrapper, spawnWrapper, temporaryRoot,
+} = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
@@ -20,21 +22,25 @@ function stage(root, relative, content, bundle = 'okf') {
   fs.writeFileSync(file, content);
 }
 
+// The source a migration output was accepted for has to exist on disk: #180's gate
+// recomputes its observation binding from its current bytes rather than trusting the
+// digest a staged ref recorded, so a fixture that never wrote the source is a
+// fixture whose binding can never hold.
+function source(root, relative, content = '# Original\n') {
+  const file = path.join(root, relative);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content);
+  return relative;
+}
+
 const reviewed = { performed: true };
 const notReviewed = { performed: false };
 
-// One entry mirroring `migration-plan`'s own `data.plan.entries` shape
-// (#144), the exact input `partition` already demands and this operation
-// reuses via `validPartitionPlan` rather than inventing a second schema.
-function migrate(sourcePath, concept, type = 'Decision', reason = 'type_preserved') {
-  return { path: sourcePath, disposition: 'migrate', reason, concept, type };
-}
-function skip(sourcePath, reason) {
-  return { path: sourcePath, disposition: 'skip', reason, concept: null, type: null };
-}
-
-function plan(entries) {
-  return { entries, executable: true };
+// #180: the accepted proposal replaced `payload.plan` here outright. A source's
+// disposition is now read from the one table its user accepted, never from
+// `migration-plan`'s own upstream projection of it.
+function skipped(sourcePath, reason) {
+  return { path: sourcePath, reason };
 }
 
 function request(root, payload = {}) {
@@ -58,11 +64,12 @@ function findingCodes(response) {
 
 test('a clean staged bundle validates: complete, publishable, no findings', (t) => {
   const root = repo(t);
-  stage(root, 'decisions/a.md', '---\ntype: Decision\n---\n# A\n');
+  source(root, 'docs/a.md');
+  stage(root, 'decisions/a.md', '---\ntype: Decision\nstatus: draft\n---\n# A\n');
 
   const response = run(request(root, {
     selected: ['docs/a.md'],
-    plan: plan([migrate('docs/a.md', 'decisions/a')]),
+    ...acceptedMigration(root, [{ source: 'docs/a.md', concept: 'decisions/a', type: 'Decision' }]),
     semantic_review: reviewed,
   }));
 
@@ -70,6 +77,7 @@ test('a clean staged bundle validates: complete, publishable, no findings', (t) 
   assert.equal(response.data.status, 'complete');
   assert.equal(response.data.publishable, true);
   assert.deepEqual(response.data.missing_disposition, []);
+  assert.deepEqual(response.data.conformance, { checked: true, findings: 0 });
   assert.deepEqual(response.data.semantic_fidelity, { assessed: true });
   assert.deepEqual(response.findings, []);
 });
@@ -78,11 +86,12 @@ test('a clean staged bundle validates: complete, publishable, no findings', (t) 
 
 test('unparseable frontmatter in a staged concept blocks', (t) => {
   const root = repo(t);
+  source(root, 'docs/a.md');
   stage(root, 'decisions/a.md', '---\ntype: Decision\n: malformed\n---\n# A\n');
 
   const response = run(request(root, {
     selected: ['docs/a.md'],
-    plan: plan([migrate('docs/a.md', 'decisions/a')]),
+    ...acceptedMigration(root, [{ source: 'docs/a.md', concept: 'decisions/a', type: 'Decision' }]),
     semantic_review: reviewed,
   }));
 
@@ -97,11 +106,12 @@ test('unparseable frontmatter in a staged concept blocks', (t) => {
 
 test('a staged concept with no type blocks', (t) => {
   const root = repo(t);
+  source(root, 'docs/a.md');
   stage(root, 'decisions/a.md', '---\ntitle: A\n---\n# A\n');
 
   const response = run(request(root, {
     selected: ['docs/a.md'],
-    plan: plan([migrate('docs/a.md', 'decisions/a')]),
+    ...acceptedMigration(root, [{ source: 'docs/a.md', concept: 'decisions/a', type: 'Decision' }]),
     semantic_review: reviewed,
   }));
 
@@ -121,7 +131,7 @@ test('a nested index.md carrying concept frontmatter is caught, the dogfood case
 
   const response = run(request(root, {
     selected: [],
-    plan: plan([]),
+    ...NO_MIGRATION,
     semantic_review: reviewed,
   }));
 
@@ -134,11 +144,12 @@ test('a nested index.md carrying concept frontmatter is caught, the dogfood case
 
 test('an Attested Computation staged without runtime blocks', (t) => {
   const root = repo(t);
+  source(root, 'docs/computation.md');
   stage(root, 'computation.md', '---\ntype: Attested Computation\n---\n# Computation\n');
 
   const response = run(request(root, {
     selected: ['docs/computation.md'],
-    plan: plan([migrate('docs/computation.md', 'computation', 'Attested Computation')]),
+    ...acceptedMigration(root, [{ source: 'docs/computation.md', concept: 'computation', type: 'Attested Computation' }]),
     semantic_review: reviewed,
   }));
 
@@ -159,8 +170,8 @@ test('a source with no disposition fails completeness while a deliberately-filte
 
   const response = run(request(root, {
     selected: ['docs/a.md', 'docs/b.md'],
-    // `docs/a.md` has no entry at all -- silently fell off the plan.
-    plan: plan([skip('docs/b.md', 'code_recoverable')]),
+    // `docs/a.md` has no row at all -- silently fell off the accepted proposal.
+    ...acceptedMigration(root, [], { skipped: [skipped('docs/b.md', 'code_recoverable')] }),
     semantic_review: reviewed,
   }));
 
@@ -180,11 +191,14 @@ test('a source with no disposition fails completeness while a deliberately-filte
 
 test('a broken link in a staged concept warns, and never blocks publication on its own', (t) => {
   const root = repo(t);
-  stage(root, 'decisions/a.md', '---\ntype: Decision\nsources:\n  - resource: missing.md\n---\n# A\n');
+  source(root, 'docs/a.md');
+  stage(root, 'decisions/a.md', '---\ntype: Decision\nstatus: draft\nsources:\n  - resource: missing.md\n---\n# A\n');
 
   const response = run(request(root, {
     selected: ['docs/a.md'],
-    plan: plan([migrate('docs/a.md', 'decisions/a')]),
+    ...acceptedMigration(root, [{
+      source: 'docs/a.md', concept: 'decisions/a', type: 'Decision', provenance: [{ resource: 'missing.md' }],
+    }]),
     semantic_review: reviewed,
   }));
 
@@ -200,11 +214,12 @@ test('a broken link in a staged concept warns, and never blocks publication on i
 
 test('a structurally clean bundle still reports semantic fidelity as not assessed when no human review is declared', (t) => {
   const root = repo(t);
-  stage(root, 'decisions/a.md', '---\ntype: Decision\n---\n# A\n');
+  source(root, 'docs/a.md');
+  stage(root, 'decisions/a.md', '---\ntype: Decision\nstatus: draft\n---\n# A\n');
 
   const response = run(request(root, {
     selected: ['docs/a.md'],
-    plan: plan([migrate('docs/a.md', 'decisions/a')]),
+    ...acceptedMigration(root, [{ source: 'docs/a.md', concept: 'decisions/a', type: 'Decision' }]),
     semantic_review: notReviewed,
   }));
 
@@ -220,25 +235,40 @@ test('a structurally clean bundle still reports semantic fidelity as not assesse
 
 // -------------------------------------------------------------------- shape
 
-test('rejects a missing or non-executable plan, and a missing or malformed semantic_review', (t) => {
+test('rejects a missing or malformed accepted proposal, navigation, staged set or review, and a missing or malformed semantic_review', (t) => {
   const root = repo(t);
-  const base = { selected: [] };
+  const base = { selected: [], ...NO_MIGRATION, semantic_review: reviewed };
 
-  const missingPlan = run(request(root, { ...base, semantic_review: reviewed }));
-  assert.equal(missingPlan.result, 'blocked');
-  assert.equal(missingPlan.data.code, 'UNSUPPORTED_INPUT');
+  // #180: every field the conformance gate runs on is required outright. There is
+  // no default for any of them, because a default would be an invented answer to a
+  // row the accepted proposal already settled.
+  const malformed = {
+    'no proposal at all': { proposal: undefined },
+    // The plan is `propose`'s own upstream and never stands in for what was
+    // accepted: a payload carrying it and nothing else is refused exactly as one
+    // carrying neither is.
+    'the plan instead of the accepted proposal': {
+      proposal: undefined,
+      plan: { entries: [{ path: 'x.md', disposition: 'migrate', reason: 'type_preserved', concept: 'x', type: 'Decision' }], executable: true },
+    },
+    'a proposal missing its groups table': { proposal: { sources: [], outputs: [] } },
+    'a proposal that is not an object': { proposal: [] },
+    'no navigation': { navigation: undefined },
+    'a navigation row with no body': { navigation: [{ path: 'decisions/index.md' }] },
+    'no staged set': { staged: undefined },
+    'a staged ref with no concept': { staged: [{ file: '.okf-staging/okf/a.md' }] },
+    'no review': { review: undefined },
+    'a review missing its source verdicts': { review: { outputs: [] } },
+  };
 
-  const openQuestion = run(request(root, {
-    ...base,
-    plan: { entries: [{ path: 'x.md', disposition: 'blocked_pending_decision', reason: 'type_not_inferable', concept: null, type: null }], executable: false },
-    semantic_review: reviewed,
-  }));
-  assert.equal(openQuestion.result, 'blocked');
-  assert.equal(openQuestion.data.code, 'UNSUPPORTED_INPUT');
+  for (const [name, override] of Object.entries(malformed)) {
+    const response = run(request(root, { ...base, ...override }));
+    assert.equal(response.result, 'blocked', name);
+    assert.equal(response.data.code, 'UNSUPPORTED_INPUT', name);
+  }
 
   for (const semantic_review of [undefined, {}, { performed: 'yes' }, null]) {
-    const payload = { ...base, plan: plan([]) };
-    if (semantic_review !== undefined) payload.semantic_review = semantic_review;
+    const payload = { ...base, semantic_review };
     const response = run(request(root, payload));
     assert.equal(response.result, 'blocked', JSON.stringify(semantic_review));
     assert.equal(response.data.code, 'UNSUPPORTED_INPUT', JSON.stringify(semantic_review));
@@ -249,7 +279,7 @@ test('rejects a missing or non-executable plan, and a missing or malformed seman
 
 test('migration-validate reports not-configured outside a Git repository and is silent on automatic invocation', (t) => {
   const outside = temporaryRoot(t, 'okf-148-no-repo-');
-  const bare = { plan: plan([]), selected: [], semantic_review: reviewed };
+  const bare = { ...NO_MIGRATION, selected: [], semantic_review: reviewed };
   assert.equal(run(request(outside, bare)).result, 'not-configured');
 
   const root = repo(t);
@@ -262,7 +292,7 @@ test('migration-validate reports not-configured outside a Git repository and is 
 test('the generic okf router reaches migration-validate too, bypassing the activation gate', (t) => {
   const root = repo(t);
   const response = runWrapper(routerWrapper, {
-    ...request(root, { plan: plan([]), selected: [], semantic_review: reviewed }),
+    ...request(root, { ...NO_MIGRATION, selected: [], semantic_review: reviewed }),
     skill: 'okf',
   });
   assert.equal(response.skill, 'okf');
@@ -275,7 +305,7 @@ test('rejects a structurally missing payload.cwd at the protocol layer, before t
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'migration-validate',
-    payload: { plan: plan([]), selected: [], semantic_review: reviewed },
+    payload: { ...NO_MIGRATION, selected: [], semantic_review: reviewed },
   });
   assert.equal(result.status, 64);
   assert.equal(result.stdout, '');

@@ -20,7 +20,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { runSilent, runWrapper, temporaryRoot } = require('../test-support/snapshot');
+const {
+  acceptedMigration, binding, passingReview, runSilent, runWrapper, temporaryRoot,
+} = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 
@@ -574,11 +576,31 @@ test('an existing bundle missing the connector gets it through the proposal, and
     ['agents/index.md', 'agents/okf.md'],
   );
 
+  // #180: `publish` reruns the conformance gate before its first write, so the
+  // staged bytes the accepted proposal describes have to actually exist and match
+  // it. `assemble` writes exactly these bytes for a `Reference` output.
+  write(root, '.okf-staging/okf/payments/billing.md', '---\ntype: Reference\nstatus: draft\n---\n# Billing\n');
+  const staged = [{
+    path: 'docs/billing.md',
+    concept: 'payments/billing',
+    type: 'Reference',
+    shard: 'x',
+    file: '.okf-staging/okf/payments/billing.md',
+    sources: [binding(root, 'docs/billing.md')],
+  }];
+
   const published = run({
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'publish',
-    payload: { cwd: root, task_kind: 'feature work', staged: [{ concept: 'payments/billing', file: '.okf-staging/okf/payments/billing.md' }], navigation: response.data.navigation },
+    payload: {
+      cwd: root,
+      task_kind: 'feature work',
+      proposal: response.data.proposal,
+      navigation: response.data.navigation,
+      staged,
+      review: passingReview(root, response.data.proposal, staged),
+    },
   });
 
   assert.deepEqual(
@@ -604,17 +626,22 @@ test('a bundle that already carries the connector is never offered it again', (t
 test('publish refuses a navigation target that appeared since the proposal was accepted', (t) => {
   const root = repo(t);
   write(root, 'okf/payments/index.md', '# Someone else got here first\n');
+  write(root, 'docs/billing.md', '---\ntype: Reference\n---\n# Billing\n');
+  write(root, '.okf-staging/okf/payments/billing.md', '---\ntype: Reference\nstatus: draft\n---\n# Billing\n');
+
+  // #180: the accepted migration itself conforms -- this test is about what
+  // `publish` finds on disk at the navigation targets, not about a proposal
+  // mismatch, so the gate has to pass before the navigation writes are attempted.
+  const migrated = acceptedMigration(root, [{ source: 'docs/billing.md', concept: 'payments/billing', type: 'Reference' }], {
+    purposes: { payments: 'Money.' },
+    navigation: [{ path: '../escape.md', body: 'x\n' }],
+  });
 
   const published = run({
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'publish',
-    payload: {
-      cwd: root,
-      task_kind: 'feature work',
-      staged: [{ concept: 'payments/billing', file: '.okf-staging/okf/payments/billing.md' }],
-      navigation: [{ path: 'payments/index.md', body: '# payments\n' }, { path: '../escape.md', body: 'x\n' }],
-    },
+    payload: { cwd: root, task_kind: 'feature work', ...migrated },
   });
 
   assert.deepEqual(
