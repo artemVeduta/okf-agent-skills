@@ -1224,6 +1224,16 @@ function validConformanceInput(payload) {
   return validAcceptedProposal(payload.proposal) &&
     Array.isArray(payload.navigation) && payload.navigation.every(validPublishNavigation) &&
     Array.isArray(payload.staged) && payload.staged.every(validPublishStagedRef) &&
+    // A staged set is addressed by Concept ID -- every dimension of the gate joins
+    // the accepted output rows to it on that one key -- so two refs claiming one ID
+    // have no single answer to any question the gate asks: which file's bytes are
+    // that concept's, which type it declares, which binding it carries. The gate
+    // cannot report the ambiguity either, because it joins through sets and both
+    // refs match the same accepted row silently. That makes this a rule about the
+    // shape of the input, not about writing, and it belongs here rather than in
+    // `publish` alone: refusing it at one caller and accepting it at the other is
+    // exactly the drift between the two contracts this gate exists to close.
+    new Set(payload.staged.map((item) => item.concept)).size === payload.staged.length &&
     validConformanceReview(payload.review);
 }
 
@@ -1457,9 +1467,12 @@ function executePublish(request, services) {
   if (!validConformanceInput(payload)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  // Two rules `publish` alone adds: an empty staged set has nothing to publish, and
-  // a set naming one concept twice would dispatch two `create` briefs at one target.
-  if (payload.staged.length === 0 || new Set(payload.staged.map((item) => item.concept)).size !== payload.staged.length) {
+  // The one rule `publish` alone adds: an empty staged set has nothing to publish.
+  // It stays here rather than in the shared guard because an empty staged set is a
+  // legitimate thing to validate -- a migration with nothing to `migrate`/`residue`
+  // never gives `assemble` a reason to create the staging root at all, and
+  // `migration-validate` already reports that as an empty, not a broken, bundle.
+  if (payload.staged.length === 0) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
   const navigation = payload.navigation;

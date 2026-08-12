@@ -257,6 +257,16 @@ test('rejects a missing or malformed accepted proposal, navigation, staged set o
     'a navigation row with no body': { navigation: [{ path: 'decisions/index.md' }] },
     'no staged set': { staged: undefined },
     'a staged ref with no concept': { staged: [{ file: '.okf-staging/okf/a.md' }] },
+    // Both gate callers refuse this one, for the same reason and at the same seam: a
+    // staged set is addressed by Concept ID, so two refs claiming one ID leave every
+    // dimension of the gate with two answers and no way to report the ambiguity --
+    // it joins through sets, and both refs match the one accepted row silently.
+    'two staged refs claiming one Concept ID': {
+      staged: [
+        { concept: 'decisions/a', file: '.okf-staging/okf/decisions/a.md' },
+        { concept: 'decisions/a', file: '.okf-staging/okf/decisions/a.md' },
+      ],
+    },
     'no review': { review: undefined },
     'a review missing its source verdicts': { review: { outputs: [] } },
   };
