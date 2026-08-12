@@ -58,6 +58,13 @@ function admitRequest(root, invocation) {
   return request('okf-read', 'admit', { cwd: root, candidates: [] }, invocation === undefined ? {} : { invocation });
 }
 
+// `resolve` is a normal gated read, never exempt like `admit` (see the
+// `admit bypasses activation entirely...` test below) -- it is the operation
+// the manifest-placement tests further down drive the gate through.
+function resolveRequest(cwd, target) {
+  return request('okf-read', 'resolve', { cwd, candidates: [], target });
+}
+
 function reviseRequest(root, invocation) {
   return request('okf-write', 'revise', {
     cwd: root,
@@ -355,6 +362,62 @@ test('admit bypasses activation entirely: it never reports not-configured for a 
     }
   }
   assert.equal(treeHash(root), before);
+});
+
+// #197 fix round 1: `manifest.select()`'s `discover()` is the exact function
+// `activationState()` calls for every non-exempt operation (`resolve` here),
+// so the four placement properties below are load-bearing for the gate
+// itself, not a `resolve`-specific detail. They replace the marker-era
+// "a valid root marker activates a request from a nested cwd" and "markers
+// above, below, and outside a Git root are ignored" tests this file lost
+// when `admit` -- the only operation those drove -- became gate-exempt.
+test('a valid manifest at the repository root activates a request from a nested cwd', (t) => {
+  const root = repository(t, 'okf-48-nested-cwd-');
+  bundle(root);
+  fs.writeFileSync(path.join(root, 'note.md'), '# Note\n');
+  const nested = path.join(root, 'nested', 'work');
+  fs.mkdirSync(nested, { recursive: true });
+  const before = treeHash(root);
+  const result = runWrapper('okf-read', resolveRequest(nested, 'note'));
+  assertEnvelope(result);
+  assert.equal(result.response.result, 'ok');
+  assert.equal(result.response.data.selected.bundle_alias, 'repo');
+  assert.equal(treeHash(root), before);
+});
+
+test('a manifest above the Git root is ignored', (t) => {
+  const workspace = temporaryRoot(t, 'okf-48-above-root-');
+  const root = path.join(workspace, 'repo');
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+  bundle(root);
+  fs.writeFileSync(path.join(root, 'note.md'), '# Note\n');
+  writeManifest(workspace, '.');
+  const before = treeHash(workspace);
+  assertNotConfigured(runWrapper('okf-read', resolveRequest(root, 'note')));
+  assert.equal(treeHash(workspace), before);
+});
+
+test('a manifest below cwd is ignored', (t) => {
+  const root = repository(t, 'okf-48-below-cwd-', false);
+  bundle(root);
+  fs.writeFileSync(path.join(root, 'note.md'), '# Note\n');
+  const child = path.join(root, 'child');
+  fs.mkdirSync(child, { recursive: true });
+  writeManifest(child, '.');
+  const before = treeHash(root);
+  assertNotConfigured(runWrapper('okf-read', resolveRequest(root, 'note')));
+  assert.equal(treeHash(root), before);
+});
+
+test('a manifest outside any Git repository does not activate a non-repository cwd', (t) => {
+  const workspace = temporaryRoot(t, 'okf-48-outside-root-');
+  const plain = path.join(workspace, 'plain');
+  fs.mkdirSync(plain, { recursive: true });
+  fs.writeFileSync(path.join(plain, 'note.md'), '# Note\n');
+  writeManifest(plain, '.');
+  const before = treeHash(workspace);
+  assertNotConfigured(runWrapper('okf-read', resolveRequest(plain, 'note')));
+  assert.equal(treeHash(workspace), before);
 });
 
 test('absent activation marker is silent for exactly automatic invocation', (t) => {
