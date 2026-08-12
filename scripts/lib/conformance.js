@@ -295,19 +295,37 @@ function checkProvenance(pairs, findings) {
   }
 }
 
-// Link decisions are part of acceptance, not of transformation: the accepted
-// proposal already names, for every internal link a migrating body makes, the one
-// concept it resolves to. The staged body's own links are compared as a *set*
-// against the text those decisions bind, so a worker that invented a target, dropped
-// a rewrite, or pointed at a concept the proposal never mentioned is named here
-// rather than discovered as a broken link after publication (#148 sees only whether
-// a link resolves, never whether it resolves where it was accepted to).
-function checkLinks(pairs, findings) {
+/*
+ * Link decisions are part of acceptance, not of transformation: the accepted proposal
+ * already names, for every internal link a migrating body makes, the one concept it
+ * resolves to. A rewrite the proposal bound and the staged body does not carry is
+ * therefore always `missing` -- a relationship this migration promised to preserve
+ * and then lost, which #148's link check can never see because it only ever asks
+ * whether a link resolves, never whether it resolves where it was accepted to.
+ *
+ * `unexpected` is deliberately narrower than "any link the proposal did not name",
+ * because most links in a legitimate staged body are exactly that. `mapping.rewriteLinks`
+ * rewrites *only* a link resolving to another migrating source and carries everything
+ * else through byte for byte, and `proposal.internalLinks` records only that same set,
+ * so an external URL, a bare anchor, and a link to a `skip` or `residue` sibling all
+ * survive into the staged body with no accepted row behind them. Those links are not
+ * this gate's business: the proposal never governed them, so there is nothing here to
+ * compare them against, and calling them unexpected would block a correct migration
+ * for carrying a document through unchanged.
+ *
+ * What is left is the honest claim: a staged link that lands on a bundle target some
+ * other accepted output claims, without an accepted row of this output's own binding
+ * it. That is a cross-concept link this migration invented or misrouted -- the one
+ * failure the accepted link decisions exist to prevent.
+ */
+function checkLinks(pairs, targetPaths, findings) {
   for (const [output, item] of pairs) {
     const rows = output.links === undefined ? [] : output.links;
     const expected = new Set(rows.filter((row) => row.decision === 'rewritten').map((row) => boundLinkText(output.concept, row.target_concept)));
     const actual = new Set(item.links);
-    const unexpected = [...actual].filter((link) => !expected.has(link)).sort();
+    const unexpected = [...actual]
+      .filter((link) => !expected.has(link) && targetPaths.has(path.posix.normalize(path.posix.join(path.posix.dirname(output.target_path), link))))
+      .sort();
     const missing = [...expected].filter((link) => !actual.has(link)).sort();
     if (unexpected.length > 0 || missing.length > 0) {
       findings.push(suiteFinding('LINK_TARGET_MISMATCH', { concept: output.concept, unexpected, missing }));
@@ -404,7 +422,7 @@ function check(input) {
   checkStatus(pairs, findings);
   checkSourceBindings(pairs, observations, findings);
   checkProvenance(pairs, findings);
-  checkLinks(pairs, findings);
+  checkLinks(pairs, new Set(outputs.map((item) => item.target_path)), findings);
   checkReview(input, outputs, stagedByConcept, observations, findings);
 
   return { findings };
