@@ -324,6 +324,23 @@ function routeTargets(splitReview, bundlePath) {
   return targets.sort();
 }
 
+// A route key is `candidate\0target`, which drops the `line`/`occurrence` a
+// `link_routes` row carries -- so a candidate that legitimately links one target
+// twice yields the same key twice. `facts.links` is built from *every* markdown
+// link occurrence, and `expected_links` from the same body, so a repeat is
+// ordinary content rather than a double-counted route. Numbering each repeat
+// keeps route coverage exact multiset equality while leaving `differs()`'s
+// duplicate rule intact where a repeated key really is a defect (candidate and
+// source sets, whose keys are unique by construction).
+function numbered(keys) {
+  const seen = new Map();
+  return keys.map((key) => {
+    const at = (seen.get(key) || 0) + 1;
+    seen.set(key, at);
+    return `${key}\0#${at}`;
+  });
+}
+
 function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview, groupPackages, staged, semanticReview: review, services }) {
   const coverage = planMappingCoverage(plan, mapping);
   if (!coverage.ok) return coverage;
@@ -404,13 +421,13 @@ function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview
     }
   }
 
-  const expectedRoutes = [
+  const expectedRoutes = numbered([
     ...routeTargets(splitReview, bundlePath),
     ...expected.filter((item) => item.kind === 'concept' && item.output === undefined)
       .flatMap((item) => item.expected_links.map((target) => `${item.path}\0${target}`)),
-  ].sort();
-  const actualRoutes = checked.filter((item) => item.kind === 'concept')
-    .flatMap((item) => item.facts.links.map((target) => `${item.path}\0${target}`)).sort();
+  ].sort());
+  const actualRoutes = numbered(checked.filter((item) => item.kind === 'concept')
+    .flatMap((item) => item.facts.links.map((target) => `${item.path}\0${target}`)).sort());
   const routes = semanticReview.exactSet(expectedRoutes, actualRoutes);
   if (semanticReview.differs(routes)) {
     return { ok: false, finding: proposalFinding('PUBLISH_ROUTE_MISMATCH', { routes }) };

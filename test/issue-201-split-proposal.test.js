@@ -359,7 +359,9 @@ test('a case-variant Markdown extension contributes a required route', (t) => {
 
 test('an incomplete route inventory walk blocks the proposal with one exact finding', (t) => {
   const root = repo(t);
-  fs.symlinkSync(path.join(root, 'README.md'), path.join(root, 'linked.md'));
+  const outside = temporaryRoot(t, 'okf-201-outside-');
+  fs.writeFileSync(path.join(outside, 'material.md'), '# Elsewhere\n');
+  fs.symlinkSync(path.join(outside, 'material.md'), path.join(root, 'linked.md'));
 
   const response = planned(root, [SOURCE], { split_sections: accounting(['guide']) });
 

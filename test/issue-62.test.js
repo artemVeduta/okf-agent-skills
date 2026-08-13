@@ -289,7 +289,10 @@ test('enumerate diagnoses missing and inactive workspace aliases without suppres
 test('enumerate reports degraded when discovery is incomplete', (t) => {
   const root = bundle(t);
   fs.writeFileSync(path.join(root, 'source.md'), '---\ntype: Note\n---\n# Source\n');
-  fs.symlinkSync('source.md', path.join(root, 'unreadable.md'));
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-62-outside-')));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outside, 'material.md'), '---\ntype: Note\n---\n# Elsewhere\n');
+  fs.symlinkSync(path.join(outside, 'material.md'), path.join(root, 'unreadable.md'));
 
   const response = enumerate(root);
 

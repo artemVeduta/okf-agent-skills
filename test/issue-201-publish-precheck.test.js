@@ -1056,3 +1056,20 @@ test('a receipt persistence failure after dispatch reports every actual write ou
   assert.equal(fs.existsSync(path.join(value.root, 'okf/guides/operate.md')), true);
   assert.equal(fs.existsSync(path.join(value.root, 'okf/decisions/decision.md')), true);
 });
+
+test('a candidate that links one target twice publishes, but an unmatched extra occurrence blocks', (t) => {
+  const twice = [
+    '---', 'type: Decision', '---', '# Decision', '',
+    'See [gate](../scripts/gate.js) and again [gate](../scripts/gate.js).',
+  ].join('\n') + '\n';
+  const prepare = (root) => fs.writeFileSync(path.join(root, UNSPLIT_SOURCE), twice);
+
+  assert.equal(publish(fixture(t, { prepare })).data.status, 'complete');
+
+  assertZeroWriteRefusal(fixture(t, { prepare }), (value) => {
+    const file = path.join(value.root, '.okf-staging/okf/decisions/decision.md');
+    fs.appendFileSync(file, '\nOnce more [gate](../scripts/gate.js).\n');
+    value.semantic_review.candidates.find((item) => item.path === 'decisions/decision.md')
+      .identity = identity(fs.readFileSync(file));
+  }, 'PUBLISH_ROUTE_MISMATCH');
+});

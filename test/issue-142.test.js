@@ -216,11 +216,12 @@ test('honors a non-default bundle directory name for the exclusion', (t) => {
 
 // ------------------------------------------------------------ incomplete walk
 
-test('an unreadable symlink degrades the inventory honestly instead of silently', (t) => {
+test('a symlink escaping the repository degrades the inventory honestly instead of silently', (t) => {
   const root = repo(t);
-  write(root, 'real.md', '# Real\n');
+  const outside = temporaryRoot(t, 'okf-142-outside-');
+  fs.writeFileSync(path.join(outside, 'real.md'), '# Real\n');
   write(root, 'docs/keep.md', '# Keep\n');
-  fs.symlinkSync(path.join(root, 'real.md'), path.join(root, 'linked.md'));
+  fs.symlinkSync(path.join(outside, 'real.md'), path.join(root, 'linked.md'));
   const response = run(discoverRequest(root));
   assert.equal(response.data.complete, false);
   const finding = response.findings.find((item) => item.code === 'unreadable');
@@ -238,6 +239,44 @@ test('a complete walk reports no unreadable finding and data.complete: true', (t
   const response = run(discoverRequest(root));
   assert.equal(response.data.complete, true);
   assert.deepEqual(response.findings, []);
+});
+
+test('a symlink resolving inside the repository keeps the walk complete and lists the file once', (t) => {
+  const root = repo(t);
+  write(root, 'docs/keep.md', '# Keep\n');
+  fs.symlinkSync(path.join(root, 'docs', 'keep.md'), path.join(root, 'linked.md'));
+  fs.symlinkSync(path.join(root, 'docs'), path.join(root, 'linked-dir'), 'dir');
+  const response = run(discoverRequest(root));
+  assert.equal(response.data.complete, true);
+  assert.deepEqual(response.findings, []);
+  const paths = response.data.sources.map((entry) => entry.path);
+  assert.deepEqual(paths.filter((p) => p.endsWith('keep.md')), ['docs/keep.md']);
+  assert.ok(!paths.some((p) => p.startsWith('linked')));
+});
+
+test('a symlink cycle inside the repository terminates with a complete walk', (t) => {
+  const root = repo(t);
+  write(root, 'docs/keep.md', '# Keep\n');
+  fs.symlinkSync(path.join(root, 'docs'), path.join(root, 'docs', 'loop'), 'dir');
+  const response = run(discoverRequest(root));
+  assert.equal(response.data.complete, true);
+  assert.ok(response.data.sources.some((entry) => entry.path === 'docs/keep.md'));
+});
+
+test('an unreadable directory still degrades the walk', (t) => {
+  const root = repo(t);
+  write(root, 'docs/keep.md', '# Keep\n');
+  const closed = path.join(root, 'closed');
+  fs.mkdirSync(closed);
+  fs.writeFileSync(path.join(closed, 'hidden.md'), '# Hidden\n');
+  fs.chmodSync(closed, 0o000);
+  try {
+    const response = run(discoverRequest(root));
+    assert.equal(response.data.complete, false);
+    assert.ok(response.findings.some((item) => item.code === 'unreadable'));
+  } finally {
+    fs.chmodSync(closed, 0o755);
+  }
 });
 
 // --------------------------------------------------------- activation gate

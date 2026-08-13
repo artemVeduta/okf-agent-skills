@@ -53,9 +53,26 @@ function gitRootOf(start) {
 // (pnpm's `node_modules` is symlink-heavy) or losing the honest `complete: false`
 // signal to noise from a subtree it never intended to scan. The default skips
 // nothing, so every existing caller's behavior is unchanged.
+// A symlink is never followed, so a cycle cannot recurse. It only decides `complete`:
+// a link whose target resolves inside the walk root points at content the walk already
+// covers by its real path, so it is honest to keep `complete: true` and to leave the
+// link out of `files` (the real path is listed once). A link that escapes the root, or
+// a broken one, names content this walk never scanned, so it degrades `complete`.
 function listFiles(root, skipDir = () => false) {
   const files = [];
   let complete = true;
+  const absolute = path.resolve(root);
+  let realRoot;
+  try { realRoot = fs.realpathSync(absolute); } catch { realRoot = absolute; }
+
+  function covered(link) {
+    try {
+      const target = fs.realpathSync(link);
+      return target === realRoot || target.startsWith(realRoot + path.sep);
+    } catch {
+      return false;
+    }
+  }
 
   function visit(directory) {
     try {
@@ -65,13 +82,13 @@ function listFiles(root, skipDir = () => false) {
       }
       for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
         const file = path.join(directory, entry.name);
-        if (entry.isDirectory()) {
+        if (entry.isSymbolicLink()) {
+          if (!skipDir(file) && !covered(file)) complete = false;
+        } else if (entry.isDirectory()) {
           if (skipDir(file)) continue;
           visit(file);
         } else if (entry.isFile()) {
           files.push(file);
-        } else if (entry.isSymbolicLink()) {
-          complete = false;
         }
       }
     } catch {
@@ -79,7 +96,7 @@ function listFiles(root, skipDir = () => false) {
     }
   }
 
-  visit(path.resolve(root));
+  visit(absolute);
   files.sort();
   return { files, complete };
 }
