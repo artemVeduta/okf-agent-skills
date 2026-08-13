@@ -7,9 +7,13 @@
  * owns the mapping *rules* that orchestration consumes -- what type a source with
  * no explicit `type` deterministically is, what bundle-relative concept path a type
  * maps a source to, what provenance a source's own frontmatter already carries
- * verbatim, where retained raw evidence deterministically lives under `references/`,
- * and how a migrating body's own Markdown links are rewritten when the mapping is
- * unambiguous. `migration.js` calls this module; this module never calls back.
+ * verbatim, and how a migrating body's own Markdown links are rewritten when the
+ * mapping is unambiguous. `migration.js` calls this module; this module never
+ * calls back.
+ *
+ * #177 (#157): there is deliberately no residue target-path rule here. Migration
+ * residue is report-only -- an unsupported source stays exactly where it is and
+ * nothing is copied -- so no `references/<path>` mirror is derived for it.
  *
  * Binding rules from #131 this module enforces:
  *   - an ambiguous type is never guessed: every rule below is evidence -- a
@@ -132,17 +136,6 @@ function extractProvenance(tree) {
   return tree && Array.isArray(tree.sources) ? tree.sources : null;
 }
 
-// -------------------------------------------------------------- reference-path derivation
-
-// Retained raw/unsupported evidence keeps its whole original relative path and
-// extension under `references/` -- an archival mirror, not a concept identity, so
-// two files sharing a basename in different source directories never collide here
-// the way two concepts accepted into one group can -- a target collision
-// `placed()` asks about or assembly refuses, never a silent overwrite.
-function referencePathFor(sourcePath) {
-  return `references/${sourcePath}`;
-}
-
 // ------------------------------------------------------------------------ link rewriting
 
 const LINK_PATTERN = /(\[[^\]\n]*\]\()(\s*)(?:<([^>\n]*)>|([^\s)\n]+))/g;
@@ -234,6 +227,6 @@ function rewriteLinks(sourcePath, body, conceptOf, bundleDir) {
 }
 
 module.exports = {
-  inferType, conceptPathFor, extractProvenance, referencePathFor,
+  inferType, conceptPathFor, extractProvenance,
   rewriteLinks, resolveLinkTarget, normalizedLinkTarget,
 };

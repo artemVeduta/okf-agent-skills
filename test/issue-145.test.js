@@ -54,10 +54,6 @@ function mappingFor(response, sourcePath) {
   return response.data.mapping.find((item) => item.path === sourcePath);
 }
 
-function referenceFor(response, sourcePath) {
-  return response.data.references.find((item) => item.path === sourcePath);
-}
-
 function planner(root, sources) {
   return (payload) => planRequest(root, sources, payload);
 }
@@ -350,18 +346,24 @@ test('a link to a target outside this migration is re-expressed for the concept\
 
 // ------------------------------------------------------------------- residue
 
-test('an unsupported source is retained as residue, never silently dropped, and gets a deterministic references/ path', (t) => {
+// #177 (#157): residue is report-only. The source is recorded once in the plan,
+// left exactly where it is, and given no target path of any kind -- there is no
+// `data.references` on the response at all, and no `references/` copy is ever
+// derived, staged or published.
+test('an unsupported source is recorded as residue once in the plan, never silently dropped, and is given no target path', (t) => {
   const root = repo(t);
   write(root, 'notes/wiki.md', '# Note\n\nSee [[Other Note]] for background.\n');
   const sources = discoverSources(root);
   const response = run(planRequest(root, sources));
 
-  assert.deepEqual(entryFor(response, 'notes/wiki.md'), {
-    path: 'notes/wiki.md', disposition: 'residue', reason: 'unsupported_format', concept: null, type: null,
-  });
-  assert.deepEqual(referenceFor(response, 'notes/wiki.md'), {
-    path: 'notes/wiki.md', reference_path: 'references/notes/wiki.md',
-  });
+  const residue = response.data.plan.entries.filter((item) => item.disposition === 'residue');
+  assert.deepEqual(residue, [
+    { path: 'notes/wiki.md', disposition: 'residue', reason: 'unsupported_format', concept: null, type: null },
+  ]);
+  assert.equal(response.data.references, undefined);
+  assert.equal(JSON.stringify(response).includes('references/notes/wiki.md'), false);
+  // The source itself is untouched where it always was.
+  assert.equal(fs.readFileSync(path.join(root, 'notes', 'wiki.md'), 'utf8'), '# Note\n\nSee [[Other Note]] for background.\n');
 });
 
 // ------------------------------------------------------------------ duplicates

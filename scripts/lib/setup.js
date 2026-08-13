@@ -481,7 +481,11 @@ function computeSignals(sources, links, semanticReview) {
     concepts: migrated.map((item) => ({ source: item.path, concept: item.concept, sources_declared: item.sources_declared === true })),
     skipped: skipped.map((item) => ({ source: item.path, reason: item.reason })),
     ambiguous: ambiguous.map((item) => ({ source: item.path, reason: item.reason })),
-    residue: residue.map((item) => ({ source: item.path, reason: item.reason })),
+    // #177 (#157): a residue row reports the original source path, the reason,
+    // and the fact that setup left that source exactly where it was. `unchanged`
+    // is always `true` -- residue has no other outcome, and stating it in the
+    // report is the point: the reader must not have to infer that nothing moved.
+    residue: residue.map((item) => ({ source: item.path, reason: item.reason, unchanged: true })),
     provenance: { total: migrated.length, with_sources: withSources, without_sources: migrated.length - withSources },
     links: {
       total: links.length, resolved: resolvedLinks.length, broken: brokenLinks.length,
@@ -1284,8 +1288,9 @@ function defaultRootPackage(packages, bundleRoot, services) {
 // half-decided plan by accident. `data.mapping` carries, for every `migrate` entry,
 // the provenance its own frontmatter already declared (verbatim, never fabricated)
 // and its body with unambiguous internal links rewritten to their new concept
-// paths; `data.references` carries the deterministic `references/` path for every
-// `residue` entry's raw evidence; `data.plan.duplicates` surfaces, never merges, an
+// paths; a `residue` entry is recorded once in `data.plan.entries` and nowhere
+// else -- #177 (#157) makes residue report-only, so no target path is derived for
+// it and no `data.references` is produced at all; `data.plan.duplicates` surfaces, never merges, an
 // exact content duplicate among the sources this call is migrating. Read-only and
 // purely derivational, like `discover`: it reads each markdown source's own
 // frontmatter and body (through the same reader `discover` and the write path both
@@ -1431,7 +1436,6 @@ function executeMigrationPlan(request, services) {
     plan: { entries: outcome.entries, executable: outcome.executable, duplicates: outcome.duplicates },
     questions: outcome.questions,
     mapping: outcome.mapping,
-    references: outcome.references,
     settings: settingsReport.settings,
     settings_findings: settingsReport.settings_findings,
     split_review: proposed.reviews,
@@ -1441,8 +1445,9 @@ function executeMigrationPlan(request, services) {
 
 // `/setup`'s dynamic semantic partitioner and delegated worker protocol (#146).
 // Its own upstream, unmodified, is exactly `migration-plan`'s response shape:
-// `payload.plan` (`{entries, executable}`), `payload.mapping`, and
-// `payload.references`. Read-only and purely derivational, like `migration-plan`
+// `payload.plan` (`{entries, executable}`) and `payload.mapping`. There is no
+// residue input: #177 (#157) keeps residue in the plan and the report only, so a
+// brief never names one. Read-only and purely derivational, like `migration-plan`
 // itself: it never reads a source file, never writes anything, and never spawns or
 // prompts anything -- launching the fresh-context worker a brief describes is
 // `skills/okf-setup/SKILL.md`'s job, not this one's (#131: "the runtime never
@@ -1477,29 +1482,19 @@ function validPartitionMappingItem(item) {
   return typeof item.body === 'string';
 }
 
-function validPartitionReferenceItem(item) {
-  return !!item && typeof item === 'object' && !Array.isArray(item) &&
-    typeof item.path === 'string' && item.path !== '' &&
-    typeof item.reference_path === 'string' && item.reference_path !== '';
-}
-
-// A caller cannot hand this operation a `mapping`/`references` array that does not
-// correspond, one-for-one, to `plan.entries`' own `migrate`/`residue` sources --
+// A caller cannot hand this operation a `mapping` array that does not
+// correspond, one-for-one, to `plan.entries`' own `migrate` sources --
 // exactly the invariant `migration-plan` itself always produces, checked here
 // rather than trusted blindly, since nothing stops a caller from tampering with or
-// hand-assembling the three pieces separately.
-function partitionInputConsistent(plan, mapping, references) {
+// hand-assembling the pieces separately. #177 (#157): a `residue` entry has no
+// counterpart array to check, because residue never leaves the plan.
+function partitionInputConsistent(plan, mapping) {
   const migrating = plan.entries.filter((entry) => entry.disposition === 'migrate');
-  const residue = plan.entries.filter((entry) => entry.disposition === 'residue');
-  if (mapping.length !== migrating.length || references.length !== residue.length) return false;
+  if (mapping.length !== migrating.length) return false;
   const migratingByPath = new Map(migrating.map((entry) => [entry.path, entry]));
-  const residueByPath = new Map(residue.map((entry) => [entry.path, entry]));
   for (const item of mapping) {
     const entry = migratingByPath.get(item.path);
     if (!entry || entry.concept !== item.concept || entry.type !== item.type) return false;
-  }
-  for (const item of references) {
-    if (!residueByPath.has(item.path)) return false;
   }
   return true;
 }
@@ -1514,10 +1509,7 @@ function executePartitionCompute(request) {
   if (!Array.isArray(payload.mapping) || !payload.mapping.every(validPartitionMappingItem)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (!Array.isArray(payload.references) || !payload.references.every(validPartitionReferenceItem)) {
-    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
-  }
-  if (!partitionInputConsistent(payload.plan, payload.mapping, payload.references)) {
+  if (!partitionInputConsistent(payload.plan, payload.mapping)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
   const splitReview = partition.validateSplitReviews(payload.mapping, payload.split_review);
@@ -1537,7 +1529,7 @@ function executePartitionCompute(request) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
 
-  const outcome = partition.computePartition(payload.plan, payload.mapping, payload.references, payload.split_review, {
+  const outcome = partition.computePartition(payload.plan, payload.mapping, payload.split_review, {
     cwd: path.resolve(payload.cwd),
     bundle: bundleName,
     projectMode: payload.project_mode,
@@ -1581,9 +1573,9 @@ function executePartition(request, services) {
 
 // `payload.partition.shards[]` is exactly one `partition` compute-mode
 // `data.shards[]` entry (`{shard, sources, brief}`), unmodified -- reusing
-// `validPartitionMappingItem`/`validPartitionReferenceItem` for the brief's
-// own `mapping`/`references` arrays rather than a second shape check, since
-// a brief's `mapping`/`references` are exactly those two shapes already.
+// `validPartitionMappingItem` for the brief's own `mapping` array rather than
+// a second shape check, since a brief's `mapping` is exactly that shape
+// already. A brief carries no residue (#177), so there is nothing else here.
 function validAssemblyPartitionShard(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
   if (typeof item.shard !== 'string' || item.shard === '') return false;
@@ -1593,7 +1585,6 @@ function validAssemblyPartitionShard(item) {
   const brief = item.brief;
   if (!brief || typeof brief !== 'object' || Array.isArray(brief) || brief.shard !== item.shard) return false;
   if (!Array.isArray(brief.mapping) || !brief.mapping.every(validPartitionMappingItem)) return false;
-  if (!Array.isArray(brief.references) || !brief.references.every(validPartitionReferenceItem)) return false;
   if (!Array.isArray(brief.split_review)) return false;
   if (!Array.isArray(brief.sources) || brief.sources.some((s) => typeof s !== 'string' || s === '')) return false;
   return true;
@@ -1779,7 +1770,6 @@ function executeAssemble(request, services) {
     status: outcome.blockers.length > 0 ? 'partial' : 'complete',
     publishable: outcome.blockers.length === 0,
     staged,
-    references: outcome.references,
     blockers: outcome.blockers,
     duplicates: outcome.duplicates,
     links,

@@ -58,7 +58,7 @@ function derivedPlan(root, placement) {
 
 function partitionCompute(root, planData, options = {}) {
   return run(partitionRequest(root, {
-    plan: planData.plan, mapping: planData.mapping, references: planData.references,
+    plan: planData.plan, mapping: planData.mapping,
     split_review: planData.split_review, ...options,
   }));
 }
@@ -180,7 +180,7 @@ test('a worker brief carries exactly the narrow context and nothing more', (t) =
   const brief = response.data.shards[0].brief;
   assert.deepEqual(
     Object.keys(brief).sort(),
-    ['bundle', 'cwd', 'mapping', 'neighbors', 'okf_version', 'project_mode', 'references', 'shard', 'sources', 'split_review'].sort(),
+    ['bundle', 'cwd', 'mapping', 'neighbors', 'okf_version', 'project_mode', 'shard', 'sources', 'split_review'].sort(),
   );
   assert.equal(brief.cwd, path.resolve(root));
   assert.equal(brief.bundle, 'docs-bundle');
@@ -188,7 +188,7 @@ test('a worker brief carries exactly the narrow context and nothing more', (t) =
   assert.equal(brief.okf_version, '0.2');
 });
 
-test('partition refuses a non-executable plan, a bundle/project_mode outside the allowed values, and a tampered mapping/references array, without computing anything', (t) => {
+test('partition refuses a non-executable plan, a bundle/project_mode outside the allowed values, and a tampered mapping array, without computing anything', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/a.md', '---\ntype: Decision\n---\n# A\n');
   const planData = derivedPlan(root, { 'docs/decisions/a.md': 'library' });
@@ -196,19 +196,19 @@ test('partition refuses a non-executable plan, a bundle/project_mode outside the
   const notExecutable = { entries: [{ path: 'x.md', disposition: 'blocked_pending_decision', reason: 'type_not_inferable', concept: null, type: null }], executable: false };
   assert.equal(partitionCompute(root, { ...planData, plan: notExecutable }).result, 'blocked');
 
-  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: planData.mapping, references: planData.references, split_review: planData.split_review, project_mode: 'sandbox' })).data.code, 'UNSUPPORTED_INPUT');
-  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: planData.mapping, references: planData.references, split_review: planData.split_review, bundle: '' })).data.code, 'UNSUPPORTED_INPUT');
+  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: planData.mapping, split_review: planData.split_review, project_mode: 'sandbox' })).data.code, 'UNSUPPORTED_INPUT');
+  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: planData.mapping, split_review: planData.split_review, bundle: '' })).data.code, 'UNSUPPORTED_INPUT');
 
   const tamperedMapping = planData.mapping.map((item) => ({ ...item, concept: `${item.concept}-tampered` }));
-  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: tamperedMapping, references: planData.references, split_review: planData.split_review })).result, 'blocked');
+  assert.equal(run(partitionRequest(root, { plan: planData.plan, mapping: tamperedMapping, split_review: planData.split_review })).result, 'blocked');
 });
 
 test('partition reports not-configured outside a Git repository and is silent on automatic invocation', (t) => {
   const outside = temporaryRoot(t, 'okf-146-no-repo-');
-  assert.equal(run(partitionRequest(outside, { plan: { entries: [], executable: true }, mapping: [], references: [], split_review: [] })).result, 'not-configured');
+  assert.equal(run(partitionRequest(outside, { plan: { entries: [], executable: true }, mapping: [], split_review: [] })).result, 'not-configured');
 
   const root = repo(t);
-  const request = partitionRequest(root, { plan: { entries: [], executable: true }, mapping: [], references: [], split_review: [] });
+  const request = partitionRequest(root, { plan: { entries: [], executable: true }, mapping: [], split_review: [] });
   const result = spawnWrapper(wrapper, { ...request, invocation: 'automatic' });
   assert.equal(result.status, 0);
   assert.equal(result.stdout, '');
@@ -221,7 +221,6 @@ function wellFormedShard(brief) {
   return {
     shard: brief.shard,
     concepts: brief.mapping.map((item) => ({ path: item.path, concept: item.concept, type: item.type, body: `${item.body}\n\nConverted.\n` })),
-    references: brief.references.map((item) => ({ path: item.path, reference_path: item.reference_path })),
     warnings: [],
     blockers: [],
   };

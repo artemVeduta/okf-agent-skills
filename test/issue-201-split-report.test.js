@@ -142,7 +142,6 @@ function assemble(root, accepted, bundle = 'okf') {
     bundle,
     plan: accepted.plan,
     mapping: accepted.mapping,
-    references: accepted.references,
     split_review: accepted.split_review,
   });
   const brief = partitioned.data.shards[0].brief;
@@ -162,7 +161,7 @@ function assemble(root, accepted, bundle = 'okf') {
         body: `# ${item.title}\n`,
       }));
     }),
-    references: [], warnings: [], blockers: [],
+    warnings: [], blockers: [],
   };
   const shardFile = '.okf-staging/shards/report.json';
   fs.mkdirSync(path.dirname(path.join(root, shardFile)), { recursive: true });

@@ -51,20 +51,19 @@ function partitionCompute(root, planData, options = {}) {
     skill: 'okf-setup',
     operation: 'partition',
     payload: {
-      cwd: root, plan: planData.plan, mapping: planData.mapping, references: planData.references,
+      cwd: root, plan: planData.plan, mapping: planData.mapping,
       split_review: planData.split_review, ...options,
     },
   });
 }
 
 // The shard object a well-behaved fresh-context worker returns for its own
-// brief: one concept per assigned `migrate` source, one reference per
-// assigned `residue` source, nothing blocked.
+// brief: one concept per assigned `migrate` source, nothing blocked. #177: a
+// brief never assigns residue, so a shard never returns any.
 function wellFormedShard(brief, suffix = 'Converted.') {
   return {
     shard: brief.shard,
     concepts: brief.mapping.map((item) => ({ path: item.path, concept: item.concept, type: item.type, body: `${item.body}\n\n${suffix}\n` })),
-    references: brief.references.map((item) => ({ path: item.path, reference_path: item.reference_path })),
     warnings: [],
     blockers: [],
   };
@@ -322,7 +321,11 @@ test('a shard carrying a blocker marks the result partial and unpublishable, wit
 
 // ---------------------------------------------------------- nothing disappears
 
-test('every partitioned source is accounted for in the result', (t) => {
+// #177 (#157): "every partitioned source" is exactly the `migrate` set. Residue
+// is never partitioned, so it must be absent from every shard, every brief and
+// the assembled result -- while still being named once in the plan, and the
+// source file itself left untouched at its original path.
+test('every partitioned source is accounted for in the result, and residue is not among them', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/postgres.md', '# Use Postgres\n');
   write(root, 'assets/legacy.html', '<!DOCTYPE html>\n<html><body>legacy</body></html>\n');
@@ -331,15 +334,25 @@ test('every partitioned source is accounted for in the result', (t) => {
   const residue = planData.plan.entries.filter((entry) => entry.disposition === 'residue').map((entry) => entry.path);
   assert.ok(migrating.length > 0 && residue.length > 0, 'fixture must exercise both a migrate and a residue source');
 
-  const { response } = assembleFixture(root, planData, { partitionOptions: { max_sources_per_shard: 1 } });
+  const { response, partitioned } = assembleFixture(root, planData, { partitionOptions: { max_sources_per_shard: 1 } });
   assert.equal(response.result, 'ok');
 
   const accounted = [
     ...stagedConcepts(response).map((item) => item.path),
-    ...response.data.references.map((item) => item.path),
     ...response.data.blockers.map((item) => item.path),
   ].sort();
-  assert.deepEqual(accounted, [...migrating, ...residue].sort());
+  assert.deepEqual(accounted, [...migrating].sort());
+
+  // The residue source reaches no shard and no brief at all.
+  for (const shard of partitioned.data.shards) {
+    for (const source of residue) {
+      assert.equal(shard.sources.includes(source), false, `${source} must not be partitioned`);
+      assert.equal(shard.brief.mapping.some((item) => item.path === source), false);
+    }
+  }
+  assert.equal(JSON.stringify(response).includes('assets/legacy.html'), false);
+  // ...and it is still exactly where it started.
+  assert.equal(fs.existsSync(path.join(root, 'assets', 'legacy.html')), true);
 });
 
 // --------------------------------------------------------- missing shard refused
@@ -420,7 +433,7 @@ test('assemble reports not-configured outside a Git repository and is silent on 
     operation: 'assemble',
     payload: {
       cwd: outside,
-      partition: { shards: [{ shard: 'x', sources: ['x.md'], brief: { shard: 'x', mapping: [], references: [], split_review: [], sources: ['x.md'] } }] },
+      partition: { shards: [{ shard: 'x', sources: ['x.md'], brief: { shard: 'x', mapping: [], split_review: [], sources: ['x.md'] } }] },
       shards: [{ shard: 'x', path: 'x.json' }],
       group_packages: { packages: [], root: { purpose: 'Bundle root', index: { disposition: 'unchanged', title: 'Bundle' }, log: { disposition: 'none' }, children: [] }, indexes: [] },
     },

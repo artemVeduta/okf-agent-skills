@@ -2,10 +2,12 @@
  * #146: dynamic semantic partitioner and delegated worker protocol.
  *
  * Upstream is exactly `migration-plan`'s (#144/#145) own output shape, unmodified:
- * `plan.entries` (`{path, disposition, reason, concept, type}`), `mapping` (one
+ * `plan.entries` (`{path, disposition, reason, concept, type}`) and `mapping` (one
  * `{path, concept, type, sources, body}` per `migrate` entry, already link-rewritten
- * against every other source that same call migrated), and `references` (one
- * `{path, reference_path}` per `residue` entry). This module never re-reads a source
+ * against every other source that same call migrated). A `residue` entry has no
+ * upstream slice here at all: #177 (#157) makes migration residue report-only, so
+ * it is named once in `data.plan` and in the final report and never partitioned.
+ * This module never re-reads a source
  * file and never re-derives a disposition or a type -- it only groups an already-
  * determined plan into shards small and local enough for a fresh-context worker to
  * convert without the coordinator ever holding the whole corpus in its own context
@@ -33,8 +35,8 @@
  * case the whole `docs/payments/**` example is built on.
  *
  * `buildBrief()` is the narrow, immutable context a worker receives (#131 section
- * 11): project mode, its own assigned sources and their approved mapping/type, its
- * own assigned residue evidence, the OKF version -- the authoring contract's own
+ * 11): project mode, its own assigned sources and their approved mapping/type,
+ * the OKF version -- the authoring contract's own
  * version tag, exactly as `monorepo.buildBrief` already treats "no corpus, no
  * authoring prose duplicated from the contract, only its version tag" -- the target
  * `cwd`/`bundle`, and `neighbors`: the target concept path for every cross-shard
@@ -178,32 +180,26 @@ function conceptEntries(entries) {
   return entries.filter((entry) => entry.disposition === 'migrate');
 }
 
-function residueEntries(entries) {
-  return entries.filter((entry) => entry.disposition === 'residue');
-}
-
 function mappingByPath(mapping) {
   return new Map(mapping.map((item) => [item.path, item]));
 }
 
-function referencesByPath(references) {
-  return new Map(references.map((item) => [item.path, item]));
-}
-
 // The deterministic partition (#146's own job): one shard per locality group,
-// carrying only the slice of `mapping`/`references` its own sources need, plus the
+// carrying only the slice of `mapping` its own sources need, plus the
 // cross-shard links its own sources make into a concept some other shard owns.
 // `plan.executable` must already be `true` -- this module partitions a fully
 // determined plan, it never resolves an open question itself.
-function computePartition(plan, mapping, references, splitReview, options = {}) {
+//
+// #177 (#157): a `residue` entry is never partitioned. Migration residue is
+// report-only -- the source stays where it is, nothing is copied, and no target
+// path is derived for it -- so it has no work for a worker to do and never
+// appears in a shard, a brief, or a shard return.
+function computePartition(plan, mapping, splitReview, options = {}) {
   const maxSize = options.maxSourcesPerShard || DEFAULT_MAX_SOURCES_PER_SHARD;
   const mapped = mappingByPath(mapping);
-  const referenced = referencesByPath(references);
 
-  const items = [
-    ...conceptEntries(plan.entries).map((entry) => ({ path: entry.path, kind: 'concept', concept: entry.concept })),
-    ...residueEntries(plan.entries).map((entry) => ({ path: entry.path, kind: 'residue' })),
-  ];
+  const items = conceptEntries(plan.entries)
+    .map((entry) => ({ path: entry.path, kind: 'concept', concept: entry.concept }));
   const shards = labelShards(localityGroups(items, maxSize));
 
   const conceptFiles = new Map(); // "<concept>.md" -> concept
@@ -236,13 +232,12 @@ function computePartition(plan, mapping, references, splitReview, options = {}) 
   const result = shards.map((shard) => {
     const sources = shard.items.map((item) => item.path).sort();
     const shardMapping = shard.items.filter((item) => item.kind === 'concept').map((item) => mapped.get(item.path));
-    const shardReferences = shard.items.filter((item) => item.kind === 'residue').map((item) => referenced.get(item.path));
     const neighbors = [...neighborsByShard.get(shard.id)].sort().map((concept) => ({ concept }));
     const reviews = splitReview.filter((item) => sources.includes(item.path));
     return {
       shard: shard.id,
       sources,
-      brief: buildBrief(shard.id, sources, shardMapping, shardReferences, neighbors, reviews, options),
+      brief: buildBrief(shard.id, sources, shardMapping, neighbors, reviews, options),
     };
   });
 
@@ -252,11 +247,12 @@ function computePartition(plan, mapping, references, splitReview, options = {}) 
 // ------------------------------------------------------------------- worker brief
 
 // The narrow, immutable context a worker receives (#131 section 11) -- nothing
-// beyond its own assigned sources, their approved mapping, its own residue
-// evidence, the target namespace it writes into, and the minimal cross-shard
-// neighbor index needed to keep an outbound link semantically correct. No sibling
-// shard's sources, no corpus, no authoring prose duplicated from the contract.
-function buildBrief(shardId, sources, mapping, references, neighbors, splitReview, options) {
+// beyond its own assigned sources, their approved mapping, the target namespace
+// it writes into, and the minimal cross-shard neighbor index needed to keep an
+// outbound link semantically correct. No sibling shard's sources, no corpus, no
+// authoring prose duplicated from the contract, and (#177) never any residue: a
+// brief names only sources a worker converts.
+function buildBrief(shardId, sources, mapping, neighbors, splitReview, options) {
   return {
     shard: shardId,
     cwd: options.cwd,
@@ -265,7 +261,6 @@ function buildBrief(shardId, sources, mapping, references, neighbors, splitRevie
     okf_version: '0.2',
     sources,
     mapping,
-    references,
     split_review: splitReview,
     neighbors,
   };
@@ -273,7 +268,7 @@ function buildBrief(shardId, sources, mapping, references, neighbors, splitRevie
 
 // ---------------------------------------------------------------- shard protocol
 
-const SHARD_FIELDS = new Set(['shard', 'concepts', 'references', 'warnings', 'blockers']);
+const SHARD_FIELDS = new Set(['shard', 'concepts', 'warnings', 'blockers']);
 const CONCEPT_FIELDS = new Set(['path', 'concept', 'type', 'body']);
 const SPLIT_CONCEPT_FIELDS = new Set(['path', 'output', 'concept', 'type', 'sections', 'body']);
 const SECTION_FIELDS = new Set(['line_start', 'line_end']);
@@ -501,11 +496,11 @@ function splitOutputFinding(brief, item, approved) {
 }
 
 // Validates a worker's returned shard against the exact protocol this module's own
-// `buildBrief()` promised it: every concept and reference the brief assigned is
-// accounted for (converted, or explicitly named in `blockers` -- never silently
-// missing), and nothing claims a source, concept, or reference path outside what
-// the brief actually assigned. This checks the shard *envelope* only -- OKF
-// concept-content conformance is #148's job, not this function's.
+// `buildBrief()` promised it: every concept the brief assigned is accounted for
+// (converted, or explicitly named in `blockers` -- never silently missing), and
+// nothing claims a source or concept outside what the brief actually assigned.
+// This checks the shard *envelope* only -- OKF concept-content conformance is
+// #148's job, not this function's.
 function validateShard(brief, shard) {
   const splitReview = isPlainObject(brief) && Array.isArray(brief.mapping)
     ? validateSplitReviews(brief.mapping, brief.split_review)
@@ -518,7 +513,6 @@ function validateShard(brief, shard) {
   if (shard.shard !== brief.shard) return invalid('SHARD_IDENTITY_MISMATCH', { expected: brief.shard, actual: shard.shard });
 
   const assignedMapping = new Map(brief.mapping.map((item) => [item.path, item]));
-  const assignedReferences = new Map(brief.references.map((item) => [item.path, item]));
   const assignedSources = new Set(brief.sources);
   const splitByPath = new Map(brief.split_review.filter((item) => item.proposal !== null).map((item) => [item.path, item]));
 
@@ -557,21 +551,6 @@ function validateShard(brief, shard) {
       if (!splitOutputOrder.has(item.path)) splitOutputOrder.set(item.path, []);
       splitOutputOrder.get(item.path).push(item.output);
     }
-  }
-
-  if (!Array.isArray(shard.references)) return invalid('SHARD_MALFORMED', { field: 'references' });
-  const refs = new Set();
-  for (const item of shard.references) {
-    if (!isPlainObject(item) || !nonEmptyString(item.path) || !nonEmptyString(item.reference_path)) {
-      return invalid('SHARD_MALFORMED', { field: 'references', path: item && item.path });
-    }
-    const approved = assignedReferences.get(item.path);
-    if (!approved) return invalid('SHARD_SOURCE_NOT_ASSIGNED', { path: item.path });
-    if (item.reference_path !== approved.reference_path) {
-      return invalid('SHARD_REFERENCE_MISMATCH', { path: item.path, expected: approved.reference_path, actual: item.reference_path });
-    }
-    if (refs.has(item.path)) return invalid('SHARD_DUPLICATE_ENTRY', { path: item.path });
-    refs.add(item.path);
   }
 
   if (!Array.isArray(shard.warnings) || shard.warnings.some((item) => typeof item !== 'string')) {
@@ -635,9 +614,6 @@ function validateShard(brief, shard) {
         });
       }
     }
-  }
-  for (const sourcePath of assignedReferences.keys()) {
-    if (!refs.has(sourcePath) && !blocked.has(sourcePath)) return invalid('SHARD_INCOMPLETE', { path: sourcePath });
   }
 
   return { ok: true };

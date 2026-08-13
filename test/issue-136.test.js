@@ -147,8 +147,24 @@ test('residue is reported inertly, distinct from a skip or an ambiguity, and doe
     semantic_review: reviewed,
   }));
   assert.equal(response.data.status, 'complete');
-  assert.deepEqual(response.data.residue, [{ source: 'docs/legacy.docx', reason: 'unsupported_format' }]);
+  // #177 (#157): the row names the source's own original path, its reason, and
+  // states outright that setup left that source where it was.
+  assert.deepEqual(response.data.residue, [
+    { source: 'docs/legacy.docx', reason: 'unsupported_format', unchanged: true },
+  ]);
   assert.deepEqual(response.data.summary.sources_residue, 1);
+});
+
+test('residue alone, with nothing migrated, is still a complete run rather than a partial one', (t) => {
+  const root = repo(t);
+  git(root);
+  const response = run(reportRequest(root, {
+    sources: [residue('docs/legacy.docx', 'unsupported_format')],
+    semantic_review: reviewed,
+  }));
+  assert.equal(response.data.status, 'complete');
+  assert.equal(response.data.summary.sources_residue, 1);
+  assert.equal(response.data.residue[0].unchanged, true);
 });
 
 // --------------------------------------------------------- semantic fidelity

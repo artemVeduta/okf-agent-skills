@@ -123,7 +123,6 @@ function assemble(root, plan) {
   const partitioned = run('partition', root, {
     plan: plan.plan,
     mapping: plan.mapping,
-    references: plan.references,
     split_review: plan.split_review,
   });
   const brief = partitioned.data.shards[0].brief;
@@ -138,7 +137,6 @@ function assemble(root, plan) {
       sections: review.outputs.find((item) => item.output === output.output).sections.map((section) => ({ ...section })),
       body: `# ${output.title}\n`,
     })),
-    references: [],
     warnings: [],
     blockers: [],
   };

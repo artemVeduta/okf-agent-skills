@@ -778,14 +778,13 @@ test('a shard concept whose id equals a group index path is refused at the stagi
     protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'partition',
     payload: {
       cwd: root, plan: planned.data.plan, mapping: planned.data.mapping,
-      references: planned.data.references, split_review: planned.data.split_review,
+      split_review: planned.data.split_review,
     },
   });
   const brief = partitioned.data.shards[0].brief;
   const shard = {
     shard: brief.shard,
     concepts: brief.mapping.map((item) => ({ path: item.path, concept: item.concept, type: item.type, body: `${item.body}\n\nConverted.\n` })),
-    references: brief.references.map((item) => ({ path: item.path, reference_path: item.reference_path })),
     warnings: [],
     blockers: [],
   };
@@ -829,14 +828,13 @@ test('a shard whose concept has no group prefix is refused before staging', (t) 
   const partitioned = run({
     protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'partition',
     payload: {
-      cwd: root, plan, mapping, references: planned.data.references, split_review: planned.data.split_review,
+      cwd: root, plan, mapping, split_review: planned.data.split_review,
     },
   });
   const brief = partitioned.data.shards[0].brief;
   const shard = {
     shard: brief.shard,
     concepts: brief.mapping.map((item) => ({ path: item.path, concept: item.concept, type: item.type, body: `${item.body}\n\nConverted.\n` })),
-    references: brief.references.map((item) => ({ path: item.path, reference_path: item.reference_path })),
     warnings: [],
     blockers: [],
   };

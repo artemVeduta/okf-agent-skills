@@ -285,14 +285,12 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
     shard: 'x', cwd: root, bundle: 'okf', project_mode: null, okf_version: '0.2',
     sources: ['docs/a.md'],
     mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, body: '# A\n' }],
-    references: [],
     split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', sections: [], outputs: [], proposal: null }],
     neighbors: [],
   };
   const shard = {
     shard: 'x',
     concepts: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', body: '# A\n' }],
-    references: [],
     warnings: [],
     blockers: [],
   };

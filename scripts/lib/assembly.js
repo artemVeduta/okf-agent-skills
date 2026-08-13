@@ -78,8 +78,10 @@ function renderIndex(group) {
 // `Map<shardId, shardObject>`; `partitionShards` is `partition`'s own
 // `data.shards` array (`{shard, sources, brief}`), unmodified. Returns either
 // `{ok: false, ...}` naming exactly what was wrong, or `{ok: true, concepts,
-// references, blockers, duplicates}` -- `concepts` already carries each
-// item's own rendered file text, ready to stage.
+// indexes, blockers, duplicates}` -- `concepts` already carries each
+// item's own rendered file text, ready to stage. #177 (#157): assembly has no
+// residue role at all -- a residue source never reached a shard, so there is
+// nothing here to collect and no `references/` tree to build.
 function computeAssembly(partitionShards, shardContents, groupPackages) {
   // Defense in depth: `skills/okf-setup/SKILL.md` already requires every
   // shard to pass `partition`'s own validate mode before it is ever staged,
@@ -91,13 +93,12 @@ function computeAssembly(partitionShards, shardContents, groupPackages) {
   }
 
   const concepts = [];
-  const references = [];
   const blockers = [];
   const claimed = new Map(); // source path -> the one shard and result kind allowed to claim it
 
   for (const shard of partitionShards) {
     const content = shardContents.get(shard.shard);
-    for (const [kind, list, items] of [['concept', concepts, content.concepts], ['reference', references, content.references], ['blocker', blockers, content.blockers]]) {
+    for (const [kind, list, items] of [['concept', concepts, content.concepts], ['blocker', blockers, content.blockers]]) {
       for (const item of items) {
         const owner = claimed.get(item.path);
         const split = kind === 'concept' && owner && owner.kind === 'concept' && owner.shard === shard.shard
@@ -164,7 +165,7 @@ function computeAssembly(partitionShards, shardContents, groupPackages) {
   const indexes = groupPackages.indexes
     .map((group) => ({ kind: 'index', path: group.index_entry.path, group, rendered: renderIndex(group) }));
 
-  return { ok: true, concepts: rendered, indexes, references, blockers, duplicates };
+  return { ok: true, concepts: rendered, indexes, blockers, duplicates };
 }
 
 // #146's own `cross_shard_links` re-checked against the concepts assembly

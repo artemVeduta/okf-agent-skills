@@ -115,7 +115,6 @@ function assemble(root, plan, bodies = {}) {
   const partitioned = run('partition', root, {
     plan: plan.plan,
     mapping: plan.mapping,
-    references: plan.references,
     split_review: plan.split_review,
   });
   const shards = partitioned.data.shards.map((item, index) => {
@@ -133,7 +132,7 @@ function assemble(root, plan, bodies = {}) {
         body: bodies[`${review.path}:${output.output}`] || `# ${output.title}\n`,
       }));
     });
-    const shard = { shard: item.shard, concepts, references: [], warnings: [], blockers: [] };
+    const shard = { shard: item.shard, concepts, warnings: [], blockers: [] };
     const shardPath = `.okf-staging/shards/${index}.json`;
     fs.mkdirSync(path.dirname(path.join(root, shardPath)), { recursive: true });
     fs.writeFileSync(path.join(root, shardPath), JSON.stringify(shard));

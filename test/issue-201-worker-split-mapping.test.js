@@ -123,7 +123,6 @@ function partition(root, plan) {
   return run('partition', root, {
     plan: plan.plan,
     mapping: plan.mapping,
-    references: plan.references,
     split_review: plan.split_review,
   });
 }
@@ -140,7 +139,6 @@ function workerResult(brief) {
       sections: review.outputs.find((item) => item.output === output.output).sections.map((section) => ({ ...section })),
       body: `# ${output.title}\n`,
     })),
-    references: [],
     warnings: [],
     blockers: [],
   };
