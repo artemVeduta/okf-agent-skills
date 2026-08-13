@@ -50,7 +50,31 @@ function stage(root, relative, content, bundle = 'okf') {
 
 function stagedRef(root, sourcePath, concept, type, content) {
   const file = stage(root, `${concept}.md`, content);
-  return { path: sourcePath, concept, type, shard: 'x', file };
+  return { path: sourcePath, concept, type, shard: 'x', file, sources: [] };
+}
+
+function authority(root, staged) {
+  return {
+    plan: {
+      entries: staged.map((item) => ({
+        path: item.path, disposition: 'migrate', reason: 'type_preserved', concept: item.concept, type: item.type,
+      })),
+      executable: true,
+      duplicates: [],
+    },
+    mapping: staged.map((item) => ({
+      path: item.path, concept: item.concept, type: item.type, sources: null,
+      body: validationBody(root, item),
+    })),
+    split_review: staged.map((item) => ({ path: item.path, accounting_status: 'not_required', proposal: null })),
+    semantic_review: { human_assessed: false, candidates: [], sources: [] },
+  };
+}
+
+function validationBody(root, item) {
+  const text = fs.readFileSync(path.resolve(root, item.file), 'utf8');
+  const closing = text.split('\n').findIndex((line, index) => index > 0 && line === '---');
+  return text.split('\n').slice(closing + 1).join('\n');
 }
 
 function publishRequest(root, staged, payload = {}) {
@@ -58,7 +82,7 @@ function publishRequest(root, staged, payload = {}) {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'publish',
-    payload: { cwd: root, task_kind: 'feature work', staged, ...payload },
+    payload: { cwd: root, task_kind: 'feature work', staged, ...authority(root, staged), ...payload },
   };
 }
 
@@ -74,7 +98,7 @@ function bundleFile(root, concept) {
 
 test('publish promotes a staged concept into the real bundle by delegating one okf-write create call', (t) => {
   const root = repo(t);
-  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\n---\n# A\n\nBody text.\n')];
+  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# A\n\nBody text.\n')];
   const stagedFile = fs.readFileSync(path.join(root, staged[0].file), 'utf8');
 
   const response = run(publishRequest(root, staged));
@@ -115,7 +139,7 @@ test('publish is refused by the same write gate an inline create would hit, and 
   fs.mkdirSync(path.join(root, 'okf', 'decisions'), { recursive: true });
   fs.writeFileSync(bundleFile(root, 'decisions/a'), original);
 
-  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\n---\n# Would-be replacement\n')];
+  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# Would-be replacement\n')];
   const response = run(publishRequest(root, staged));
 
   assert.equal(response.result, 'ok');
@@ -131,28 +155,31 @@ test('publish is refused by the same write gate an inline create would hit, and 
   assert.equal(fs.readFileSync(bundleFile(root, 'decisions/a'), 'utf8'), original);
 });
 
-test("one failing concept never withdraws another concept's own successful publish", (t) => {
+test("a failed concept leaves every later concept unattempted", (t) => {
   const root = repo(t);
   fs.mkdirSync(path.join(root, 'okf', 'decisions'), { recursive: true });
   fs.writeFileSync(bundleFile(root, 'decisions/blocked'), '---\ntype: Decision\n---\n# Already there\n');
 
   const staged = [
-    stagedRef(root, 'docs/blocked.md', 'decisions/blocked', 'Decision', '---\ntype: Decision\n---\n# Replacement attempt\n'),
-    stagedRef(root, 'docs/ok.md', 'decisions/ok', 'Decision', '---\ntype: Decision\n---\n# OK\n'),
+    stagedRef(root, 'docs/ok.md', 'decisions/ok', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# OK\n'),
+    stagedRef(root, 'docs/blocked.md', 'decisions/blocked', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# Replacement attempt\n'),
+    stagedRef(root, 'docs/later.md', 'decisions/later', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# Later\n'),
   ];
   const response = run(publishRequest(root, staged));
 
   assert.equal(response.data.status, 'partial');
   assert.deepEqual(response.data.published, ['decisions/ok']);
   assert.deepEqual(response.data.failed.map((item) => item.concept), ['decisions/blocked']);
+  assert.deepEqual(response.data.skipped, [{ concept: 'decisions/later', status: 'not-attempted' }]);
   assert.equal(fs.existsSync(bundleFile(root, 'decisions/ok')), true);
+  assert.equal(fs.existsSync(bundleFile(root, 'decisions/later')), false);
 });
 
 // --------------------------------------------- read reaches the shared seam
 
 test('publish is blocked at one clear precheck, through a delegated read, when the bundle is not active -- never per-concept noise', (t) => {
   const root = repo(t);
-  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\n---\n# A\n')];
+  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# A\n')];
 
   // Publish carries no admission of its own (#149): it never touches the
   // bundle directly, so nothing else here would have caught a bundle that

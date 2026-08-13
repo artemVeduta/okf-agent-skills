@@ -86,7 +86,7 @@ test('publish survives a pre-publish precheck whose delegated validate answer ex
     `fixture must answer past 1 MiB to exercise the boundary, got ${direct.stdout.length}`,
   );
 
-  const file = stage(root, 'decisions/a.md', '---\ntype: Decision\n---\n# A\n\nBody text.\n');
+  const file = stage(root, 'decisions/a.md', '---\ntype: Decision\nstatus: draft\n---\n# A\n\nBody text.\n');
   const response = runWrapper(setupWrapper, {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
@@ -94,7 +94,15 @@ test('publish survives a pre-publish precheck whose delegated validate answer ex
     payload: {
       cwd: root,
       task_kind: 'feature work',
-      staged: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', shard: 'x', file }],
+      staged: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', shard: 'x', file, sources: [] }],
+      plan: {
+        entries: [{ path: 'docs/a.md', disposition: 'migrate', reason: 'type_preserved', concept: 'decisions/a', type: 'Decision' }],
+        executable: true,
+        duplicates: [],
+      },
+      mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, body: '# A\n\nBody text.\n' }],
+      split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', proposal: null }],
+      semantic_review: { human_assessed: false, candidates: [], sources: [] },
     },
   });
 

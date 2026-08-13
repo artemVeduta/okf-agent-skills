@@ -128,8 +128,20 @@ function computeAssembly(partitionShards, shardContents) {
   const briefByShard = new Map(partitionShards.map((shard) => [shard.shard, shard.brief]));
   const rendered = concepts.map((item) => {
     const approved = briefByShard.get(item.shard).mapping.find((entry) => entry.path === item.path);
-    const sources = approved ? approved.sources : null;
-    return { path: item.path, concept: item.concept, type: item.type, shard: item.shard, rendered: renderConcept(item.type, sources, item.body) };
+    const acceptedOutput = item.output === undefined ? null
+      : briefByShard.get(item.shard).split_review.find((review) => review.path === item.path)
+        .proposal.outputs.find((output) => output.output === item.output);
+    const sources = acceptedOutput === null ? approved && approved.sources
+      : acceptedOutput.provenance_assignments.map((assignment) => assignment.source);
+    return {
+      path: item.path, concept: item.concept, type: item.type, shard: item.shard,
+      ...(item.output === undefined ? {} : {
+        output: item.output,
+        sections: item.sections,
+        accepted_output: acceptedOutput,
+      }),
+      rendered: renderConcept(item.type, sources, item.body),
+    };
   });
 
   return { ok: true, concepts: rendered, references, blockers, duplicates };

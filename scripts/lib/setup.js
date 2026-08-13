@@ -17,6 +17,7 @@ const sections = require('./sections');
 const splitProposal = require('./split-proposal');
 const partition = require('./partition');
 const assembly = require('./assembly');
+const publication = require('./publication');
 const lifecycle = require('./lifecycle');
 const { inside } = require('./paths');
 const {
@@ -217,7 +218,7 @@ function executeRepair(request, services) {
   const payload = request.payload;
   const context = setupContext(request, services);
   if (context.refusal) return context.refusal;
-  const { gitRoot, bundleName } = context;
+  const { gitRoot, bundleRoot, bundleName } = context;
 
   const targets = payload.targets;
   const validShape = Array.isArray(targets) && targets.length > 0 &&
@@ -1255,6 +1256,9 @@ function executeAssemble(request, services) {
       path: item.path, concept: item.concept, type: item.type, shard: item.shard,
       file: path.relative(gitRoot, file),
       sources: sourceBinding(gitRoot, item.path, identities, services),
+      ...(item.output === undefined ? {} : {
+        output: item.output, sections: item.sections, accepted_output: item.accepted_output,
+      }),
     };
   });
 
@@ -1549,10 +1553,7 @@ function executeMigrationValidate(request, services) {
 }
 
 function validPublishStagedRef(item) {
-  return !!item && typeof item === 'object' && !Array.isArray(item) &&
-    typeof item.concept === 'string' && item.concept !== '' &&
-    typeof item.file === 'string' && item.file !== '' &&
-    (item.sources === undefined || Array.isArray(item.sources));
+  return publication.validStaged(item);
 }
 
 function dispatchBrief(brief) {
@@ -1677,7 +1678,7 @@ function executePublish(request, services) {
   const payload = request.payload;
   const context = setupContext(request, services);
   if (context.refusal) return context.refusal;
-  const { gitRoot, bundleName } = context;
+  const { gitRoot, bundleRoot, bundleName } = context;
 
   if (!lifecycle.isWritableTaskKind(payload.task_kind)) {
     return respond(request, 'blocked', { code: 'TASK_KIND_NOT_WRITE_ELIGIBLE' }, []);
@@ -1688,6 +1689,20 @@ function executePublish(request, services) {
   if (new Set(payload.staged.map((item) => item.concept)).size !== payload.staged.length) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  const migrating = payload.plan && Array.isArray(payload.plan.entries)
+    ? payload.plan.entries.filter((item) => item.disposition === 'migrate') : [];
+  if (!publication.validPlan(payload.plan) || !publication.validMapping(payload.mapping)
+    || payload.mapping.length !== migrating.length
+    || payload.mapping.some((item) => !migrating.some((entry) => entry.path === item.path
+      && entry.concept === item.concept && entry.type === item.type))
+    || !Array.isArray(payload.split_review)
+    || !publication.validCanonicalReview(payload.semantic_review)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const splitReview = partition.validateSplitReviews(payload.mapping, payload.split_review);
+  if (!splitReview.ok) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [
+    partitionFinding(splitReview.code, true, splitReview.detail),
+  ]);
 
   const cwd = payload.cwd;
   const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
@@ -1698,29 +1713,45 @@ function executePublish(request, services) {
     return respond(request, 'blocked', { code: 'PUBLISH_PRECHECK_FAILED' }, precheck.findings || []);
   }
 
-  const results = payload.staged.map((item) => {
+  const checked = publication.evaluate({
+    gitRoot, bundleRoot, stagingRoot, mapping: payload.mapping, splitReview: payload.split_review,
+    staged: payload.staged, semanticReview: payload.semantic_review, services,
+  });
+  if (!checked.ok) {
+    return respond(request, 'blocked', { code: 'PUBLISH_PRECHECK_FAILED' }, [suiteFinding(checked.finding.code, checked.finding.detail)]);
+  }
+
+  const results = [];
+  for (const item of payload.staged) {
     const rel = monorepo.normalizeRelative(item.file);
     const resolved = rel ? path.resolve(gitRoot, rel) : null;
     if (!resolved || !inside(stagingRoot, resolved)) {
-      return { concept: item.concept, status: 'blocked: staged-file-outside-staging', findings: [] };
+      results.push({ concept: item.concept, status: 'blocked: staged-file-outside-staging', findings: [] });
+      break;
     }
     let text;
     try {
       text = services.readFile(resolved);
     } catch {
-      return { concept: item.concept, status: 'blocked: staged-file-unreadable', findings: [] };
+      results.push({ concept: item.concept, status: 'blocked: staged-file-unreadable', findings: [] });
+      break;
     }
     let parsed;
     try {
       parsed = stagedConceptContent(text);
     } catch {
-      return { concept: item.concept, status: 'blocked: staged-file-unparseable', findings: [] };
+      results.push({ concept: item.concept, status: 'blocked: staged-file-unparseable', findings: [] });
+      break;
     }
     const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, parsed.tree, parsed.body, item.sources || []);
     const writeDispatch = dispatchBrief(brief);
     const outcome = writeDispatch.ok ? writeDispatch.response : dispatchFailure('okf-writer', writeDispatch);
-    return { concept: item.concept, status: outcome.status, findings: outcome.findings || [] };
-  });
+    results.push({ concept: item.concept, status: outcome.status, findings: outcome.findings || [] });
+    if (outcome.status !== 'clean') break;
+  }
+  const attempted = new Set(results.map((item) => item.concept));
+  const skipped = payload.staged.filter((item) => !attempted.has(item.concept))
+    .map((item) => ({ concept: item.concept, status: 'not-attempted' }));
 
   const published = results.filter((item) => item.status === 'clean').map((item) => item.concept);
   const failed = results.filter((item) => item.status !== 'clean');
@@ -1732,7 +1763,8 @@ function executePublish(request, services) {
     status: failed.length === 0 ? 'complete' : 'partial',
     published,
     failed: failed.map((item) => ({ concept: item.concept, status: item.status })),
-    results,
+    skipped,
+    results: [...results, ...skipped.map((item) => ({ ...item, findings: [] }))],
   }, findings);
 }
 
