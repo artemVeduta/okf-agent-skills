@@ -291,6 +291,105 @@ function nonEmptyString(value) {
 
 const rangeKey = (item) => `${item.line_start}:${item.line_end}`;
 
+function validateSplitReviews(mapping, splitReview) {
+  const expected = mapping.map((item) => item && item.path).filter(nonEmptyString);
+  const actual = Array.isArray(splitReview)
+    ? splitReview.map((item) => item && item.path).filter(nonEmptyString)
+    : [];
+  const counts = new Map();
+  for (const item of actual) counts.set(item, (counts.get(item) || 0) + 1);
+  const expectedSet = new Set(expected);
+  const actualSet = new Set(actual);
+  const setMismatch = {
+    missing: expected.filter((item) => !actualSet.has(item)).sort(),
+    extra: [...actualSet].filter((item) => !expectedSet.has(item)).sort(),
+    duplicate: [...counts].filter(([, count]) => count > 1).map(([item]) => item).sort(),
+  };
+  if (!Array.isArray(splitReview) || actual.length !== splitReview.length
+    || setMismatch.missing.length || setMismatch.extra.length || setMismatch.duplicate.length) {
+    return invalid('SPLIT_WORKER_REVIEW_SET_MISMATCH', setMismatch);
+  }
+
+  for (const review of splitReview) {
+    if (!isPlainObject(review)) return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: null, reason: 'review_shape' });
+    if (review.proposal === null) {
+      if (review.accounting_status !== 'not_required') {
+        return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'review_status' });
+      }
+      continue;
+    }
+    const proposal = review.proposal;
+    if (review.accounting_status !== 'complete' || !isPlainObject(proposal)
+      || proposal.status !== 'accepted' || proposal.accepted !== true
+      || !Array.isArray(review.sections) || !Array.isArray(review.outputs) || !Array.isArray(proposal.outputs)) {
+      return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'review_status' });
+    }
+    const outputCount = proposal.outputs.length;
+    if ((proposal.result !== 'keep_as_one' && proposal.result !== 'split')
+      || (proposal.result === 'keep_as_one' && outputCount !== 1)
+      || (proposal.result === 'split' && outputCount < 2)) {
+      return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'accepted_output_count' });
+    }
+
+    const outputKeys = review.outputs.map((item) => item && item.output);
+    const proposedKeys = proposal.outputs.map((item) => item && item.output);
+    const conceptIds = proposal.outputs.map((item) => item && item.concept_id);
+    if (outputKeys.some((item) => !nonEmptyString(item)) || proposedKeys.some((item) => !nonEmptyString(item))
+      || new Set(outputKeys).size !== outputKeys.length || new Set(proposedKeys).size !== proposedKeys.length
+      || new Set(conceptIds).size !== conceptIds.length
+      || outputKeys.length !== proposedKeys.length || outputKeys.some((item, index) => item !== proposedKeys[index])
+      || proposal.outputs.some((item) => !isPlainObject(item) || !nonEmptyString(item.concept_id)
+        || item.path !== `${item.concept_id}.md` || !nonEmptyString(item.type) || !nonEmptyString(item.title))) {
+      return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'output_identity' });
+    }
+
+    const assigned = review.sections.filter((item) => item && item.disposition === 'assigned');
+    const parentRanges = new Set();
+    for (const section of assigned) {
+      if (!Number.isInteger(section.line_start) || !Number.isInteger(section.line_end)
+        || !nonEmptyString(section.output) || !Number.isInteger(section.output_order) || section.output_order < 1) {
+        return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', { path: review.path, reason: 'parent_section_shape' });
+      }
+      const key = rangeKey(section);
+      if (parentRanges.has(key)) {
+        return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', {
+          path: review.path, reason: 'duplicate_parent_range', line_start: section.line_start, line_end: section.line_end,
+        });
+      }
+      parentRanges.add(key);
+    }
+
+    const outputRanges = new Set();
+    const accounted = [];
+    for (const output of review.outputs) {
+      if (!isPlainObject(output) || !nonEmptyString(output.output) || typeof output.order_explicit !== 'boolean'
+        || !Array.isArray(output.sections) || output.sections.length === 0) {
+        return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'output_sections' });
+      }
+      for (let index = 0; index < output.sections.length; index++) {
+        const section = output.sections[index];
+        if (!isPlainObject(section) || !Number.isInteger(section.line_start) || !Number.isInteger(section.line_end)) {
+          return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', { path: review.path, reason: 'output_section_shape' });
+        }
+        const key = rangeKey(section);
+        if (outputRanges.has(key)) {
+          return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', {
+            path: review.path, reason: 'duplicate_output_range', line_start: section.line_start, line_end: section.line_end,
+          });
+        }
+        outputRanges.add(key);
+        accounted.push(`${key}\0${output.output}\0${index + 1}`);
+      }
+    }
+    const parent = assigned.map((section) => `${rangeKey(section)}\0${section.output}\0${section.output_order}`);
+    if (parent.length === 0 || parent.length !== accounted.length
+      || parent.some((item) => !accounted.includes(item)) || accounted.some((item) => !parent.includes(item))) {
+      return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', { path: review.path, reason: 'section_assignment' });
+    }
+  }
+  return { ok: true };
+}
+
 function splitOutputFinding(brief, item, approved) {
   if (!approved) return invalid('SHARD_SPLIT_OUTPUT_ADDED', { path: item.path, output: item.output });
   for (const [field, actual] of [['concept_id', item.concept], ['type', item.type]]) {
@@ -335,6 +434,10 @@ function splitOutputFinding(brief, item, approved) {
 // the brief actually assigned. This checks the shard *envelope* only -- OKF
 // concept-content conformance is #148's job, not this function's.
 function validateShard(brief, shard) {
+  const splitReview = isPlainObject(brief) && Array.isArray(brief.mapping)
+    ? validateSplitReviews(brief.mapping, brief.split_review)
+    : invalid('SPLIT_WORKER_REVIEW_INVALID', { path: null, reason: 'brief_shape' });
+  if (!splitReview.ok) return splitReview;
   if (!isPlainObject(shard)) return invalid('SHARD_MALFORMED', { reason: 'not_an_object' });
   for (const field of Object.keys(shard)) {
     if (!SHARD_FIELDS.has(field)) return invalid('SHARD_UNKNOWN_FIELD', { field });
@@ -467,4 +570,4 @@ function validateShard(brief, shard) {
   return { ok: true };
 }
 
-module.exports = { DEFAULT_MAX_SOURCES_PER_SHARD, computePartition, buildBrief, validateShard };
+module.exports = { DEFAULT_MAX_SOURCES_PER_SHARD, computePartition, buildBrief, validateSplitReviews, validateShard };

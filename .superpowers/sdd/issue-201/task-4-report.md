@@ -183,3 +183,111 @@ No open Task 4 finding remains. Tasks 5 through 7 must build on
 finding codes. They must not treat Task 4 validation as semantic preservation,
 candidate conformance, review, publication safety, atomicity, rollback,
 checkpoint, resume, or recovery.
+
+---
+
+## Fix report: round 1 of 5
+
+### Critical 1: empty accepted proposals
+
+`scripts/lib/partition.js` now owns the shared
+`validateSplitReviews(mapping, splitReview)` seam. It requires the Task 3
+output cardinality that Task 4 depends on:
+
+- `proposal.result: "keep_as_one"` has exactly one output;
+- `proposal.result: "split"` has at least two outputs;
+- every accepted output has a non-empty output key, Concept ID, matching path,
+  type, and title;
+- every accepted output owns at least one section.
+
+An empty accepted proposal is now refused before compute, validate, or
+assembly can accept an empty worker result. The exact finding is
+`SPLIT_WORKER_REVIEW_INVALID` with `detail.path` and
+`detail.reason: "accepted_output_count"` for the empty-output case.
+
+### Critical 2: exact split-review source coverage
+
+The shared validator compares `split_review[].path` to the exact
+`mapping[].path` set at compute, validate, and assembly. A missing, extra, or
+duplicate row is `SPLIT_WORKER_REVIEW_SET_MISMATCH` with exact sorted arrays:
+
+- `detail.missing`
+- `detail.extra`
+- `detail.duplicate`
+
+The accepted distinction stays unchanged: `proposal: null` is valid only with
+`accounting_status: "not_required"`; a reviewed row must be complete and
+accepted. `partition.validateShard` runs this check before it reads the worker
+result, and `assemble` calls the same `validateShard` seam before staging.
+
+### Important 3: one-to-one section accounting
+
+The shared validator now compares the parent assigned sections and Task 2
+output sections exactly by `line_start`, `line_end`, output owner, and 1-based
+order. It rejects:
+
+- duplicate parent ranges;
+- duplicate output ranges;
+- missing or extra ranges;
+- changed ownership;
+- changed order;
+- an output with no assigned section.
+
+The exact finding is `SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH` with
+`detail.path`, `detail.reason`, and `detail.line_start`/`detail.line_end` for a
+duplicate range. No range is repaired or absorbed.
+
+### Important 4: deterministic process-seam coverage
+
+`test/issue-201-worker-split-mapping.test.js` now proves:
+
+- an empty accepted proposal is refused by compute, validate, and assemble;
+- a missing accepted review row is refused by compute, validate, and assemble;
+- duplicate parent accounting is refused by validate and assemble;
+- duplicate output accounting is refused by validate and assemble;
+- changed section ownership is refused by validate and assemble;
+- every assembly refusal leaves `.okf-staging/okf` absent.
+
+TDD red evidence before production changes:
+
+```text
+node --test "test/issue-201-worker-split-mapping.test.js"
+tests 9, pass 6, fail 3
+```
+
+Focused Task 4, partition, and assembly evidence:
+
+```text
+node --test "test/issue-201-worker-split-mapping.test.js" "test/issue-146.test.js" "test/issue-147.test.js"
+tests 32, pass 32, fail 0
+```
+
+Documentation request evidence:
+
+```text
+node --test "test/issue-120-doc-executability.test.js"
+tests 18, pass 18, fail 0
+```
+
+Required full-suite evidence:
+
+```text
+node --test "test/*.test.js"
+tests 591, pass 591, fail 0, skipped 0, todo 0
+duration_ms 14081.674583
+```
+
+`git diff --check -- . ':!.claude/worktrees/issue-153-parent-dir'` completed
+with no output.
+
+### Files changed in this round
+
+- `scripts/lib/partition.js`
+- `scripts/lib/setup.js`
+- `skills/okf-setup/SKILL.md`
+- `test/issue-201-worker-split-mapping.test.js`
+- `.superpowers/sdd/issue-201/task-4-report.md`
+
+No Task 5 semantic-preservation check, Task 6 candidate-conformance check, or
+Task 7 reporting behavior was added. The unrelated
+`.claude/worktrees/issue-153-parent-dir` path was not modified or staged.

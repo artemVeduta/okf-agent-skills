@@ -133,6 +133,10 @@ function assertRefused(response, code, detail) {
   assert.equal(response.findings[0].blocks, true);
 }
 
+function assertNothingStaged(root) {
+  assert.equal(fs.existsSync(path.join(root, '.okf-staging', 'okf')), false);
+}
+
 test('partition carries the accepted mapping unchanged and assemble accepts its exact worker result', (t) => {
   const root = repo(t);
   const plan = acceptedPlan(root);
@@ -236,5 +240,74 @@ test('worker output identity and accepted section and output order cannot change
     change(shard);
     assertRefused(validate(root, brief, shard), code, detail);
     assertRefused(assemble(root, partitioned, shard), code, { shard: brief.shard, ...detail });
+  }
+});
+
+test('an empty accepted proposal is refused at compute, validate, and assemble', (t) => {
+  const root = repo(t);
+  const plan = acceptedPlan(root);
+  const empty = structuredClone(plan.split_review);
+  empty[0].sections = [];
+  empty[0].outputs = [];
+  empty[0].proposal.outputs = [];
+  const detail = { path: SOURCE, reason: 'accepted_output_count' };
+
+  assertRefused(partition(root, { ...plan, split_review: empty }), 'SPLIT_WORKER_REVIEW_INVALID', detail);
+
+  const partitioned = partition(root, plan);
+  const brief = structuredClone(partitioned.data.shards[0].brief);
+  brief.split_review = empty;
+  const shard = workerResult(partitioned.data.shards[0].brief);
+  shard.concepts = [];
+  assertRefused(validate(root, brief, shard), 'SPLIT_WORKER_REVIEW_INVALID', detail);
+  partitioned.data.shards[0].brief = brief;
+  assertRefused(assemble(root, partitioned, shard), 'SPLIT_WORKER_REVIEW_INVALID', { shard: brief.shard, ...detail });
+  assertNothingStaged(root);
+});
+
+test('a missing accepted review row is refused by compute, validate, and assemble', (t) => {
+  const root = repo(t);
+  const plan = acceptedPlan(root);
+  const detail = { missing: [SOURCE], extra: [], duplicate: [] };
+  assertRefused(partition(root, { ...plan, split_review: [] }), 'SPLIT_WORKER_REVIEW_SET_MISMATCH', detail);
+
+  const partitioned = partition(root, plan);
+  const brief = structuredClone(partitioned.data.shards[0].brief);
+  const shard = workerResult(brief);
+  brief.split_review = [];
+
+  assertRefused(validate(root, brief, shard), 'SPLIT_WORKER_REVIEW_SET_MISMATCH', detail);
+  partitioned.data.shards[0].brief = brief;
+  assertRefused(assemble(root, partitioned, shard), 'SPLIT_WORKER_REVIEW_SET_MISMATCH', { shard: brief.shard, ...detail });
+  assertNothingStaged(root);
+});
+
+test('duplicate parent or output section accounting is refused by validate and assemble', (t) => {
+  const cases = [
+    [
+      (review) => review.sections.push({ ...review.sections[1] }),
+      { path: SOURCE, reason: 'duplicate_parent_range', line_start: 4, line_end: 7 },
+    ],
+    [
+      (review) => review.outputs[0].sections.push({ ...review.outputs[0].sections[0] }),
+      { path: SOURCE, reason: 'duplicate_output_range', line_start: 4, line_end: 7 },
+    ],
+    [
+      (review) => { review.sections[1].output = 'operate'; },
+      { path: SOURCE, reason: 'section_assignment' },
+    ],
+  ];
+
+  for (const [mutate, detail] of cases) {
+    const root = repo(t);
+    const partitioned = partition(root, acceptedPlan(root));
+    const brief = structuredClone(partitioned.data.shards[0].brief);
+    const shard = workerResult(brief);
+    mutate(brief.split_review[0]);
+
+    assertRefused(validate(root, brief, shard), 'SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', detail);
+    partitioned.data.shards[0].brief = brief;
+    assertRefused(assemble(root, partitioned, shard), 'SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', { shard: brief.shard, ...detail });
+    assertNothingStaged(root);
   }
 });
