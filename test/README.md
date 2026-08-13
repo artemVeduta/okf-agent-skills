@@ -26,6 +26,7 @@ the directory.
 | `evidence/semantic-review.test.js` | Structural coverage, agent review, and human fidelity are conflated, or a malformed, gapped, overlapping, duplicate, or out-of-bounds accepted review row is not refused. |
 | `harness/execution.test.js` | Orientation gates or activation markers misfire, an installed skill store fails to resolve its wrapper, a skill does not run independently of the checkout, the adapter bridge does not narrow delegation, or an oversized response returns no receipt. |
 | `ledger/split-report.test.js` | The final split report counts the wrong concepts, loses canonical output order, misreports a partial publication, or accepts a fabricated publication record. |
+| `lifecycle/proposal-capture.test.js` | The documented assisted-capture proposal rules or the folder-local maintenance rules in `okf-lifecycle` are missing or wrong. |
 | `lifecycle/sync.test.js` | `sync` produces the wrong outcome, or the deprecation retention policy keeps or drops the wrong thing. |
 | `protocol/process-contract.test.js` | A wrapper process returns the wrong exit status, envelope, or key order, activation gating is skipped, or a delegation brief or receipt dispatches wrongly. |
 | `protocol/skill-documents.test.js` | A `SKILL.md` frontmatter field, the router dispatch table, the shipped skill inventory, or a documented request example disagrees with what the real gates do. |
