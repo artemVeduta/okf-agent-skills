@@ -293,6 +293,38 @@ test('null, malformed, and duplicate accepted review rows and ranges are refused
   }
 });
 
+test('gapped, overlapping, and out-of-bounds accepted coverage is refused before evidence comparison', (t) => {
+  const cases = [
+    ['gap', (row) => { row.sections[0].line_end = 2; }, 'coverage_gap'],
+    ['overlap', (row) => { row.sections[0].line_end = 4; }, 'coverage_overlap'],
+    ['out of bounds', (row) => {
+      row.sections[2].line_end = 11;
+      row.outputs[1].sections[0].line_end = 11;
+    }, 'coverage_bounds'],
+  ];
+
+  for (const [name, mutate, reason] of cases) {
+    const { root, plan } = fixture(t);
+    const splitReview = structuredClone(plan.split_review);
+    mutate(splitReview[0]);
+    const response = validateWith(root, plan, semanticReview(root, plan), splitReview, {});
+    assert.equal(response.result, 'blocked', name);
+    assert.equal(response.findings[0].code, 'SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', name);
+    assert.equal(response.findings[0].detail.reason, reason, name);
+  }
+});
+
+test('an accepted provenance assignment without its bound source is refused', (t) => {
+  const { root, plan } = fixture(t);
+  const splitReview = structuredClone(plan.split_review);
+  splitReview[0].proposal.outputs[0].provenance_assignments.push({ source_index: 0, support: 'supported' });
+  const response = validateWith(root, plan, semanticReview(root, plan), splitReview, {});
+
+  assert.equal(response.result, 'blocked');
+  assert.equal(response.findings[0].code, 'SPLIT_WORKER_REVIEW_INVALID');
+  assert.deepEqual(response.findings[0].detail, { path: SOURCE, reason: 'proposal_shape' });
+});
+
 test('an incomplete candidate scan is refused and cannot report structural coverage passed', (t) => {
   const { root, plan } = fixture(t);
   const stagingRoot = path.join(root, '.okf-staging', 'okf');
@@ -306,6 +338,33 @@ test('an incomplete candidate scan is refused and cannot report structural cover
   assert.equal(response.result, 'blocked');
   assert.equal(response.findings[0].code, 'SEMANTIC_REVIEW_CANDIDATE_SCAN_INCOMPLETE');
   assert.deepEqual(response.data.structural_coverage, { passed: false });
+});
+
+test('an incomplete structural scan blocks structural coverage even when the candidate evidence scan is complete', (t) => {
+  const { root, plan } = fixture(t);
+  const stagingRoot = path.join(root, '.okf-staging', 'okf');
+  let stagingScans = 0;
+  const response = validateWith(root, plan, semanticReview(root, plan), plan.split_review, {
+    listFiles(scanRoot, skipDir) {
+      const listed = defaultServices.listFiles(scanRoot, skipDir);
+      if (path.resolve(scanRoot) !== stagingRoot) return listed;
+      stagingScans++;
+      return stagingScans === 1 ? { ...listed, complete: false } : listed;
+    },
+  });
+
+  assert.equal(stagingScans, 2);
+  assert.equal(response.result, 'ok');
+  assert.deepEqual(response.data.structural_coverage, { passed: false });
+  assert.deepEqual(response.data.agent_semantic_review, { passed: true });
+  assert.equal(response.data.publishable, false);
+  assert.deepEqual(response.findings.find((item) => item.code === 'BUNDLE_SCAN_INCOMPLETE'), {
+    code: 'BUNDLE_SCAN_INCOMPLETE',
+    origin: 'suite',
+    severity: 'error',
+    blocks: true,
+    detail: { reason: 'incomplete_listing' },
+  });
 });
 
 test('a candidate read failure is refused explicitly', (t) => {

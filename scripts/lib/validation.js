@@ -890,11 +890,13 @@ function listedPath(bundleRoot, value) {
 }
 
 function readEntries(bundleRoot, services) {
-  const { files } = services.listFiles(bundleRoot);
-  return files
+  let listing;
+  try { listing = services.listFiles(bundleRoot); } catch { listing = { files: [], complete: false }; }
+  const entries = listing.files
     .map((file) => listedPath(bundleRoot, file))
     .filter(Boolean)
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { entries, complete: listing.complete === true };
 }
 
 function readText(value) {
@@ -996,8 +998,10 @@ const GENERATED_CONNECTOR_PATHS = new Set(connector.FILES.map(([relative]) => re
 
 function validateRead(bundleRoot, services, options = {}) {
   const root = services.realpath(path.resolve(bundleRoot));
-  const entries = readEntries(root, services);
+  const listing = readEntries(root, services);
+  const entries = listing.entries;
   const findings = [];
+  if (!listing.complete) findings.push(blocker('BUNDLE_SCAN_INCOMPLETE', 'suite', { reason: 'incomplete_listing' }));
   const concepts = [];
   const linkVerdicts = [];
   const today = typeof options.today === 'string' ? options.today : new Date().toISOString().slice(0, 10);

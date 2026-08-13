@@ -339,6 +339,7 @@ function validateSplitReviews(mapping, splitReview) {
     if (review.accounting_status !== 'complete' || !isPlainObject(proposal)
       || proposal.status !== 'accepted' || proposal.accepted !== true
       || !Array.isArray(review.sections) || !Array.isArray(review.outputs) || !Array.isArray(proposal.outputs)
+      || !Number.isInteger(review.line_count) || review.line_count < 1
       || !nonEmptyString(review.source_identity) || !/^sha256:[0-9a-f]{64}$/.test(review.source_identity)) {
       return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'review_status' });
     }
@@ -365,12 +366,14 @@ function validateSplitReviews(mapping, splitReview) {
     }
 
     const allRanges = new Set();
-    for (const section of review.sections) {
+    for (let sectionIndex = 0; sectionIndex < review.sections.length; sectionIndex++) {
+      const section = review.sections[sectionIndex];
       const assignedSection = validAcceptedSection(section) && section.disposition === 'assigned'
         && nonEmptyString(section.output) && Number.isInteger(section.output_order) && section.output_order > 0;
       const residueSection = validAcceptedSection(section) && section.disposition === 'residue'
         && section.output === null && section.output_order === null;
-      if ((!assignedSection && !residueSection) || !Number.isInteger(section.line_start) || section.line_start < 1
+      if ((!assignedSection && !residueSection)
+        || !Number.isInteger(section.line_start) || section.line_start < 1
         || !Number.isInteger(section.line_end) || section.line_end < section.line_start) {
         return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', { path: review.path, reason: 'parent_section_shape' });
       }
@@ -381,6 +384,36 @@ function validateSplitReviews(mapping, splitReview) {
         });
       }
       allRanges.add(key);
+      if (section.index !== sectionIndex) {
+        return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', { path: review.path, reason: 'parent_section_shape' });
+      }
+    }
+
+    let cursor = 1;
+    for (const section of review.sections) {
+      if (section.line_end > review.line_count) {
+        return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', {
+          path: review.path, reason: 'coverage_bounds', line_start: section.line_start,
+          line_end: section.line_end, line_count: review.line_count,
+        });
+      }
+      if (section.line_start > cursor) {
+        return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', {
+          path: review.path, reason: 'coverage_gap', line_start: cursor, line_end: section.line_start - 1,
+        });
+      }
+      if (section.line_start < cursor) {
+        return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', {
+          path: review.path, reason: 'coverage_overlap', line_start: section.line_start,
+          line_end: Math.min(cursor - 1, section.line_end),
+        });
+      }
+      cursor = section.line_end + 1;
+    }
+    if (cursor <= review.line_count) {
+      return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', {
+        path: review.path, reason: 'coverage_gap', line_start: cursor, line_end: review.line_count,
+      });
     }
 
     const assigned = review.sections.filter((item) => item.disposition === 'assigned');

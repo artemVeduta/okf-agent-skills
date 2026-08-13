@@ -104,7 +104,8 @@ function validAccepted(value) {
   const responseOutput = (item) => output(item)
     && only(item, ['output', 'concept_id', 'path', 'type', 'title', 'heading_outline', 'reader_purpose_group', 'provenance_assignments', 'link_routes', 'anchor_routes'])
     && item.heading_outline.every((row) => only(row, ['level', 'text']))
-    && item.provenance_assignments.every((row) => only(row, ['source_index', 'support', 'source']))
+    && item.provenance_assignments.every((row) => only(row, ['source_index', 'support', 'source'])
+      && object(row.source))
     && item.link_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'target']))
     && item.anchor_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'source_anchor', 'line_start', 'line_end', 'target_anchor']));
   const knownRoute = (route) => routeIdentity(route) && only(route, [

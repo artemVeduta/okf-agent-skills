@@ -436,3 +436,132 @@ Self-review found and fixed these follow-up issues before the final suite:
 No open finding remains from fix round 1. No publication check, publication
 call, Task 7 report aggregation, atomicity, rollback, checkpoint, resume, or
 recovery behavior was added.
+
+---
+
+## Fix report: round 2 of 5
+
+### Important 1: complete accepted source coverage
+
+The shared `partition.validateSplitReviews` validator now requires each accepted
+reviewed source to preserve Task 2's complete coverage invariants:
+
+- `line_count` is a positive integer;
+- section `index` values match source order;
+- ranges are positive and in bounds;
+- the first range starts at line 1;
+- each next range starts immediately after the prior range;
+- the final range ends at `line_count`;
+- no gap or overlap is accepted;
+- every range has exactly one assigned or residue disposition;
+- output ownership and order still match one-to-one.
+
+Failures use `SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH` with the narrow reason
+and exact range detail:
+
+- `coverage_gap`
+- `coverage_overlap`
+- `coverage_bounds`
+
+This is accepted source accounting validation only. It does not compare the
+transformed candidate with the accepted proposal and does not implement Task 6.
+
+The accepted Task 3 response validator now also requires every
+`provenance_assignments[]` and `provenance_exclusions[]` row to contain its
+bound `source` object. A missing bound source is
+`SPLIT_WORKER_REVIEW_INVALID` with `reason: "proposal_shape"`.
+
+### Important 2: complete shared structural scan
+
+`validation.validateRead` now retains the `complete` value from its own
+`services.listFiles` call. An incomplete or failed shared structural scan adds
+this exact blocking finding:
+
+```json
+{
+  "code": "BUNDLE_SCAN_INCOMPLETE",
+  "origin": "suite",
+  "severity": "error",
+  "blocks": true,
+  "detail": { "reason": "incomplete_listing" }
+}
+```
+
+`migration-validate` therefore returns
+`data.structural_coverage.passed: false` and `data.publishable: false` even when
+the separate later candidate evidence scan is complete. The existing
+`SEMANTIC_REVIEW_CANDIDATE_SCAN_INCOMPLETE` check remains because it binds the
+exact semantic-review candidate set. The structural scan and candidate-binding
+scan keep separate responsibilities.
+
+### Changed files
+
+- `scripts/lib/partition.js`: enforces exact complete accepted source coverage
+  against `line_count` and indexed source order.
+- `scripts/lib/split-proposal.js`: requires bound source objects on accepted
+  provenance assignments as well as exclusions.
+- `scripts/lib/validation.js`: preserves shared scan completeness and emits
+  blocking `BUNDLE_SCAN_INCOMPLETE`.
+- `skills/okf-setup/SKILL.md`: documents accepted coverage reasons, bound
+  provenance, and separate structural and candidate scan findings.
+- `test/issue-201-semantic-review.test.js`: adds deterministic process-seam
+  fixtures for gaps, overlaps, out-of-bounds ranges, missing bound source, and
+  first-scan-only structural incompleteness.
+- `.superpowers/sdd/issue-201/task-5-report.md`: appends this round 2 report.
+
+The unrelated `.claude/worktrees/issue-153-parent-dir` path was not modified or
+staged.
+
+### Test evidence
+
+Red run before production fixes:
+
+```text
+node --test "test/issue-201-semantic-review.test.js"
+tests 15, pass 12, fail 3
+```
+
+The failures showed malformed accepted coverage and missing bound provenance
+reaching only the later accepted-binding mismatch, and first-scan structural
+incompleteness still reporting structural pass.
+
+Focused green run before final verification:
+
+```text
+node --test "test/issue-201-semantic-review.test.js" "test/issue-201-worker-split-mapping.test.js" "test/issue-201-split-proposal.test.js" "test/issue-148.test.js"
+tests 57, pass 57, fail 0
+duration_ms 9686.33575
+```
+
+Final focused evidence:
+
+```text
+node --test "test/issue-201-semantic-review.test.js" "test/issue-201-worker-split-mapping.test.js" "test/issue-201-split-proposal.test.js" "test/issue-201-source-sections.test.js" "test/issue-148.test.js" "test/issue-149.test.js" "test/issue-50.test.js" "test/issue-120-doc-executability.test.js"
+tests 134, pass 134, fail 0
+duration_ms 16723.578958
+```
+
+Required full suite:
+
+```text
+node --test "test/*.test.js"
+tests 606, pass 606, fail 0, skipped 0, todo 0
+duration_ms 21658.591875
+```
+
+`git diff --check -- . ':!.claude/worktrees/issue-153-parent-dir'` completed
+with no output.
+
+### Self-review
+
+The first final run found that indexed source-order validation changed the
+existing duplicate accepted range finding into `parent_section_shape` because a
+copied range also copied its index. Duplicate range identity is now checked
+first, preserving the narrower existing `duplicate_parent_range` finding;
+indexed order is checked immediately afterward.
+
+### Scope
+
+The three flags remain separate. Non-preserved verdict behavior is unchanged.
+No Task 6 publication or candidate-conformance check and no Task 7 report
+aggregation was added.
