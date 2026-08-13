@@ -10,6 +10,7 @@ coverage/
 *.log
 .okf-staging/
 .okf-gh/
+.claude/
 
 .env
 # session state

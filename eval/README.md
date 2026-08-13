@@ -3,7 +3,7 @@
 This directory holds a non-gating Flue eval for the five OKF skills. It is
 development tooling. It is not part of the shipped product.
 
-`node --test "test/*.test.js"` at the repository root never runs anything in
+`node --test "test/**/*.test.js"` at the repository root never runs anything in
 this directory. `.github/workflows/ci.yml` never runs anything in this
 directory. This directory has its own `package.json` and its own lock file,
 separate from the release, per
@@ -88,7 +88,7 @@ is the one case this environment can score today without a model.
 five activation cases: its result is not stable between runs and a failure
 is a signal to look, not a release blocker. It gives evidence only. The deterministic
 `report.check` and `wrapper-contract.check` suites, and the root
-`node --test "test/*.test.js"`, remain the authority on doc and runtime
+`node --test "test/**/*.test.js"`, remain the authority on doc and runtime
 agreement — this case only watches what a live model actually sends.
 
 ## Running it

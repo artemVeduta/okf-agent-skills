@@ -124,7 +124,7 @@ function validAccepted(value) {
     && (route.candidate_lines === undefined || Array.isArray(route.candidate_lines) && route.candidate_lines.every(positive));
   const knownHeading = (item) => object(item) && positive(item.line) && positive(item.level) && item.level <= 6
     && text(item.text) && text(item.anchor) && positive(item.line_start) && positive(item.line_end)
-    && item.line_start <= item.line_end && text(item.output)
+    && item.line_start <= item.line_end && (item.output === null || text(item.output))
     && only(item, ['line', 'level', 'text', 'anchor', 'line_start', 'line_end', 'output']);
   const rootEntry = (item) => object(item) && text(item.concept_id) && item.path === `${item.concept_id}.md`
     && text(item.title) && only(item, ['concept_id', 'path', 'title']);

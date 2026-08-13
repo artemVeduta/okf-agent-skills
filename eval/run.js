@@ -1,7 +1,7 @@
 // Runs the Flue eval slice against the working tree and prints one JSON
 // result record per line (see lib/report.js for the shape), followed by one
 // summary line. Non-gating: nothing here is called from
-// `node --test "test/*.test.js"` or from CI.
+// `node --test "test/**/*.test.js"` or from CI.
 import { randomUUID } from 'node:crypto';
 
 import { init } from '@flue/runtime';
