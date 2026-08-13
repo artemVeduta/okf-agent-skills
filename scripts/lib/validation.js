@@ -951,19 +951,24 @@ function citationsHeading(body) {
   return false;
 }
 
-function markdownLinks(body) {
-  const visible = withoutFencedCode(body)
-    .split('\n')
-    .map((line) => line.replace(/`[^`\n]*`/g, ''))
-    .join('\n');
+function markdownLinkOccurrences(body) {
+  const visible = withoutFencedCode(body).split('\n');
   const links = [];
-  const pattern = /\[[^\]\n]*\]\(\s*(?:<([^>\n]*)>|([^\s)\n]+))/g;
-  for (const match of visible.matchAll(pattern)) {
-    const previous = visible[match.index - 1];
-    if (previous === '!' || previous === '\\') continue;
-    links.push(match[1] === undefined ? match[2] : match[1]);
+  let occurrence = 0;
+  for (let line = 0; line < visible.length; line++) {
+    const text = visible[line].replace(/`[^`\n]*`/g, '');
+    const pattern = /\[[^\]\n]*\]\(\s*(?:<([^>\n]*)>|([^\s)\n]+))/g;
+    for (const match of text.matchAll(pattern)) {
+      const previous = text[match.index - 1];
+      if (previous === '!' || previous === '\\') continue;
+      links.push({ line: line + 1, occurrence: ++occurrence, resource: match[1] === undefined ? match[2] : match[1] });
+    }
   }
   return links;
+}
+
+function markdownLinks(body) {
+  return markdownLinkOccurrences(body).map((item) => item.resource);
 }
 
 function bodyLinkPath(resource) {
@@ -1217,5 +1222,5 @@ module.exports = {
   inspectIndex,
   parseFrontmatter, parseYAML, serializeFrontmatter,
   postWrite, postWriteInit, projectMode, validateRead,
-  withoutFencedCode, fencedLines, markdownLinks, bodyLinkPath,
+  withoutFencedCode, fencedLines, markdownLinks, markdownLinkOccurrences, bodyLinkPath,
 };

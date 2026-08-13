@@ -785,22 +785,40 @@ function accountSplits(entries, payload, maxWords, gitRoot, services) {
   return { reviews, findings };
 }
 
-function applySplitProposals(reviews, payload, mapping) {
+function applySplitProposals(reviews, payload, mapped, entries, gitRoot, bundleRoot, services) {
   const supplied = new Map((payload.split_proposals || []).map((item) => [item.path, item]));
-  const authored = new Map(mapping.map((item) => [item.path, item.sources || []]));
+  const mappings = new Map(mapped.map((item) => [item.path, item]));
   const findings = [];
-  const enriched = reviews.map((review) => {
+  const records = reviews.map((review) => {
+    const mappedSource = mappings.get(review.path);
+    let raw;
+    try { raw = services.readFile(path.join(gitRoot, review.path)); } catch { raw = ''; }
+    const inventory = splitProposal.buildInventory(review.path, raw, review, gitRoot, bundleRoot, services);
     const proposal = supplied.get(review.path);
-    if (proposal === undefined) return { ...review, proposal: null };
-    const evaluated = splitProposal.evaluate(review, proposal, authored.get(review.path) || []);
+    const evaluated = proposal === undefined && review.accounting_status === 'complete'
+      ? splitProposal.derive(review, mappedSource, mappedSource.sources || [], inventory)
+      : proposal === undefined
+        ? { proposal: null, findings: [] }
+        : splitProposal.evaluate(review, proposal, mappedSource.sources || [], inventory);
     findings.push(...evaluated.findings.map((item) => suiteFinding(item.code, { path: review.path, ...item.detail })));
-    return { ...review, proposal: evaluated.proposal };
+    return { path: review.path, review: { ...review, proposal: evaluated.proposal }, proposal: evaluated.proposal };
   });
   const known = new Set(reviews.map((item) => item.path));
   for (const source of supplied.keys()) {
     if (!known.has(source)) findings.push(suiteFinding('SPLIT_PROPOSAL_SOURCE_UNKNOWN', { path: source }));
   }
-  return { reviews: enriched, findings };
+  const proposedSources = new Set(records.filter((item) => item.proposal !== null).map((item) => item.path));
+  const normalTargets = entries.filter((item) => item.disposition === 'migrate' && !proposedSources.has(item.path))
+    .map((item) => ({ source: item.path, target_path: `${item.concept}.md` }));
+  const existingTargets = services.listFiles(bundleRoot).files.map((file) => path.relative(bundleRoot, file).split(path.sep).join('/'));
+  const collisions = splitProposal.callTargetFindings(records.filter((item) => item.proposal !== null), normalTargets, existingTargets);
+  for (const collision of collisions) {
+    findings.push(suiteFinding(collision.code, { path: collision.path, ...collision.detail }));
+    const record = records.find((item) => item.path === collision.path);
+    record.proposal = splitProposal.refuse(record.proposal);
+    record.review.proposal = record.proposal;
+  }
+  return { reviews: records.map((item) => item.review), findings };
 }
 
 function validPlanSource(item) {
@@ -884,7 +902,9 @@ function executeMigrationPlan(request, services) {
   const settingsReport = manifest.inspect(resolveManifestFile(payload, gitRoot, services), gitRoot, services);
 
   const split = accountSplits(outcome.entries, payload, settingsReport.settings.max_words_per_file, gitRoot, services);
-  const proposed = applySplitProposals(split.reviews, payload, outcome.mapping);
+  const proposed = applySplitProposals(
+    split.reviews, payload, outcome.mapping, outcome.entries, gitRoot, bundleRoot, services,
+  );
 
   const findings = [
     ...outcome.questions.map((q) => ({

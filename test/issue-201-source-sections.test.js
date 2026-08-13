@@ -293,7 +293,8 @@ test('an accounting for a source the word target put under review is validated o
   });
 
   assert.equal(reviewFor(response, SOURCE).accounting_status, 'complete');
-  assert.deepEqual(response.findings.filter((item) => item.code.startsWith('SPLIT_')), []);
+  assert.deepEqual(response.findings.filter((item) => item.code.startsWith('SPLIT_')
+    && !item.code.startsWith('SPLIT_PROPOSAL_')), []);
 });
 
 test('an accounting for a source under no split review is refused, and nothing is sectioned for it', (t) => {

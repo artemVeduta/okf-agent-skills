@@ -14,7 +14,7 @@ const CONTENT = [
   '---',
   '# Install',
   '',
-  'Install the tool.',
+  'Install the [tool](other.md).',
   '',
   '## Operate',
   '',
@@ -22,12 +22,17 @@ const CONTENT = [
   '',
 ].join('\n');
 
+const README = '[Guide](docs/guide.md) and [operations](docs/guide.md#operate).\n';
+const OTHER = '---\ntype: Note\n---\n# Other\n';
+
 function repo(t) {
   const root = temporaryRoot(t, 'okf-201-proposal-');
   fs.mkdirSync(path.join(root, '.git'));
   writeManifest(root, '.');
   fs.mkdirSync(path.join(root, 'docs'));
   fs.writeFileSync(path.join(root, SOURCE), CONTENT);
+  fs.writeFileSync(path.join(root, 'README.md'), README);
+  fs.writeFileSync(path.join(root, 'docs/other.md'), OTHER);
   return root;
 }
 
@@ -35,10 +40,10 @@ function run(value) {
   return runWrapper(wrapper, value);
 }
 
-function sources(root) {
+function sources(root, paths = [SOURCE]) {
   return run({
     protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'discover', payload: { cwd: root },
-  }).data.sources;
+  }).data.sources.filter((item) => paths.includes(item.path));
 }
 
 function request(root, extra = {}) {
@@ -47,6 +52,15 @@ function request(root, extra = {}) {
     skill: 'okf-setup',
     operation: 'migration-plan',
     payload: { cwd: root, sources: sources(root), split_requested: [SOURCE], ...extra },
+  };
+}
+
+function requestFor(root, paths, extra = {}) {
+  return {
+    protocol: 'okf-wrapper/1',
+    skill: 'okf-setup',
+    operation: 'migration-plan',
+    payload: { cwd: root, sources: sources(root, paths), split_requested: [SOURCE], ...extra },
   };
 }
 
@@ -77,11 +91,14 @@ function output(key, conceptId, title, group = null, provenance = []) {
     path: `${conceptId}.md`,
     type: 'Playbook',
     title,
-    heading_outline: [{ level: 1, text: title }],
+    heading_outline: [{ level: 1, text: 'Install' }, { level: 2, text: 'Operate' }],
     reader_purpose_group: group,
     provenance_assignments: provenance,
-    link_routes: [],
-    anchor_routes: [],
+    link_routes: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md', target: 'docs/other.md' }],
+    anchor_routes: [{
+      from: 'README.md', line: 1, occurrence: 2, resource: 'docs/guide.md#operate',
+      source_anchor: 'operate', line_start: 10, line_end: 12, target_anchor: 'operate',
+    }],
   };
 }
 
@@ -94,7 +111,10 @@ function proposal(result, outputs, extra = {}) {
     outputs,
     provenance_exclusions: [],
     heading_changes: [],
-    whole_source_link_routes: [],
+    whole_source_link_routes: [{
+      from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md',
+      target: { kind: 'output', output: outputs[0].output },
+    }],
     ...extra,
   }];
 }
@@ -131,8 +151,23 @@ test('an accepted keep-as-one proposal carries the complete output shape and its
     })),
     provenance_exclusions: [],
     heading_changes: [],
-    whole_source_link_routes: [],
-    tree: { root: [{ concept_id: 'guide', path: 'guide.md', title: 'Guide' }], groups: [] },
+    whole_source_link_routes: [{
+      from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md',
+      target: { kind: 'output', output: 'guide' },
+    }],
+    known_routes: {
+      whole_source: [{ from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md' }],
+      heading_anchor: [{
+        from: 'README.md', line: 1, occurrence: 2, resource: 'docs/guide.md#operate',
+        source_anchor: 'operate', line_start: 10, line_end: 12,
+      }],
+      ordinary: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md' }],
+    },
+    known_headings: [
+      { line: 6, level: 1, text: 'Install', anchor: 'install', line_start: 6, line_end: 9, output: 'guide' },
+      { line: 10, level: 2, text: 'Operate', anchor: 'operate', line_start: 10, line_end: 12, output: 'guide' },
+    ],
+    tree: { root: [{ concept_id: 'guide', path: 'guide.md', title: 'Guide' }], groups: [], unresolved: [] },
   });
 });
 
@@ -143,17 +178,18 @@ test('an accepted one-to-many proposal binds accounting outputs and derives diff
     navigation('operators', 'Install and operate the service.', 'operators/install', 'Install', 1),
     [{ source_index: 0, support: 'supported' }],
   );
+  install.heading_outline = [{ level: 1, text: 'Install' }];
+  install.anchor_routes = [];
   const operate = output(
     'operate', 'maintainers/operate', 'Operate',
     navigation('maintainers', 'Maintain the service.', 'maintainers/operate', 'Operate', 1),
   );
-  operate.anchor_routes.push({
-    from: 'docs/checklist.md', source_anchor: 'operate', line_start: 10, line_end: 12, target_anchor: 'operations',
-  });
   operate.heading_outline = [{ level: 1, text: 'Operations' }];
+  operate.link_routes = [];
+  operate.anchor_routes[0].target_anchor = 'operations';
   const headingChanges = [{
     line: 10, source_heading: 'Operate', action: 'changed', output: 'operate',
-    target_heading: 'Operations', target_anchor: 'operations',
+    target_heading: 'Operations', target_level: 1, target_anchor: 'operations',
   }];
   const response = run(request(root, {
     split_sections: accounting(['install', 'operate']),
@@ -177,6 +213,7 @@ test('an accepted one-to-many proposal binds accounting outputs and derives diff
         child_entries: [{ concept_id: 'operators/install', path: 'operators/install.md', title: 'Install', order: 1 }],
       },
     ],
+    unresolved: [],
   });
 });
 
@@ -186,7 +223,9 @@ test('an ambiguous whole-source link route blocks acceptance until it names an o
   const response = run(request(root, {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', outputs, {
-      whole_source_link_routes: [{ from: 'README.md', target: null }],
+      whole_source_link_routes: [{
+        from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md', target: null,
+      }],
     }),
   }));
 
@@ -194,6 +233,145 @@ test('an ambiguous whole-source link route blocks acceptance until it names an o
   assert.deepEqual(splitFindings(response).map((item) => [item.code, item.detail]), [[
     'SPLIT_WHOLE_SOURCE_LINK_AMBIGUOUS', { path: SOURCE, from: 'README.md' },
   ]]);
+});
+
+test('complete accounting derives the first complete refused proposal view without a caller proposal', (t) => {
+  const root = repo(t);
+  const response = run(request(root, { split_sections: accounting(['guide']) }));
+  const proposed = review(response).proposal;
+
+  assert.equal(proposed.status, 'refused');
+  assert.equal(proposed.accepted, false);
+  assert.equal(proposed.result, 'keep_as_one');
+  assert.equal(proposed.outputs[0].output, 'guide');
+  assert.equal(proposed.outputs[0].concept_id, 'docs/guide');
+  assert.deepEqual(proposed.outputs[0].heading_outline, [
+    { level: 1, text: 'Install' }, { level: 2, text: 'Operate' },
+  ]);
+  assert.deepEqual(proposed.known_routes, {
+    whole_source: [{ from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md' }],
+    heading_anchor: [{
+      from: 'README.md', line: 1, occurrence: 2, resource: 'docs/guide.md#operate',
+      source_anchor: 'operate', line_start: 10, line_end: 12,
+    }],
+    ordinary: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md' }],
+  });
+  assert.ok(splitFindings(response).some((item) => item.code === 'SPLIT_PROPOSAL_VALUE_UNRESOLVED'));
+});
+
+test('missing, extra, and duplicate routes refuse acceptance against the known route inventory', (t) => {
+  const root = repo(t);
+  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
+  outputs[0].link_routes = [];
+  outputs[0].anchor_routes.push(outputs[0].anchor_routes[0]);
+  const response = run(request(root, {
+    split_sections: accounting(['guide']),
+    split_proposals: proposal('keep_as_one', outputs, {
+      whole_source_link_routes: [
+        {
+          from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md',
+          target: { kind: 'output', output: 'guide' },
+        },
+        {
+          from: 'extra.md', line: 1, occurrence: 1, resource: 'docs/guide.md',
+          target: { kind: 'output', output: 'guide' },
+        },
+      ],
+    }),
+  }));
+
+  assert.equal(review(response).proposal.status, 'refused');
+  assert.equal(review(response).proposal.accepted, false);
+  assert.deepEqual(new Set(splitFindings(response).map((item) => item.code)), new Set([
+    'SPLIT_PROPOSAL_ROUTE_MISSING', 'SPLIT_PROPOSAL_ROUTE_EXTRA', 'SPLIT_PROPOSAL_ROUTE_DUPLICATE',
+  ]));
+});
+
+test('omitted changed and removed source headings refuse acceptance', (t) => {
+  const root = repo(t);
+  const changed = output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }]);
+  changed.heading_outline = [{ level: 1, text: 'Installation' }, { level: 2, text: 'Operate' }];
+  const changedResponse = run(request(root, {
+    split_sections: accounting(['guide']),
+    split_proposals: proposal('keep_as_one', [changed]),
+  }));
+  const removed = output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }]);
+  removed.heading_outline = [{ level: 1, text: 'Install' }];
+  const removedResponse = run(request(root, {
+    split_sections: accounting(['guide']),
+    split_proposals: proposal('keep_as_one', [removed]),
+  }));
+
+  for (const response of [changedResponse, removedResponse]) {
+    assert.equal(review(response).proposal.status, 'refused');
+    assert.equal(review(response).proposal.accepted, false);
+    assert.ok(splitFindings(response).some((item) => item.code === 'SPLIT_HEADING_CHANGE_MISSING'));
+  }
+});
+
+test('a refused proposal reports accepted false even when the input says true', (t) => {
+  const root = repo(t);
+  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'unclear' }])];
+  const response = run(request(root, {
+    split_sections: accounting(['guide']),
+    split_proposals: proposal('keep_as_one', outputs),
+  }));
+
+  assert.equal(review(response).proposal.status, 'refused');
+  assert.equal(review(response).proposal.accepted, false);
+});
+
+test('two source proposals cannot claim the same target in one call', (t) => {
+  const root = repo(t);
+  fs.writeFileSync(path.join(root, 'docs/second.md'), CONTENT.replace('Guide', 'Second'));
+  const first = output('guide', 'shared', 'Guide', null, [{ source_index: 0, support: 'supported' }]);
+  const second = output('second', 'shared', 'Second', null, [{ source_index: 0, support: 'supported' }]);
+  const secondProposal = proposal('keep_as_one', [second])[0];
+  secondProposal.path = 'docs/second.md';
+  secondProposal.whole_source_link_routes = [];
+  second.anchor_routes = [];
+  second.link_routes[0].from = 'docs/second.md';
+  const response = run(requestFor(root, [SOURCE, 'docs/second.md'], {
+    split_requested: [SOURCE, 'docs/second.md'],
+    split_sections: [
+      ...accounting(['guide']),
+      { ...accounting(['second'])[0], path: 'docs/second.md' },
+    ],
+    split_proposals: [...proposal('keep_as_one', [first]), secondProposal],
+  }));
+
+  assert.ok(splitFindings(response).some((item) => item.code === 'SPLIT_PROPOSAL_TARGET_COLLISION'));
+  assert.equal(response.data.split_review.every((item) => item.proposal.accepted === false), true);
+});
+
+test('a proposal cannot claim an unsplit migration target or an existing bundle file', (t) => {
+  const root = repo(t);
+  fs.mkdirSync(path.join(root, 'okf'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'okf/existing.md'), '---\ntype: Note\n---\n# Existing\n');
+  const unsplit = output('guide', 'docs/other', 'Guide', null, [{ source_index: 0, support: 'supported' }]);
+  const disk = output('guide', 'existing', 'Guide', null, [{ source_index: 0, support: 'supported' }]);
+  const forUnsplit = run(requestFor(root, [SOURCE, 'docs/other.md'], {
+    split_sections: accounting(['guide']), split_proposals: proposal('keep_as_one', [unsplit]),
+  }));
+  const forDisk = run(request(root, {
+    split_sections: accounting(['guide']), split_proposals: proposal('keep_as_one', [disk]),
+  }));
+
+  assert.ok(splitFindings(forUnsplit).some((item) => item.code === 'SPLIT_PROPOSAL_TARGET_COLLISION'));
+  assert.ok(splitFindings(forDisk).some((item) => item.code === 'SPLIT_PROPOSAL_TARGET_COLLISION'));
+});
+
+test('a reversed anchor route range is UNSUPPORTED_INPUT', (t) => {
+  const root = repo(t);
+  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
+  outputs[0].anchor_routes[0].line_start = 12;
+  outputs[0].anchor_routes[0].line_end = 10;
+  const response = run(request(root, {
+    split_sections: accounting(['guide']), split_proposals: proposal('keep_as_one', outputs),
+  }));
+
+  assert.equal(response.result, 'blocked');
+  assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
 });
 
 test('an unclear authored provenance assignment blocks acceptance', (t) => {
@@ -219,7 +397,7 @@ test('a proposal must bind the exact opaque output keys from complete source acc
   }));
 
   assert.equal(review(response).proposal.status, 'refused');
-  assert.deepEqual(splitFindings(response).map((item) => item.code), ['SPLIT_PROPOSAL_OUTPUT_MISMATCH']);
+  assert.equal(splitFindings(response).some((item) => item.code === 'SPLIT_PROPOSAL_OUTPUT_MISMATCH'), true);
 });
 
 test('a proposal refuses a reserved concept path instead of accepting it as an output', (t) => {
@@ -242,7 +420,7 @@ test('section rows carry deterministic short boundary excerpts for the split-rev
 
   assert.deepEqual(review(response).sections.map((item) => item.boundary_excerpt), [
     { first: '---', last: '---' },
-    { first: '# Install', last: 'Install the tool.' },
+    { first: '# Install', last: 'Install the [tool](other.md).' },
     { first: '## Operate', last: 'Run the tool.' },
   ]);
 });
