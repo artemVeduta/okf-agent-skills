@@ -21,7 +21,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { binding, runWrapper } = require('../test-support/snapshot');
+const { binding, runWrapper, writeManifest } = require('../test-support/snapshot');
 
 const writeWrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
 
@@ -29,7 +29,7 @@ function makeBundle(t, conceptFrontmatter) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'okf-143-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   fs.writeFileSync(path.join(root, 'evidence.md'), 'observed evidence\n');
   fs.writeFileSync(path.join(root, 'note.md'), conceptFrontmatter);

@@ -102,6 +102,9 @@ function evaluate(entries, context, services, allowMissingIndex) {
 
 // A manifest bundle is admitted as a candidate rooted at its owning repository, so
 // REACH and PRESENCE see the same shape they see for a directly supplied candidate.
+// `mode` and `required` are no longer manifest fields (#197): every declared bundle
+// is a required `source` bundle by grammar, so this stamps the two constants the
+// removed fields used to carry instead of reading them off `bundle`.
 function bundleEntries(workspace, root) {
   const repositories = new Map(workspace.repositories.map((repo) => [repo.name, repo]));
   return workspace.bundles.map((bundle) => {
@@ -113,8 +116,8 @@ function bundleEntries(workspace, root) {
       bundle: owner ? path.relative(ownerRoot, path.resolve(ownerRoot, bundle.root)) : bundle.root,
       bundle_alias: bundle.alias,
       owner: owner ? ownerRoot : null,
-      mode: bundle.mode,
-      required: bundle.required,
+      mode: 'source',
+      required: true,
       declared: true,
       requires_repository: Boolean(owner),
     };

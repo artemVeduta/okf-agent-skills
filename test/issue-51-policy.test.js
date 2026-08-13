@@ -4,7 +4,7 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { treeHash } = require('../test-support/snapshot');
+const { treeHash, writeManifest } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const wrapper = path.join(repo, 'scripts', 'okf-read.js');
@@ -13,7 +13,7 @@ function bundle(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-51-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   return root;
 }
 

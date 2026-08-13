@@ -14,17 +14,16 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { binding, runWrapper, temporaryRoot } = require('../test-support/snapshot');
+const { binding, runWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
 
 const writeWrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
-const setupWrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 
 const DIGEST = 'a'.repeat(64);
 
 function repo(t, prefix = 'okf-174-') {
   const root = temporaryRoot(t, prefix);
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   fs.mkdirSync(path.join(root, 'docs'));
   fs.writeFileSync(path.join(root, 'docs', 'source.md'), '# Source\n\nThe observed material.\n');
@@ -66,7 +65,7 @@ test('one matched file binding applies the write and is listed in data.evidence'
 test('a binding outside the bundle but inside the active worktree is valid material', (t) => {
   const root = temporaryRoot(t, 'okf-174-nested-');
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, 'okf');
   fs.mkdirSync(path.join(root, 'okf'));
   fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   fs.writeFileSync(path.join(root, 'okf', 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Note\n');
@@ -243,61 +242,4 @@ test('evidence_limits always states the two things the runtime does not verify',
     semantic_support: 'not runtime-verified',
     non_file_evidence: 'accepted proposal only',
   });
-});
-
-// ------------------------------------------------------------ setup publication
-
-function migrationRepo(t) {
-  const root = temporaryRoot(t, 'okf-174-publish-');
-  fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
-  fs.mkdirSync(path.join(root, 'okf', 'decisions'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
-  fs.mkdirSync(path.join(root, 'docs'));
-  fs.writeFileSync(path.join(root, 'docs', 'a.md'), '# Original A\n');
-  return root;
-}
-
-function stagedRef(root, concept, sources) {
-  const file = path.join(root, '.okf-staging', 'okf', `${concept}.md`);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, '---\ntype: Decision\n---\n# A\n\nBody text.\n');
-  return { path: 'docs/a.md', concept, type: 'Decision', shard: 'x', file: path.relative(root, file), sources };
-}
-
-function publish(root, staged) {
-  return runWrapper(setupWrapper, {
-    protocol: 'okf-wrapper/1',
-    skill: 'okf-setup',
-    operation: 'publish',
-    payload: { cwd: root, task_kind: 'feature work', staged },
-  });
-}
-
-test('publish binds each concept to its actual source file, and one source serves a split', (t) => {
-  const root = migrationRepo(t);
-  const source = binding(root, path.join('docs', 'a.md'));
-  const staged = [
-    stagedRef(root, 'decisions/a', [source]),
-    stagedRef(root, 'decisions/b', [source]),
-  ];
-
-  const response = publish(root, staged);
-
-  assert.equal(response.data.status, 'complete');
-  assert.deepEqual(response.data.published, ['decisions/a', 'decisions/b']);
-  assert.equal(fs.existsSync(path.join(root, 'okf', 'decisions', 'a.md')), true);
-  assert.equal(fs.existsSync(path.join(root, 'okf', 'decisions', 'b.md')), true);
-});
-
-test('publish carries the real binding to the write gate: a stale source identity blocks the concept', (t) => {
-  const root = migrationRepo(t);
-  const staged = [stagedRef(root, 'decisions/a', [{ path: 'docs/a.md', sha256: DIGEST }])];
-
-  const response = publish(root, staged);
-
-  assert.equal(response.data.status, 'partial');
-  assert.deepEqual(response.data.published, []);
-  assert.ok(response.findings.some((finding) => finding.code === 'EVIDENCE_CHANGED'), JSON.stringify(response.findings));
-  assert.equal(fs.existsSync(path.join(root, 'okf', 'decisions', 'a.md')), false);
 });

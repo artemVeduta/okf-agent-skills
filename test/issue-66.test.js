@@ -4,7 +4,7 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { runSilent, runWrapper, snapshot } = require('../test-support/snapshot');
+const { runSilent, runWrapper, snapshot, writeManifest } = require('../test-support/snapshot');
 
 const readWrapper = path.join(__dirname, '..', 'scripts', 'okf-read.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
@@ -30,7 +30,7 @@ function repository(t, prefix = 'okf-66-') {
 }
 
 function activate(root) {
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
 }
 
 function withIndex(root) {
@@ -84,7 +84,7 @@ test('orient reports not-configured when the activation marker is absent', (t) =
 test('orient reports invalid when the activation marker is malformed', (t) => {
   const root = repository(t);
   withIndex(root);
-  fs.writeFileSync(path.join(root, '.okf-active'), 'not empty');
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
   const before = snapshot(root);
 
   const response = runOk(readWrapper, orientRequest(root));
@@ -129,7 +129,7 @@ test('orient reaches clean when activation, admission, and the root index all pa
   assert.equal(response.result, 'clean');
   assertDataKeys(response);
   assert.equal(response.data.activation, 'active');
-  assert.deepEqual(response.data.bundle, { bundle_alias: '.', bundle_root: root });
+  assert.deepEqual(response.data.bundle, { bundle_alias: 'repo', bundle_root: root });
   assert.equal(response.data.root_index_path, 'index.md');
   assert.equal(response.data.workspace_health, 'healthy');
   assert.equal(typeof response.data.occurrence_key, 'string');
@@ -246,8 +246,8 @@ test('a degraded workspace is reported degraded, not masked by an unreadable roo
     workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
     repositories: [{ name: 'app', path: '.', local: true }],
     bundles: [
-      { alias: 'root', owner: 'app', root: '.', required: false, mode: 'source' },
-      { alias: 'b', owner: 'app', root: 'b', required: true, mode: 'source' },
+      { alias: 'root', owner: 'app', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' },
+      { alias: 'b', owner: 'app', root: 'b', okf_version: '0.2', project_mode: 'knowledge-only' },
     ],
   }));
   const before = snapshot(root);

@@ -4,15 +4,23 @@
 
 const path = require('node:path');
 const crypto = require('node:crypto');
-const childProcess = require('node:child_process');
+const { isDeepStrictEqual } = require('node:util');
+const { dispatchWrapper } = require('./wrapper-dispatch');
 const validation = require('./validation');
 const admission = require('./admission');
 const manifest = require('./manifest');
 const monorepo = require('./monorepo');
 const discovery = require('./discovery');
 const migration = require('./migration');
+const words = require('./words');
+const sections = require('./sections');
+const splitProposal = require('./split-proposal');
 const partition = require('./partition');
 const assembly = require('./assembly');
+const publication = require('./publication');
+const canonicalReview = require('./semantic-review');
+const acceptedGroups = require('./accepted-groups');
+const groupPackages = require('./group-packages');
 const lifecycle = require('./lifecycle');
 const { inside } = require('./paths');
 const {
@@ -41,8 +49,9 @@ function initEffects(payload) {
 // `init` bootstraps the bundle root itself, so it cannot go through `executeBounded`:
 // there is no bundle-root precondition to check yet, no evidence to cite, and no
 // concept scope. Per #133/#134 it owns a slimmer admission of its own — ownership,
-// REACH, TRUST, ACCESS and the activation-marker gate (run by `run()` before this is
-// reached) — skipping PRESENCE (no bundle to find yet) and the evidence gate.
+// REACH, TRUST, ACCESS and the activation gate (run by `run()` before this is
+// reached, over the manifest now -- #197: was the activation marker) — skipping
+// PRESENCE (no bundle to find yet) and the evidence gate.
 function executeInit(request, services) {
   const payload = request.payload;
   const effectsResult = initEffects(payload);
@@ -57,7 +66,10 @@ function executeInit(request, services) {
   });
 
   if (effectsResult.invalid) return refuse('UNSUPPORTED_INPUT', { gate: 'effects', operation: 'init' });
-  if (payload.project_mode !== undefined && payload.project_mode !== 'code-backed' && payload.project_mode !== 'knowledge-only') {
+  // #197: `project_mode` moved entirely to the manifest bundle record, `repair`'s
+  // to write -- the navigation-only root `init` creates has no field left to put
+  // it in, so a caller still naming it here is refused, not silently ignored.
+  if (payload.project_mode !== undefined) {
     return refuse('UNSUPPORTED_INPUT', { gate: 'project mode', operation: 'init' });
   }
   const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
@@ -129,7 +141,7 @@ function executeInit(request, services) {
     return settle('failed/incomplete', [...outcome.findings, finding], { completed: completedEffects });
   }
 
-  const checked = validation.postWriteInit(bundleRoot, services, outcome.data.tree);
+  const checked = validation.postWriteInit(bundleRoot, services, outcome.data.rendered);
   if (!checked.valid) {
     return settle('failed/incomplete', [...outcome.findings, ...checked.findings], { completed: completedEffects });
   }
@@ -152,34 +164,56 @@ function setupContext(request, services) {
   return { gitRoot, bundleName, bundleRoot: path.resolve(payload.cwd, bundleName) };
 }
 
-// `/setup`'s deterministic state report for the three config files (#133/#138).
-// Read-only: it never writes, and it runs even when the activation marker itself is
+// `/setup`'s deterministic state report for the two config files (#133/#138).
+// Read-only: it never writes, and it runs even when the manifest itself is
 // what is being inspected, so `run()` reaches this directly rather than gating it
-// behind the very marker it reports on. `okf-setup`'s procedure owns the consent
+// behind the very manifest it reports on. `okf-setup`'s procedure owns the consent
 // prompts and the "fix all?" interaction; this function only reports state.
-const repairTargets = new Set(['activation', 'manifest']);
+// #197: `manifest` is the only repair target left -- the activation-marker
+// target this once shared the set with is gone, not made a permanent no-op.
+const repairTargets = new Set(['manifest']);
+
+// #197: the same valid/missing/invalid resolution `runtime.js`'s `activationState()`
+// computes for the shared activation gate, reused here so `/setup`'s own report of
+// "would OKF run normally here" can never drift from what the gate itself decides --
+// `runtime.js` cannot be required back from here (it requires this file), so this is
+// the same three calls (`gitRootOf`, `manifest.select`, the finding/manifest check),
+// not a second gate with its own rules.
+function manifestActivation(payload, gitRoot, services) {
+  const selected = manifest.select(payload, { cwd: path.resolve(payload.cwd), gitRoot }, services);
+  if (selected.finding) return { state: 'invalid', reason: 'manifest_invalid' };
+  return { state: selected.manifest ? 'ok' : 'missing' };
+}
+
+// The activation gate resolves `.okf-workspace.json` by walking `cwd` upward to
+// the Git root (`manifest.select()`'s own `discover()`), so a manifest living in
+// an intermediate directory activates the bundle from there, not from a
+// hardcoded `<gitRoot>/.okf-workspace.json` that may not exist at all. Every
+// caller that reports on, or reads settings out of, "the manifest" must resolve
+// the same file the gate just activated against -- this is that one resolution,
+// reused rather than re-derived, so the two halves of one response can never
+// disagree about which file is "the manifest" (fix round 2, Important 3).
+function resolveManifestFile(payload, gitRoot, services) {
+  const selected = manifest.select(payload, { cwd: path.resolve(payload.cwd), gitRoot }, services);
+  return selected.path || path.join(gitRoot, '.okf-workspace.json');
+}
 
 function executeInspect(request, services) {
   const context = setupContext(request, services);
   if (context.refusal) return context.refusal;
   const { gitRoot, bundleRoot } = context;
 
-  const marker = services.activationMarker(gitRoot);
-  const activation = marker === 'valid' ? { state: 'ok' }
-    : marker === 'absent' ? { state: 'missing' }
-      : { state: 'invalid', reason: 'not_zero_byte_regular_file' };
-
   return respond(request, 'ok', {
     index_md: validation.inspectIndex(bundleRoot, services),
-    activation,
-    manifest: manifest.inspect(path.join(gitRoot, '.okf-workspace.json'), gitRoot, services),
+    activation: manifestActivation(request.payload, gitRoot, services),
+    manifest: manifest.inspect(resolveManifestFile(request.payload, gitRoot, services), gitRoot, services),
   }, []);
 }
 
-// `/setup`'s approved-repair executor for the two plain-filesystem config files
-// (#133/#138). `.okf-active` and `.okf-workspace.json` are not OKF operations through
-// the write gate — no REACH/TRUST/ACCESS admission, no evidence, no atomic publish,
-// no `effects` vocabulary — they are exactly the plain filesystem actions #133 named.
+// `/setup`'s approved-repair executor for the plain-filesystem config file
+// (#133/#138). `.okf-workspace.json` is not an OKF operation through the write
+// gate — no REACH/TRUST/ACCESS admission, no evidence, no atomic publish, no
+// `effects` vocabulary — it is exactly the plain filesystem action #133 named.
 // `index.md` repair is not here at all: it goes through `init`. Consent lives in
 // `okf-setup`'s procedure, not here — reaching this function is itself the approval.
 // Idempotent like `init`: a target already in state `ok` is always left untouched.
@@ -187,13 +221,16 @@ function executeRepair(request, services) {
   const payload = request.payload;
   const context = setupContext(request, services);
   if (context.refusal) return context.refusal;
-  const { gitRoot, bundleName } = context;
+  const { gitRoot, bundleRoot, bundleName } = context;
 
   const targets = payload.targets;
   const validShape = Array.isArray(targets) && targets.length > 0 &&
     new Set(targets).size === targets.length && targets.every((target) => repairTargets.has(target));
   if (!validShape) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
-  if (payload.manifest !== undefined && !targets.includes('manifest')) {
+  // `manifest` is the only target left, so `validShape` already forces `targets`
+  // to be exactly `['manifest']` -- there is no other target left to name a
+  // `manifest` payload without.
+  if (payload.project_mode !== undefined && payload.project_mode !== 'code-backed' && payload.project_mode !== 'knowledge-only') {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
 
@@ -212,6 +249,7 @@ function executeRepair(request, services) {
         repoName: path.basename(gitRoot),
         bundleAlias: bundleName,
         workspaceId: payload.workspace_id || crypto.randomUUID(),
+        projectMode: payload.project_mode,
       });
     }
     const finding = manifest.validate(manifestContent);
@@ -224,16 +262,6 @@ function executeRepair(request, services) {
 
   const data = {};
   let wrote = false;
-
-  if (targets.includes('activation')) {
-    if (services.activationMarker(gitRoot) === 'valid') {
-      data.activation = { written: false };
-    } else {
-      services.writeFile(path.join(gitRoot, '.okf-active'), '');
-      data.activation = { written: true };
-      wrote = true;
-    }
-  }
 
   if (targets.includes('manifest')) {
     const manifestFile = path.join(gitRoot, '.okf-workspace.json');
@@ -329,6 +357,9 @@ function executeAggregate(request, services) {
   if (payload.workspace_id !== undefined && typeof payload.workspace_id !== 'string') {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  if (payload.project_mode !== undefined && payload.project_mode !== 'code-backed' && payload.project_mode !== 'knowledge-only') {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
 
   const detected = monorepo.detect(gitRoot, services);
   if (!detected.monorepo || detected.ambiguous) {
@@ -349,6 +380,7 @@ function executeAggregate(request, services) {
     bundleName,
     workspaceId: payload.workspace_id || crypto.randomUUID(),
     packages: detected.packages,
+    projectMode: payload.project_mode,
   });
   const finding = manifest.validate(manifestContent);
   if (finding) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [finding]);
@@ -413,8 +445,12 @@ function validLinkItem(item) {
     typeof item.resolved === 'boolean';
 }
 
-function validSemanticReview(value) {
-  return !!value && typeof value === 'object' && !Array.isArray(value) && typeof value.performed === 'boolean';
+function validSemanticReview(value, evidence = false) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.performed !== 'boolean') return false;
+  const rich = value.sources !== undefined || value.candidates !== undefined;
+  if (!rich) return true;
+  return evidence && Object.keys(value).every((field) => ['performed', 'sources', 'candidates'].includes(field))
+    && Array.isArray(value.sources) && Array.isArray(value.candidates);
 }
 
 function reportFinding(code, severity, detail) {
@@ -445,7 +481,11 @@ function computeSignals(sources, links, semanticReview) {
     concepts: migrated.map((item) => ({ source: item.path, concept: item.concept, sources_declared: item.sources_declared === true })),
     skipped: skipped.map((item) => ({ source: item.path, reason: item.reason })),
     ambiguous: ambiguous.map((item) => ({ source: item.path, reason: item.reason })),
-    residue: residue.map((item) => ({ source: item.path, reason: item.reason })),
+    // #177 (#157): a residue row reports the original source path, the reason,
+    // and the fact that setup left that source exactly where it was. `unchanged`
+    // is always `true` -- residue has no other outcome, and stating it in the
+    // report is the point: the reader must not have to infer that nothing moved.
+    residue: residue.map((item) => ({ source: item.path, reason: item.reason, unchanged: true })),
     provenance: { total: migrated.length, with_sources: withSources, without_sources: migrated.length - withSources },
     links: {
       total: links.length, resolved: resolvedLinks.length, broken: brokenLinks.length,
@@ -508,6 +548,374 @@ function validPackageResult(item) {
   return validSemanticReview(item.semantic_review);
 }
 
+function exactFields(value, fields) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === fields.length
+    && Object.keys(value).every((field) => fields.includes(field));
+}
+
+function reportArtifactRefusal(request, code, artifact, reason) {
+  return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [
+    suiteFinding(code, { artifact, reason }),
+  ]);
+}
+
+function validReportFlag(value, field) {
+  return exactFields(value, [field]) && typeof value[field] === 'boolean';
+}
+
+function validateReportPublication(value) {
+  if (!exactFields(value, ['status', 'published', 'failed', 'skipped', 'results', 'candidate_conformance', 'publication_receipt'])
+    || !['complete', 'partial'].includes(value.status)
+    || !Array.isArray(value.published) || value.published.some((item) => typeof item !== 'string' || item === '')
+    || !Array.isArray(value.failed) || !Array.isArray(value.skipped) || !Array.isArray(value.results)
+    || !exactFields(value.candidate_conformance, ['passed', 'concepts', 'navigation_indexes'])
+    || value.candidate_conformance.passed !== true
+    || !Array.isArray(value.candidate_conformance.concepts)
+    || !Array.isArray(value.candidate_conformance.navigation_indexes)
+    || !exactFields(value.publication_receipt, ['path', 'identity'])
+    || monorepo.normalizeRelative(value.publication_receipt.path) !== value.publication_receipt.path
+    || path.posix.basename(value.publication_receipt.path) !== publication.RECEIPT_FILE
+    || !/^sha256:[0-9a-f]{64}$/.test(value.publication_receipt.identity)) {
+    return { ok: false, code: 'REPORT_ARTIFACT_MALFORMED', artifact: 'publication', reason: 'shape' };
+  }
+  const concepts = value.candidate_conformance.concepts;
+  const indexes = value.candidate_conformance.navigation_indexes;
+  if (concepts.some((item) => !exactFields(item, ['source', 'concept', 'path', 'type'])
+      || monorepo.normalizeRelative(item.source) !== item.source
+      || monorepo.normalizeRelative(item.concept) !== item.concept
+      || item.path !== `${item.concept}.md` || typeof item.type !== 'string' || item.type === '')
+    || indexes.some((item) => !exactFields(item, ['path']) || monorepo.normalizeRelative(item.path) !== item.path)
+    || value.failed.some((item) => !exactFields(item, ['concept', 'status'])
+      || typeof item.concept !== 'string' || item.concept === '' || typeof item.status !== 'string' || item.status === ''
+      || item.status === 'clean' || item.status === 'not-attempted')
+    || value.skipped.some((item) => !exactFields(item, ['concept', 'status'])
+      || typeof item.concept !== 'string' || item.concept === '' || item.status !== 'not-attempted')
+    || value.results.some((item) => !exactFields(item, ['concept', 'status', 'findings'])
+      || typeof item.concept !== 'string' || item.concept === '' || typeof item.status !== 'string' || item.status === ''
+      || !Array.isArray(item.findings))) {
+    return { ok: false, code: 'REPORT_ARTIFACT_MALFORMED', artifact: 'publication', reason: 'row_shape' };
+  }
+
+  let failedIndex = -1;
+  for (let index = 0; index < value.results.length; index++) {
+    const status = value.results[index].status;
+    if (failedIndex === -1 && status === 'clean') continue;
+    if (failedIndex === -1 && status !== 'not-attempted') {
+      failedIndex = index;
+      continue;
+    }
+    if (failedIndex === -1 || status !== 'not-attempted') {
+      return { ok: false, code: 'REPORT_ARTIFACT_MISMATCH', artifact: 'publication', reason: 'result_sequence' };
+    }
+  }
+
+  const candidateIds = [...concepts.map((item) => item.concept), ...indexes.map((item) => item.path)];
+  const resultIds = value.results.map((item) => item.concept);
+  const candidateSet = canonicalReview.exactSet(candidateIds, resultIds);
+  const clean = value.results.filter((item) => item.status === 'clean').map((item) => item.concept);
+  const failed = value.results.filter((item) => item.status !== 'clean' && item.status !== 'not-attempted')
+    .map((item) => ({ concept: item.concept, status: item.status }));
+  const skipped = value.results.filter((item) => item.status === 'not-attempted')
+    .map((item) => ({ concept: item.concept, status: item.status }));
+  const expectedStatus = failedIndex === -1 ? 'complete' : 'partial';
+  if (canonicalReview.differs(candidateSet) || !isDeepStrictEqual(value.published, clean)
+    || !isDeepStrictEqual(value.failed, failed) || !isDeepStrictEqual(value.skipped, skipped)
+    || value.status !== expectedStatus) {
+    return { ok: false, code: 'REPORT_ARTIFACT_MISMATCH', artifact: 'publication', reason: 'results' };
+  }
+  return { ok: true, concepts, indexes };
+}
+
+function publicationReceipt(request, migrationReport, publicationResult, gitRoot, services) {
+  const receiptPath = migrationReport.publication.publication_receipt.path;
+  const bundleName = request.payload.bundle === undefined ? 'okf' : request.payload.bundle;
+  const normalizedBundle = monorepo.normalizeRelative(bundleName);
+  const expectedPath = normalizedBundle === null
+    ? null : path.posix.join('.okf-staging', normalizedBundle, publication.RECEIPT_FILE);
+  const receiptFile = path.resolve(gitRoot, receiptPath);
+  if (expectedPath === null || receiptPath !== expectedPath || !inside(gitRoot, receiptFile)) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'publication_receipt', 'path') };
+  }
+  if (!publication.safeExistingPath(gitRoot, receiptFile, services)) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'publication_receipt', 'symlink') };
+  }
+  let bytes;
+  try { bytes = services.readBuffer(receiptFile); } catch {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'unavailable') };
+  }
+  if (contentIdentity(bytes) !== migrationReport.publication.publication_receipt.identity) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'identity') };
+  }
+  let receipt;
+  try { receipt = JSON.parse(bytes.toString('utf8')); } catch {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'publication_receipt', 'content') };
+  }
+  if (!exactFields(receipt, ['protocol', 'artifacts', 'candidate_conformance', 'checked_candidates', 'results', 'classification'])
+    || receipt.protocol !== 'okf-publication-receipt/1'
+    || !exactFields(receipt.artifacts, ['plan', 'mapping', 'split_review', 'group_packages', 'semantic_review'])
+    || Object.values(receipt.artifacts).some((item) => !/^sha256:[0-9a-f]{64}$/.test(item))
+    || !Array.isArray(receipt.checked_candidates)
+    || receipt.checked_candidates.some((item) => {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) return true;
+      if (item.kind === 'concept') {
+        return !exactFields(item, ['kind', 'source', 'concept', 'path', 'type', 'identity'])
+          || monorepo.normalizeRelative(item.source) !== item.source
+          || monorepo.normalizeRelative(item.concept) !== item.concept
+          || item.path !== `${item.concept}.md` || typeof item.type !== 'string' || item.type === ''
+          || !/^sha256:[0-9a-f]{64}$/.test(item.identity);
+      }
+      return item.kind !== 'index' || !exactFields(item, ['kind', 'path', 'identity'])
+        || monorepo.normalizeRelative(item.path) !== item.path || !/^sha256:[0-9a-f]{64}$/.test(item.identity);
+    })) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'publication_receipt', 'content') };
+  }
+  const artifacts = {
+    plan: publication.artifactIdentity(migrationReport.plan),
+    mapping: publication.artifactIdentity(migrationReport.mapping),
+    split_review: publication.artifactIdentity(migrationReport.split_review),
+    group_packages: publication.artifactIdentity(migrationReport.group_packages),
+    semantic_review: publication.artifactIdentity(migrationReport.validation.semantic_review),
+  };
+  if (!isDeepStrictEqual(receipt.artifacts, artifacts)) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'accepted_artifacts') };
+  }
+  const suppliedClassification = {
+    status: migrationReport.publication.status,
+    published: migrationReport.publication.published,
+    failed: migrationReport.publication.failed,
+    skipped: migrationReport.publication.skipped,
+  };
+  if (!isDeepStrictEqual(receipt.candidate_conformance, migrationReport.publication.candidate_conformance)
+    || !isDeepStrictEqual(receipt.results, migrationReport.publication.results)
+    || !isDeepStrictEqual(receipt.classification, suppliedClassification)) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'data_mismatch') };
+  }
+  const checked = receipt.checked_candidates.map((item) => item.kind === 'concept'
+    ? { source: item.source, concept: item.concept, path: item.path, type: item.type }
+    : { path: item.path });
+  const checkedOrder = receipt.checked_candidates.map((item) => item.kind === 'concept' ? item.concept : item.path);
+  if (!isDeepStrictEqual(checkedOrder, receipt.results.map((item) => item.concept))) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'result_order') };
+  }
+  if (!isDeepStrictEqual(checked.filter((item) => item.source !== undefined), publicationResult.concepts)
+    || !isDeepStrictEqual(checked.filter((item) => item.source === undefined), publicationResult.indexes)) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'checked_candidates') };
+  }
+  return { receipt };
+}
+
+// #203 (#202): one row per touched concept group, naming every planned effect and
+// what actually happened to it. A group is reported as needing repair whenever any
+// of its own effects failed or was never attempted -- #202's own failure rule:
+// each write is independent, nothing retries or rolls back, and the next mutation
+// of that group must carry the repair.
+function groupPackageEffects(accepted, publicationData) {
+  const published = new Set(publicationData.published);
+  const failed = new Map(publicationData.failed.map((item) => [item.concept, item]));
+  const skipped = new Map(publicationData.skipped.map((item) => [item.concept, item]));
+  const outcome = (target) => {
+    if (target === null) return 'not-planned';
+    if (published.has(target)) return 'applied';
+    if (failed.has(target)) return 'failed';
+    if (skipped.has(target)) return 'not-attempted';
+    return 'not-planned';
+  };
+  const indexOf = new Map(accepted.indexes.map((item) => [item.key, item]));
+  const rows = accepted.packages.map((item) => {
+    const index = indexOf.get(item.group);
+    const effects = {
+      index: { disposition: item.index.disposition, target: index ? index.index_entry.path : null },
+      glossary: { disposition: item.glossary.disposition, target: item.glossary.disposition === 'created' ? `${item.group}/glossary` : null },
+      guidance: { disposition: item.guidance.disposition, target: item.guidance.disposition === 'created' ? item.guidance.concept_id : null },
+      log: { disposition: item.log.disposition, target: null },
+    };
+    // The group's own accepted direct concepts -- the package's accepted
+    // children, never the derived index rows: a group whose index disposition
+    // is `unchanged` derives no index row at all, and its concepts must still
+    // be reported rather than degrading to an empty, never-repaired row.
+    const concepts = item.children
+      .filter((child) => child.kind === 'concept')
+      .map((child) => child.concept_id);
+    for (const effect of Object.values(effects)) effect.result = outcome(effect.target);
+    const conceptEffects = {
+      applied: concepts.filter((concept) => published.has(concept)),
+      failed: concepts.filter((concept) => failed.has(concept)).map((concept) => failed.get(concept)),
+      not_attempted: concepts.filter((concept) => skipped.has(concept)).map((concept) => skipped.get(concept)),
+    };
+    const unrepaired = Object.values(effects).some((effect) => effect.result === 'failed' || effect.result === 'not-attempted');
+    return {
+      group: item.group,
+      purpose: item.purpose,
+      ...effects,
+      concepts: conceptEffects,
+      needs_repair: unrepaired || conceptEffects.failed.length > 0 || conceptEffects.not_attempted.length > 0,
+    };
+  });
+  return rows;
+}
+
+function executeMigrationReport(request, migrationReport, gitRoot, services) {
+  const splitReviewFields = [
+    'path', 'word_count', 'review_required', 'review_reason', 'source_identity', 'line_count',
+    'sections', 'outputs', 'accounting_status', 'proposal',
+  ];
+  if (!exactFields(migrationReport, ['settings', 'plan', 'mapping', 'split_review', 'group_packages', 'validation', 'publication'])
+    || !exactFields(migrationReport.settings, ['max_words_per_file'])
+    || !Number.isInteger(migrationReport.settings.max_words_per_file)
+    || migrationReport.settings.max_words_per_file < 1
+    || !publication.validPlan(migrationReport.plan) || !publication.validMapping(migrationReport.mapping)
+    || !groupPackages.validAccepted(migrationReport.group_packages)
+    || !Array.isArray(migrationReport.split_review)) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'migration', 'shape');
+  }
+  const planMapping = publication.planMappingCoverage(migrationReport.plan, migrationReport.mapping);
+  if (!planMapping.ok) return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'plan_mapping', 'coverage');
+  const splitReview = partition.validateSplitReviews(
+    migrationReport.mapping, migrationReport.split_review,
+  );
+  if (!splitReview.ok) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'split_review', splitReview.code);
+  }
+  const reviewedShape = migrationReport.split_review.every((item) => {
+    if (!exactFields(item, splitReviewFields)
+      || !Number.isInteger(item.word_count) || item.word_count < 0
+      || typeof item.review_required !== 'boolean'
+      || !/^sha256:[0-9a-f]{64}$/.test(item.source_identity)) return false;
+    if (item.proposal === null) {
+      return item.word_count <= migrationReport.settings.max_words_per_file
+        && item.review_required === false && item.review_reason === null
+        && item.line_count === 0 && item.sections.length === 0 && item.outputs.length === 0;
+    }
+    const aboveTarget = item.word_count > migrationReport.settings.max_words_per_file;
+    return aboveTarget
+      ? item.review_required === true && item.review_reason === 'above_target'
+      : item.review_required === false && ['user_requested', 'semantic_boundaries'].includes(item.review_reason);
+  });
+  if (!reviewedShape) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'split_review', 'report_fields');
+  }
+
+  const checked = migrationReport.validation;
+  if (!exactFields(checked, ['structural_coverage', 'agent_semantic_review', 'semantic_fidelity', 'semantic_review'])
+    || !validReportFlag(checked.structural_coverage, 'passed')
+    || !validReportFlag(checked.agent_semantic_review, 'passed')
+    || !validReportFlag(checked.semantic_fidelity, 'assessed')
+    || !publication.validCanonicalReview(checked.semantic_review)) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'validation', 'shape');
+  }
+  const semantic = canonicalReview.canonicalCoverage(checked.semantic_review, migrationReport.split_review);
+  if (!semantic.ok && semantic.detail.reason !== 'verdict') {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'validation', 'semantic_review');
+  }
+  const semanticPassed = semantic.ok;
+  if (checked.agent_semantic_review.passed !== semanticPassed
+    || checked.semantic_fidelity.assessed !== checked.semantic_review.human_assessed) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'validation', 'flags');
+  }
+  if (!checked.structural_coverage.passed || !checked.agent_semantic_review.passed) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'validation', 'publication_gate');
+  }
+
+  const publicationResult = validateReportPublication(migrationReport.publication);
+  if (!publicationResult.ok) {
+    return reportArtifactRefusal(
+      request, publicationResult.code, publicationResult.artifact, publicationResult.reason,
+    );
+  }
+  const durable = publicationReceipt(request, migrationReport, publicationResult, gitRoot, services);
+  if (durable.refusal) return durable.refusal;
+  const expectedIndexes = migrationReport.group_packages.indexes
+    .map((group) => ({ path: group.index_entry.path }));
+  const planned = migrationReport.split_review.filter((item) => item.proposal !== null)
+    .flatMap((review) => review.proposal.outputs.map((output) => ({
+      source: review.path, concept: output.concept_id, path: output.path,
+    })));
+  const plannedSet = canonicalReview.exactSet(
+    planned.map((item) => `${item.source}\0${item.concept}\0${item.path}`),
+    publicationResult.concepts.filter((item) => planned.some((output) => output.source === item.source))
+      .map((item) => `${item.source}\0${item.concept}\0${item.path}`),
+  );
+  const reviews = new Map(migrationReport.split_review.map((item) => [item.path, item]));
+  const expectedConcepts = migrationReport.mapping.flatMap((item) => {
+    const review = reviews.get(item.path);
+    return review.proposal === null
+      ? [{ source: item.path, concept: item.concept, path: `${item.concept}.md`, type: item.type }]
+      : review.proposal.outputs.map((output) => ({
+        source: item.path, concept: output.concept_id, path: output.path, type: output.type,
+      }));
+  });
+  const conceptSet = canonicalReview.exactSet(
+    expectedConcepts.map((item) => JSON.stringify(item)), publicationResult.concepts.map((item) => JSON.stringify(item)),
+  );
+  const indexSet = canonicalReview.exactSet(
+    expectedIndexes.map((item) => item.path), publicationResult.indexes.map((item) => item.path),
+  );
+  if (canonicalReview.differs(plannedSet) || canonicalReview.differs(conceptSet) || canonicalReview.differs(indexSet)) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'candidate_conformance', 'accepted_plan');
+  }
+  const candidatePaths = canonicalReview.exactSet(
+    publicationResult.concepts.map((item) => item.path).concat(publicationResult.indexes.map((item) => item.path)),
+    checked.semantic_review.candidates.map((item) => item.path),
+  );
+  if (canonicalReview.differs(candidatePaths)) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'candidate_conformance', 'semantic_candidates');
+  }
+
+  const published = new Set(migrationReport.publication.published);
+  const reviewedSources = migrationReport.split_review.filter((item) => item.proposal !== null).map((review) => {
+    const semanticSource = checked.semantic_review.sources.find((item) => item.path === review.path);
+    const outputIds = new Set(review.proposal.outputs.map((item) => item.concept_id));
+    return {
+      path: review.path,
+      max_words_per_file: migrationReport.settings.max_words_per_file,
+      word_count: review.word_count,
+      review_reason: review.review_reason,
+      accepted_result: review.proposal.result,
+      reason: review.proposal.keep_as_one_reason,
+      sections: review.sections,
+      planned_outputs: review.proposal.outputs,
+      actual_outputs: review.proposal.outputs.filter((item) => published.has(item.concept_id)),
+      conformance_result: { passed: migrationReport.publication.candidate_conformance.passed },
+      semantic_review_result: { passed: semanticPassed, sections: semanticSource.sections },
+      failed_writes: migrationReport.publication.failed.filter((item) => outputIds.has(item.concept)),
+      skipped_writes: migrationReport.publication.skipped.filter((item) => outputIds.has(item.concept)),
+    };
+  });
+  const conceptIds = new Set(publicationResult.concepts.map((item) => item.concept));
+  const indexIds = new Set(publicationResult.indexes.map((item) => item.path));
+  const actualConcepts = migrationReport.publication.published.filter((item) => conceptIds.has(item));
+  const sourceCount = new Set(publicationResult.concepts.map((item) => item.source)).size;
+  const findings = checked.semantic_fidelity.assessed ? [] : [
+    reportFinding('semantic_fidelity_not_assessed', 'warning', { scope: 'bundle' }),
+  ];
+  return respond(request, 'ok', {
+    status: migrationReport.publication.status,
+    summary: {
+      sources_total: sourceCount,
+      concepts_created: actualConcepts.length,
+      concepts_planned: publicationResult.concepts.length,
+      writes_failed: migrationReport.publication.failed.filter((item) => conceptIds.has(item.concept)).length,
+      writes_skipped: migrationReport.publication.skipped.filter((item) => conceptIds.has(item.concept)).length,
+    },
+    reviewed_sources: reviewedSources,
+    writes: {
+      published: actualConcepts,
+      failed: migrationReport.publication.failed.filter((item) => conceptIds.has(item.concept)),
+      skipped: migrationReport.publication.skipped.filter((item) => conceptIds.has(item.concept)),
+    },
+    navigation_writes: {
+      published: migrationReport.publication.published.filter((item) => indexIds.has(item)),
+      failed: migrationReport.publication.failed.filter((item) => indexIds.has(item.concept)),
+      skipped: migrationReport.publication.skipped.filter((item) => indexIds.has(item.concept)),
+    },
+    group_packages: groupPackageEffects(migrationReport.group_packages, migrationReport.publication),
+    structural_coverage: checked.structural_coverage,
+    agent_semantic_review: checked.agent_semantic_review,
+    semantic_fidelity: checked.semantic_fidelity,
+  }, findings);
+}
+
 // `payload.sources` (single-project mode, open points 1-6 directly) or
 // `payload.packages` (multi-package mode, composed from `aggregate`'s own
 // per-package `status`/`reason`/`warnings` plus each succeeded package's own
@@ -520,7 +928,12 @@ function executeReport(request, services) {
 
   const hasSources = Object.hasOwn(payload, 'sources');
   const hasPackages = Object.hasOwn(payload, 'packages');
-  if (hasSources === hasPackages) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  const hasMigration = Object.hasOwn(payload, 'migration');
+  if ([hasSources, hasPackages, hasMigration].filter(Boolean).length !== 1) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  if (hasMigration) return executeMigrationReport(request, payload.migration, gitRoot, services);
 
   if (hasSources) {
     if (!Array.isArray(payload.sources) || !payload.sources.every(validSourceItem)) {
@@ -626,6 +1039,212 @@ function executeDiscover(request, services) {
 // re-walks or re-classifies the filesystem, it only consumes this exact shape.
 const DISCOVER_CATEGORIES = new Set(['markdown', 'unsupported', 'other', 'ambiguous']);
 
+// #201 task 2: one accounted source section of a split under review. Line
+// numbers are 1-based and inclusive at both ends; the range's fit against the
+// real file is `sections.js`'s job (this only settles the shape). #200's "each
+// source section has exactly one disposition: assignment to one output
+// concept, or migration residue left at the source path" -- so `output` names
+// the receiving output for `assigned` and must be absent for `residue`, and an
+// explicit output position is meaningful only for an assigned section.
+function validSplitSection(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (!Number.isInteger(item.line_start) || !Number.isInteger(item.line_end)) return false;
+  if (item.disposition === 'assigned') {
+    if (typeof item.output !== 'string' || item.output === '') return false;
+    return item.order === undefined || Number.isInteger(item.order);
+  }
+  if (item.disposition !== 'residue') return false;
+  return item.output === undefined && item.order === undefined;
+}
+
+function validSplitAccounting(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (typeof item.path !== 'string' || item.path === '') return false;
+  if (item.source_identity !== undefined && (typeof item.source_identity !== 'string' || item.source_identity === '')) return false;
+  return Array.isArray(item.sections) && item.sections.length > 0 && item.sections.every(validSplitSection);
+}
+
+function validSplitSections(value) {
+  if (!Array.isArray(value) || !value.every(validSplitAccounting)) return false;
+  return new Set(value.map((item) => item.path)).size === value.length;
+}
+
+/*
+ * #201 task 1 (#200): "a source above the effective file-word target must
+ * receive split review... a smaller source can receive split review when setup
+ * finds clear semantic boundaries or when the user requests it -- never
+ * automatically". Decided per `migrate` source only: `skip`/`residue`/
+ * `blocked_pending_decision` never produce a concept, so the target does not
+ * apply to them. `review_required` is `true` only for `above_target` (the one
+ * mandatory case); `user_requested` is a *permitted* review, never forced.
+ * `semantic_boundaries` is named for tasks 2-7 to carry forward verbatim, but
+ * nothing detects it yet, so it is never produced here. Word count is the raw
+ * file exactly as `readFile` returns it -- frontmatter and code included, per
+ * `words.js`'s own rule -- not `data.mapping[].body`, which is the parsed body
+ * with frontmatter stripped and links rewritten. An unreadable source (already
+ * impossible for a `migrate` entry, which only exists once this same file was
+ * read successfully during classification) counts as empty rather than
+ * throwing, the same defensive shape `publish` already uses for a re-read.
+ *
+ * #201 task 2 (#200's "Source accounting" and "Validation and publication")
+ * extends each entry with the source side of a split: the source content
+ * identity the proposal binds, the derived sections of a source that is under
+ * review, and -- once the caller supplies its own accounting in
+ * `payload.split_sections` -- whether those ranges cover the complete source
+ * once, with one disposition each and one accepted output order. Deriving and
+ * validating both live in `scripts/lib/sections.js`; nothing here repairs,
+ * moves, or drops a range, and `accounting_status` says exactly which of the
+ * four states a source is in.
+ *
+ * Returns `{ reviews, findings }`: `data.split_review`'s own array, and the
+ * blocking findings a broken accounting produced (none of which ever touches
+ * the plan itself).
+ */
+function accountSplits(entries, payload, maxWords, gitRoot, services) {
+  const requested = new Set(payload.split_requested || []);
+  const semanticBoundaries = new Set(payload.semantic_boundary_sources || []);
+  const supplied = new Map((payload.split_sections || []).map((item) => [item.path, item]));
+  const findings = [];
+  const refuse = (source, code, detail = {}) => findings.push(suiteFinding(code, { path: source, ...detail }));
+
+  const reviews = entries.filter((item) => item.disposition === 'migrate').map((item) => {
+    let raw;
+    try {
+      raw = services.readFile(path.join(gitRoot, item.path));
+    } catch {
+      raw = '';
+    }
+    const wordCount = words.countWords(raw);
+    const aboveTarget = wordCount > maxWords;
+    const accounting = supplied.get(item.path);
+    const review = {
+      path: item.path,
+      word_count: wordCount,
+      review_required: aboveTarget,
+      review_reason: aboveTarget ? 'above_target'
+        : requested.has(item.path) ? 'user_requested'
+          : semanticBoundaries.has(item.path) ? 'semantic_boundaries' : null,
+      source_identity: sections.identify(raw),
+      line_count: 0,
+      sections: [],
+      outputs: [],
+      accounting_status: 'not_required',
+    };
+
+    // #200 opens a split only through review. A source no trigger ever opened
+    // stays one concept, so nothing is sectioned for it -- and an accounting
+    // supplied for it is refused rather than blessing a split #200 never
+    // allowed (symmetrical with `SPLIT_SOURCE_UNKNOWN` below).
+    if (review.review_reason === null) {
+      if (accounting !== undefined) {
+        refuse(item.path, 'SPLIT_SOURCE_NOT_UNDER_REVIEW');
+        review.accounting_status = 'refused';
+      }
+      return review;
+    }
+
+    // #200: "A source change invalidates the proposal before transformation or
+    // publication" -- reported alone, with the accounting dropped rather than
+    // measured, because ranges built against the old bytes say nothing at all
+    // about the new ones.
+    const stale = accounting !== undefined && accounting.source_identity !== undefined
+      && accounting.source_identity !== review.source_identity;
+    if (stale) {
+      refuse(item.path, 'SPLIT_SOURCE_CHANGED', { expected: accounting.source_identity, actual: review.source_identity });
+    }
+
+    const accounted = sections.account(raw, accounting === undefined || stale ? null : accounting.sections);
+    review.line_count = accounted.line_count;
+    review.sections = accounted.sections;
+    review.outputs = accounted.outputs;
+    for (const { code, detail } of accounted.findings) refuse(item.path, code, detail);
+    review.accounting_status = accounting === undefined
+      ? 'derived'
+      : (stale || accounted.findings.length > 0 ? 'refused' : 'complete');
+    return review;
+  });
+
+  // An accounting for a path this plan has no `migrate` entry for is refused,
+  // not quietly discarded: silently dropping it would let a caller believe a
+  // split it proposed was validated.
+  const accounted = new Set(reviews.map((item) => item.path));
+  for (const unknown of supplied.keys()) {
+    if (!accounted.has(unknown)) refuse(unknown, 'SPLIT_SOURCE_UNKNOWN');
+  }
+  return { reviews, findings };
+}
+
+function applySplitProposals(reviews, payload, mapped, entries, gitRoot, bundleRoot, services) {
+  const supplied = new Map((payload.split_proposals || []).map((item) => [item.path, item]));
+  const mappings = new Map(mapped.map((item) => [item.path, item]));
+  const findings = [];
+  const records = reviews.map((review) => {
+    const mappedSource = mappings.get(review.path);
+    let raw;
+    try { raw = services.readFile(path.join(gitRoot, review.path)); } catch { raw = null; }
+    const inventory = splitProposal.buildInventory(review.path, raw, review, gitRoot, bundleRoot, services);
+    const proposal = supplied.get(review.path);
+    const evaluated = proposal === undefined && review.accounting_status === 'complete'
+      ? splitProposal.derive(review, mappedSource, mappedSource.sources || [], inventory)
+      : proposal === undefined
+        ? { proposal: null, findings: [] }
+        : splitProposal.evaluate(review, proposal, mappedSource.sources || [], inventory);
+    findings.push(...evaluated.findings.map((item) => suiteFinding(item.code, { path: review.path, ...item.detail })));
+    const canonicalOutputs = evaluated.proposal?.status === 'accepted'
+      ? evaluated.proposal.outputs.map((output) => review.outputs.find((item) => item.output === output.output))
+      : review.outputs;
+    return {
+      path: review.path,
+      review: { ...review, outputs: canonicalOutputs, proposal: evaluated.proposal },
+      proposal: evaluated.proposal,
+    };
+  });
+  const known = new Set(reviews.map((item) => item.path));
+  for (const source of supplied.keys()) {
+    if (!known.has(source)) findings.push(suiteFinding('SPLIT_PROPOSAL_SOURCE_UNKNOWN', { path: source }));
+  }
+  const proposedSources = new Set(records.filter((item) => item.proposal !== null).map((item) => item.path));
+  const normalTargets = entries.filter((item) => item.disposition === 'migrate' && !proposedSources.has(item.path))
+    .map((item) => ({ source: item.path, target_path: `${item.concept}.md` }));
+  const existingTargets = services.listFiles(bundleRoot).files.map((file) => path.relative(bundleRoot, file).split(path.sep).join('/'));
+  const collisions = splitProposal.callTargetFindings(records.filter((item) => item.proposal !== null), normalTargets, existingTargets);
+  for (const collision of collisions) {
+    findings.push(suiteFinding(collision.code, { path: collision.path, ...collision.detail }));
+    const record = records.find((item) => item.path === collision.path);
+    record.proposal = splitProposal.refuse(record.proposal);
+    record.review.proposal = record.proposal;
+  }
+  const groups = acceptedGroups.collect(records.map((item) => item.review));
+  if (!groups.ok) {
+    const participants = records.filter((item) => item.proposal?.outputs.some(
+      (output) => output.reader_purpose_group?.key === groups.detail.group,
+    ));
+    for (const record of participants) {
+      findings.push(suiteFinding('SPLIT_PROPOSAL_GROUP_CONFLICT', { path: record.path, ...groups.detail }));
+      record.proposal = splitProposal.refuse(record.proposal);
+      record.review.proposal = record.proposal;
+    }
+  }
+  return { reviews: records.map((item) => item.review), findings };
+}
+
+// #203: the derivation of "every accepted substantive output of this
+// migration", shared by `migration-plan`'s own group-package check and by the
+// conformance gate `migration-validate` runs later. `publish` derives its own
+// candidate set separately (`publication.expectedCandidates`) from the same
+// mapping and accepted split review, so the three never disagree about which
+// concepts the accepted tree has to account for.
+function acceptedOutputs(entries, splitReview) {
+  const reviews = new Map(splitReview.map((item) => [item.path, item]));
+  return entries.filter((item) => item.disposition === 'migrate').flatMap((item) => {
+    const proposal = reviews.get(item.path)?.proposal;
+    if (!proposal || proposal.status !== 'accepted') {
+      return [{ concept_id: item.concept, path: `${item.concept}.md` }];
+    }
+    return proposal.outputs.map((output) => ({ concept_id: output.concept_id, path: output.path }));
+  });
+}
+
 function validPlanSource(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
   if (typeof item.path !== 'string' || item.path === '') return false;
@@ -636,19 +1255,42 @@ function validPlanSource(item) {
   return item.question === undefined;
 }
 
+// #203 (#202): the root package a caller may omit from `migration-plan`.
+// Derived from the accepted packages themselves, so the fabricated default is a
+// valid accepted root (a non-empty purpose and title) and its index disposition
+// is always truthful under the unchanged-index staleness rule: the root gains
+// the accepted top-level groups this migration, so it is never left claiming
+// `unchanged` while they appear -- it is `updated` or `created` with them, and
+// only says `unchanged` when it actually gains nothing and the file is there.
+function defaultRootPackage(packages, bundleRoot, services) {
+  const topLevel = [...new Set(packages.filter((item) => !item.group.includes('/')).map((item) => item.group))].sort();
+  const exists = services.exists(path.join(bundleRoot, 'index.md'));
+  return {
+    purpose: 'Bundle root',
+    index: {
+      disposition: topLevel.length > 0 ? (exists ? 'updated' : 'created') : (exists ? 'unchanged' : 'created'),
+      title: 'Bundle',
+    },
+    log: { disposition: 'none' },
+    children: topLevel.map((group, index) => ({ kind: 'group', group, title: group, order: index + 1 })),
+  };
+}
+
 // `/setup`'s migration plan derivation and batched-question round (#144), plus the
 // source-to-concept mapping engine, provenance extraction, reference-path
 // derivation, and link rewriting (#145). Turns `discover`'s (#142) source inventory
 // into a fully-determined migration plan: every source gets an intentional
 // disposition -- `migrate`, `skip`, `residue`, or `blocked_pending_decision` -- a
-// concept path derived from its type's own canonical directory (not a mechanical
-// mirror of the source path), and `data.plan.executable` is `false` whenever any
+// concept path derived from the accepted reader-purpose group (#203, never a
+// type directory or a mechanical mirror of the source path), and
+// `data.plan.executable` is `false` whenever any
 // entry is still `blocked_pending_decision`, so an executor cannot run a
 // half-decided plan by accident. `data.mapping` carries, for every `migrate` entry,
 // the provenance its own frontmatter already declared (verbatim, never fabricated)
 // and its body with unambiguous internal links rewritten to their new concept
-// paths; `data.references` carries the deterministic `references/` path for every
-// `residue` entry's raw evidence; `data.plan.duplicates` surfaces, never merges, an
+// paths; a `residue` entry is recorded once in `data.plan.entries` and nowhere
+// else -- #177 (#157) makes residue report-only, so no target path is derived for
+// it and no `data.references` is produced at all; `data.plan.duplicates` surfaces, never merges, an
 // exact content duplicate among the sources this call is migrating. Read-only and
 // purely derivational, like `discover`: it reads each markdown source's own
 // frontmatter and body (through the same reader `discover` and the write path both
@@ -671,11 +1313,89 @@ function executeMigrationPlan(request, services) {
   if (payload.answers !== undefined && (!payload.answers || typeof payload.answers !== 'object' || Array.isArray(payload.answers))) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  // #201 task 1: the caller's own explicit split-review request, one of #200's
+  // two ways a source at or below the target can still receive review (the
+  // other, `semantic_boundaries`, has no detector yet -- a later task's job).
+  // Validated the same strict way `payload.answers` already is: garbage input
+  // is refused before anything is computed, never silently ignored.
+  if (payload.split_requested !== undefined) {
+    const requestedOk = Array.isArray(payload.split_requested)
+      && payload.split_requested.every((item) => typeof item === 'string' && item !== '');
+    if (!requestedOk) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.semantic_boundary_sources !== undefined) {
+    const boundarySources = payload.semantic_boundary_sources;
+    const boundarySourcesOk = Array.isArray(boundarySources)
+      && boundarySources.every((item) => typeof item === 'string' && item !== '')
+      && new Set(boundarySources).size === boundarySources.length;
+    if (!boundarySourcesOk) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  // #201 task 2: the caller's own accounting of a source under split review --
+  // one entry per source, each carrying that source's exact section ranges and
+  // their dispositions, and optionally the source identity the accounting was
+  // built against. Same strict posture: a malformed accounting is refused
+  // before anything is computed, never partially honoured.
+  if (payload.split_sections !== undefined && !validSplitSections(payload.split_sections)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.split_proposals !== undefined && !splitProposal.validPayload(payload.split_proposals)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  // #203 (#202): the accepted concept-group half of the target-bundle proposal.
+  // Shape first, exactly like every other accepted value this operation takes.
+  if (!groupPackages.validPayload(payload.group_packages, payload.root_package)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const packages = payload.group_packages || [];
+  // A group key becomes part of a concept path the moment `derivePlan` answers a
+  // placement: `placed()` builds `${group}/${name}` and probes the bundle for
+  // it. Validate every key before that first filesystem use, so a key like
+  // `../evil` is refused here rather than after an out-of-bundle probe.
+  const keyProblems = packages.flatMap((item) => groupPackages.keyFindings(item.group));
+  if (keyProblems.length > 0) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, keyProblems.map((item) => suiteFinding(item.code, item.detail)));
+  }
+  const rootPackage = payload.root_package || defaultRootPackage(packages, bundleRoot, services);
+  const groupKeys = packages.map((item) => item.group);
 
-  const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers);
+  const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers, groupKeys);
   if (outcome.invalid) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  const migratePaths = new Set(outcome.entries.filter((item) => item.disposition === 'migrate').map((item) => item.path));
+  if ((payload.semantic_boundary_sources || []).some((item) => !migratePaths.has(item))) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  // #197 (#200): `migration-plan` is the proposal `/setup`'s migration flow builds,
+  // so the effective `max_words_per_file` and any settings finding are exposed here
+  // the same way `inspect` already exposes them for the manifest itself (#197 task
+  // 1) -- `migration-plan` is never bypass-gated (see `runtime.js`'s
+  // `activationBypassOperations`), so a valid manifest is already guaranteed by the
+  // time this line runs and `inspect` always reports `state: 'ok'` here. Resolved
+  // through the same upward-walking `manifest.select()` the activation gate itself
+  // used, not a hardcoded `<gitRoot>/.okf-workspace.json` (fix round 2, Important 3).
+  const settingsReport = manifest.inspect(resolveManifestFile(payload, gitRoot, services), gitRoot, services);
+
+  const split = accountSplits(outcome.entries, payload, settingsReport.settings.max_words_per_file, gitRoot, services);
+  const proposed = applySplitProposals(
+    split.reviews, payload, outcome.mapping, outcome.entries, gitRoot, bundleRoot, services,
+  );
+
+  // #203 (#202): every accepted substantive output of this migration, whatever
+  // produced it -- one concept for an unsplit `migrate` entry, one per accepted
+  // output for a reviewed source. This is the single set the accepted group
+  // packages are proved against, and the same set the later conformance gate
+  // reuses, so an index a reader navigates and the candidate set publication
+  // enforces can never describe two different trees.
+  const groups = groupPackages.evaluate({
+    packages,
+    rootPackage,
+    concepts: acceptedOutputs(outcome.entries, proposed.reviews),
+    bundleRoot,
+    services,
+  });
 
   const findings = [
+    ...groups.findings.map((item) => suiteFinding(item.code, item.detail)),
     ...outcome.questions.map((q) => ({
       code: 'plan_question_open',
       origin: 'suite',
@@ -693,19 +1413,41 @@ function executeMigrationPlan(request, services) {
       blocks: false,
       detail: { paths: d.paths },
     })),
+    // #188: a migrating body's link that resolves to nothing -- neither another
+    // source this same call is migrating nor a real file staying in the project --
+    // reported before anything is written, never blocking (a broken link is a
+    // tolerated warning here, same tier as an open question or a duplicate).
+    ...outcome.unresolvedLinks.map((l) => ({
+      code: 'plan_link_unresolved',
+      origin: 'suite',
+      severity: 'warning',
+      blocks: false,
+      detail: { path: l.path, resource: l.resource, class: l.class },
+    })),
+    // #201 task 2: a broken source accounting blocks -- it is the one part of
+    // this operation that refuses. The word target itself still never blocks
+    // (#200), and neither does a blocked accounting rewrite the plan: the
+    // entry keeps its own `migrate` disposition and `data.plan.executable`
+    // keeps its own meaning (every source has a disposition).
+    ...split.findings,
+    ...proposed.findings,
   ];
   return respond(request, 'ok', {
     plan: { entries: outcome.entries, executable: outcome.executable, duplicates: outcome.duplicates },
     questions: outcome.questions,
     mapping: outcome.mapping,
-    references: outcome.references,
+    settings: settingsReport.settings,
+    settings_findings: settingsReport.settings_findings,
+    split_review: proposed.reviews,
+    group_packages: { packages, root: rootPackage, indexes: groups.indexes },
   }, findings);
 }
 
 // `/setup`'s dynamic semantic partitioner and delegated worker protocol (#146).
 // Its own upstream, unmodified, is exactly `migration-plan`'s response shape:
-// `payload.plan` (`{entries, executable}`), `payload.mapping`, and
-// `payload.references`. Read-only and purely derivational, like `migration-plan`
+// `payload.plan` (`{entries, executable}`) and `payload.mapping`. There is no
+// residue input: #177 (#157) keeps residue in the plan and the report only, so a
+// brief never names one. Read-only and purely derivational, like `migration-plan`
 // itself: it never reads a source file, never writes anything, and never spawns or
 // prompts anything -- launching the fresh-context worker a brief describes is
 // `skills/okf-setup/SKILL.md`'s job, not this one's (#131: "the runtime never
@@ -735,32 +1477,24 @@ function validPartitionMappingItem(item) {
   if (typeof item.concept !== 'string' || item.concept === '') return false;
   if (typeof item.type !== 'string' || item.type === '') return false;
   if (item.sources !== null && !Array.isArray(item.sources)) return false;
+  if (item.source_identity !== undefined && item.source_identity !== null
+    && (typeof item.source_identity !== 'string' || !SHA256_IDENTITY.test(item.source_identity))) return false;
   return typeof item.body === 'string';
 }
 
-function validPartitionReferenceItem(item) {
-  return !!item && typeof item === 'object' && !Array.isArray(item) &&
-    typeof item.path === 'string' && item.path !== '' &&
-    typeof item.reference_path === 'string' && item.reference_path !== '';
-}
-
-// A caller cannot hand this operation a `mapping`/`references` array that does not
-// correspond, one-for-one, to `plan.entries`' own `migrate`/`residue` sources --
+// A caller cannot hand this operation a `mapping` array that does not
+// correspond, one-for-one, to `plan.entries`' own `migrate` sources --
 // exactly the invariant `migration-plan` itself always produces, checked here
 // rather than trusted blindly, since nothing stops a caller from tampering with or
-// hand-assembling the three pieces separately.
-function partitionInputConsistent(plan, mapping, references) {
+// hand-assembling the pieces separately. #177 (#157): a `residue` entry has no
+// counterpart array to check, because residue never leaves the plan.
+function partitionInputConsistent(plan, mapping) {
   const migrating = plan.entries.filter((entry) => entry.disposition === 'migrate');
-  const residue = plan.entries.filter((entry) => entry.disposition === 'residue');
-  if (mapping.length !== migrating.length || references.length !== residue.length) return false;
+  if (mapping.length !== migrating.length) return false;
   const migratingByPath = new Map(migrating.map((entry) => [entry.path, entry]));
-  const residueByPath = new Map(residue.map((entry) => [entry.path, entry]));
   for (const item of mapping) {
     const entry = migratingByPath.get(item.path);
     if (!entry || entry.concept !== item.concept || entry.type !== item.type) return false;
-  }
-  for (const item of references) {
-    if (!residueByPath.has(item.path)) return false;
   }
   return true;
 }
@@ -775,11 +1509,14 @@ function executePartitionCompute(request) {
   if (!Array.isArray(payload.mapping) || !payload.mapping.every(validPartitionMappingItem)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (!Array.isArray(payload.references) || !payload.references.every(validPartitionReferenceItem)) {
+  if (!partitionInputConsistent(payload.plan, payload.mapping)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (!partitionInputConsistent(payload.plan, payload.mapping, payload.references)) {
-    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  const splitReview = partition.validateSplitReviews(payload.mapping, payload.split_review);
+  if (!splitReview.ok) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [
+      partitionFinding(splitReview.code, true, splitReview.detail),
+    ]);
   }
   const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
   if (typeof bundleName !== 'string' || bundleName === '') {
@@ -792,7 +1529,7 @@ function executePartitionCompute(request) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
 
-  const outcome = partition.computePartition(payload.plan, payload.mapping, payload.references, {
+  const outcome = partition.computePartition(payload.plan, payload.mapping, payload.split_review, {
     cwd: path.resolve(payload.cwd),
     bundle: bundleName,
     projectMode: payload.project_mode,
@@ -836,9 +1573,9 @@ function executePartition(request, services) {
 
 // `payload.partition.shards[]` is exactly one `partition` compute-mode
 // `data.shards[]` entry (`{shard, sources, brief}`), unmodified -- reusing
-// `validPartitionMappingItem`/`validPartitionReferenceItem` for the brief's
-// own `mapping`/`references` arrays rather than a second shape check, since
-// a brief's `mapping`/`references` are exactly those two shapes already.
+// `validPartitionMappingItem` for the brief's own `mapping` array rather than
+// a second shape check, since a brief's `mapping` is exactly that shape
+// already. A brief carries no residue (#177), so there is nothing else here.
 function validAssemblyPartitionShard(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
   if (typeof item.shard !== 'string' || item.shard === '') return false;
@@ -848,7 +1585,7 @@ function validAssemblyPartitionShard(item) {
   const brief = item.brief;
   if (!brief || typeof brief !== 'object' || Array.isArray(brief) || brief.shard !== item.shard) return false;
   if (!Array.isArray(brief.mapping) || !brief.mapping.every(validPartitionMappingItem)) return false;
-  if (!Array.isArray(brief.references) || !brief.references.every(validPartitionReferenceItem)) return false;
+  if (!Array.isArray(brief.split_review)) return false;
   if (!Array.isArray(brief.sources) || brief.sources.some((s) => typeof s !== 'string' || s === '')) return false;
   return true;
 }
@@ -927,6 +1664,12 @@ function executeAssemble(request, services) {
   if (!Array.isArray(payload.shards) || payload.shards.length === 0 || !payload.shards.every(validAssemblyShardRef)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  // #203: the accepted concept-group packages, exactly as `migration-plan`
+  // returned them. Assembly derives every staged navigation index from them and
+  // never from what a shard happened to produce.
+  if (!groupPackages.validAccepted(payload.group_packages)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
   const gatheredIds = new Set(payload.shards.map((item) => item.shard));
   if (gatheredIds.size !== payload.shards.length) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
@@ -963,7 +1706,7 @@ function executeAssemble(request, services) {
     shardContents.set(shard.shard, content);
   }
 
-  const outcome = assembly.computeAssembly(partitionShards, shardContents);
+  const outcome = assembly.computeAssembly(partitionShards, shardContents, payload.group_packages);
   if (!outcome.ok) {
     if (outcome.code === 'CONCEPT_TARGET_COLLISION') {
       return respond(request, 'blocked', { code: 'CONCEPT_TARGET_COLLISION', collisions: outcome.collisions },
@@ -981,6 +1724,24 @@ function executeAssemble(request, services) {
     ...outcome.blockers.map((blocker) => partitionFinding('ASSEMBLY_SOURCE_BLOCKED', false, { path: blocker.path, reason: blocker.reason, shard: blocker.shard })),
   ];
 
+  // A concept file and an accepted navigation index sharing one path would let
+  // the write loop below stage the concept, then silently overwrite its bytes
+  // with the index. Refuse it here, at the staging boundary, before anything
+  // is written.
+  const indexPaths = new Set(outcome.indexes.map((item) => item.path));
+  const indexCollisions = outcome.concepts
+    .filter((item) => indexPaths.has(`${item.concept}.md`))
+    .map((item) => ({
+      concept: item.concept,
+      index_path: `${item.concept}.md`,
+      source: item.path,
+      shard: item.shard,
+    }));
+  if (indexCollisions.length > 0) {
+    return respond(request, 'blocked', { code: 'ASSEMBLY_INDEX_COLLISION', collisions: indexCollisions },
+      indexCollisions.map((collision) => partitionFinding('ASSEMBLY_INDEX_COLLISION', true, collision)));
+  }
+
   const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
   const identities = new Map();
   const staged = outcome.concepts.map((item) => {
@@ -991,14 +1752,24 @@ function executeAssemble(request, services) {
       path: item.path, concept: item.concept, type: item.type, shard: item.shard,
       file: path.relative(gitRoot, file),
       sources: sourceBinding(gitRoot, item.path, identities, services),
+      ...(item.output === undefined ? {} : {
+        output: item.output, sections: item.sections, accepted_output: item.accepted_output,
+      }),
     };
   });
+  for (const item of outcome.indexes) {
+    const file = path.join(stagingRoot, item.path);
+    services.mkdir(path.dirname(file));
+    services.writeFile(file, item.rendered);
+    staged.push({
+      kind: 'index', path: item.path, file: path.relative(gitRoot, file), group: item.group,
+    });
+  }
 
   return respond(request, 'ok', {
     status: outcome.blockers.length > 0 ? 'partial' : 'complete',
     publishable: outcome.blockers.length === 0,
     staged,
-    references: outcome.references,
     blockers: outcome.blockers,
     duplicates: outcome.duplicates,
     links,
@@ -1070,6 +1841,130 @@ function validSelectedPath(item) {
   return typeof item === 'string' && item !== '';
 }
 
+const SEMANTIC_VERDICTS = new Set(['preserved', 'missing', 'duplicated', 'uncertain']);
+const SHA256_IDENTITY = /^sha256:[0-9a-f]{64}$/;
+
+function semanticRefusal(code, detail) {
+  return { ok: false, finding: suiteFinding(code, detail) };
+}
+
+function contentIdentity(bytes) {
+  return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+}
+
+// Task 5 extends the existing semantic-review seam. It validates submitted
+// read-only review evidence; it does not perform a model call or prompt.
+function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoot, services) {
+  const reviewed = splitReview.filter((item) => item.proposal !== null).sort((a, b) => a.path.localeCompare(b.path));
+  const rich = semanticReview.sources !== undefined || semanticReview.candidates !== undefined;
+  if (reviewed.length > 0 && !rich) return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'review_missing' });
+
+  const sourceRows = semanticReview.sources || [];
+  let listing;
+  try { listing = services.exists(stagingRoot) ? services.listFiles(stagingRoot) : { files: [], complete: true }; } catch {
+    listing = { files: [], complete: false };
+  }
+  if (!listing.complete) return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_SCAN_INCOMPLETE', {});
+  const currentCandidates = listing.files
+    .filter(discovery.isMarkdownFile)
+    .map((file) => path.relative(stagingRoot, file).split(path.sep).join('/'))
+    .sort();
+  const candidateRows = semanticReview.candidates || [];
+  if (semanticReview.candidates === undefined) {
+    for (const candidatePath of currentCandidates) {
+      let bytes;
+      try { bytes = services.readBuffer(path.join(stagingRoot, candidatePath)); } catch {
+        return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_READ_FAILED', { path: candidatePath });
+      }
+      candidateRows.push({ path: candidatePath, identity: contentIdentity(bytes) });
+    }
+  }
+  const sourceShape = sourceRows.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+    && Object.keys(item).every((field) => ['path', 'source_identity', 'accepted', 'sections'].includes(field))
+    && typeof item.path === 'string' && item.path !== ''
+    && typeof item.source_identity === 'string' && SHA256_IDENTITY.test(item.source_identity)
+    && item.accepted && typeof item.accepted === 'object' && !Array.isArray(item.accepted)
+    && Array.isArray(item.sections));
+  const candidateShape = candidateRows.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+    && Object.keys(item).length === 2 && typeof item.path === 'string' && item.path !== ''
+    && typeof item.identity === 'string' && SHA256_IDENTITY.test(item.identity));
+  if (!sourceShape || !candidateShape) {
+    return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'row_shape' });
+  }
+
+  const expectedSources = reviewed.map((item) => item.path);
+  const sourceSet = canonicalReview.exactSet(expectedSources, sourceRows.map((item) => item.path));
+  if (canonicalReview.differs(sourceSet)) return semanticRefusal('SEMANTIC_REVIEW_SOURCE_SET_MISMATCH', sourceSet);
+
+  const candidateSet = canonicalReview.exactSet(currentCandidates, candidateRows.map((item) => item.path));
+  if (canonicalReview.differs(candidateSet)) return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_MISMATCH', candidateSet);
+
+  for (const review of reviewed) {
+    const submitted = sourceRows.find((item) => item.path === review.path);
+    let currentSourceIdentity;
+    try { currentSourceIdentity = sections.identify(services.readFile(path.join(gitRoot, review.path))); } catch { currentSourceIdentity = null; }
+    if (submitted.source_identity !== review.source_identity || submitted.source_identity !== currentSourceIdentity) {
+      return semanticRefusal('SEMANTIC_REVIEW_SOURCE_MISMATCH', {
+        path: review.path, expected: review.source_identity, submitted: submitted.source_identity, actual: currentSourceIdentity,
+      });
+    }
+    if (!isDeepStrictEqual(submitted.accepted, canonicalReview.acceptedReview(review))) {
+      return semanticRefusal('SEMANTIC_REVIEW_ACCEPTED_MISMATCH', { path: review.path });
+    }
+
+    const sectionShape = submitted.sections.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.keys(item).length === 3 && Number.isInteger(item.line_start) && Number.isInteger(item.line_end)
+      && SEMANTIC_VERDICTS.has(item.verdict));
+    if (!sectionShape) return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'section_shape', path: review.path });
+    const rangeKey = (item) => `${item.line_start}:${item.line_end}`;
+    const sectionSet = canonicalReview.exactSet(review.sections.map(rangeKey), submitted.sections.map(rangeKey));
+    if (canonicalReview.differs(sectionSet)) {
+      return semanticRefusal('SEMANTIC_REVIEW_SECTION_SET_MISMATCH', { path: review.path, ...sectionSet });
+    }
+  }
+
+  const candidates = [];
+  for (const candidatePath of currentCandidates) {
+    const submitted = candidateRows.find((item) => item.path === candidatePath);
+    let actual;
+    try { actual = contentIdentity(services.readBuffer(path.join(stagingRoot, candidatePath))); } catch {
+      return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_READ_FAILED', { path: candidatePath });
+    }
+    if (submitted.identity !== actual) {
+      return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_MISMATCH', {
+        path: candidatePath, expected: submitted.identity, actual,
+      });
+    }
+    candidates.push({ path: candidatePath, identity: actual });
+  }
+
+  const sourcesResult = reviewed.map((review) => {
+    const submitted = sourceRows.find((item) => item.path === review.path);
+    const verdicts = new Map(submitted.sections.map((item) => [`${item.line_start}:${item.line_end}`, item.verdict]));
+    return {
+      path: review.path,
+      source_identity: review.source_identity,
+      accepted: canonicalReview.acceptedReview(review),
+      sections: review.sections.map((section) => ({
+        line_start: section.line_start,
+        line_end: section.line_end,
+        verdict: verdicts.get(`${section.line_start}:${section.line_end}`),
+      })),
+    };
+  });
+  const findings = sourcesResult.flatMap((source) => source.sections
+    .filter((section) => section.verdict !== 'preserved')
+    .map((section) => suiteFinding(`SEMANTIC_SECTION_${section.verdict.toUpperCase()}`, {
+      path: source.path, line_start: section.line_start, line_end: section.line_end,
+    })));
+  return {
+    ok: true,
+    passed: findings.length === 0,
+    findings,
+    result: { human_assessed: semanticReview.performed, candidates, sources: sourcesResult },
+  };
+}
+
 function executeMigrationValidate(request, services) {
   const payload = request.payload;
   const context = setupContext(request, services);
@@ -1083,8 +1978,25 @@ function executeMigrationValidate(request, services) {
   if (!validPartitionPlan(payload.plan)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (!validSemanticReview(payload.semantic_review)) {
+  if (!validSemanticReview(payload.semantic_review, true)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.split_review !== undefined && !Array.isArray(payload.split_review)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (!groupPackages.validAccepted(payload.group_packages)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.split_review !== undefined) {
+    const splitReview = partition.validateSplitReviews(
+      payload.plan.entries.filter((item) => item.disposition === 'migrate').map((item) => ({ path: item.path })),
+      payload.split_review,
+    );
+    if (!splitReview.ok) {
+      return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [
+        partitionFinding(splitReview.code, true, splitReview.detail),
+      ]);
+    }
   }
 
   const disposed = new Set(payload.plan.entries.map((item) => item.path));
@@ -1102,40 +2014,70 @@ function executeMigrationValidate(request, services) {
     : { data: { concepts: [] }, findings: [] };
   findings.push(...structural.findings);
 
+  const semantic = evaluateSemanticReview(
+    payload.semantic_review, payload.split_review || [], gitRoot, stagingRoot, services,
+  );
+  if (!semantic.ok) {
+    const scanIncomplete = semantic.finding.code === 'SEMANTIC_REVIEW_CANDIDATE_SCAN_INCOMPLETE';
+    return respond(request, 'blocked', {
+      code: 'UNSUPPORTED_INPUT',
+      ...(scanIncomplete ? { structural_coverage: { passed: false } } : {}),
+    }, [semantic.finding]);
+  }
+  findings.push(...semantic.findings);
+
+  // #203 (#202): the staged tree must already be exactly the accepted
+  // concept-group package set -- every accepted substantive output, every accepted
+  // group index, nothing else -- and must carry no substantive concept at the
+  // direct bundle root. `publish` reruns the identical proof against current bytes
+  // before its first write; this is the same gate one seam earlier, so a
+  // non-conforming tree is named while it is still only staged.
+  const accepted = acceptedOutputs(payload.plan.entries, payload.split_review || []);
+  for (const output of accepted.filter((item) => !item.path.includes('/'))) {
+    findings.push(suiteFinding('GROUP_PACKAGE_ROOT_OUTPUT', { path: output.path }));
+  }
+  const acceptedPaths = [
+    ...accepted.map((item) => item.path),
+    ...payload.group_packages.indexes.map((item) => item.index_entry.path),
+  ].sort();
+  const conformance = canonicalReview.exactSet(acceptedPaths, semantic.result.candidates.map((item) => item.path));
+  if (canonicalReview.differs(conformance)) {
+    findings.push(suiteFinding('CANDIDATE_GROUP_PACKAGE_MISMATCH', conformance));
+  }
+
   const assessed = payload.semantic_review.performed === true;
   if (!assessed) findings.push(reportFinding('semantic_fidelity_not_assessed', 'warning', { scope: 'bundle' }));
 
-  const publishable = !findings.some((item) => item.blocks);
+  const structuralPassed = !findings.some((item) => item.blocks && !item.code.startsWith('SEMANTIC_SECTION_'));
+  const publishable = structuralPassed && semantic.passed;
   return respond(request, 'ok', {
     status: publishable ? 'complete' : 'partial',
     publishable,
     missing_disposition: missingDisposition,
     concepts_checked: structural.data.concepts.map((item) => item.path),
+    structural_coverage: { passed: structuralPassed },
+    agent_semantic_review: { passed: semantic.passed },
     semantic_fidelity: { assessed },
+    semantic_review: semantic.result,
   }, findings);
 }
 
 function validPublishStagedRef(item) {
-  return !!item && typeof item === 'object' && !Array.isArray(item) &&
-    typeof item.concept === 'string' && item.concept !== '' &&
-    typeof item.file === 'string' && item.file !== '' &&
-    (item.sources === undefined || Array.isArray(item.sources));
+  return publication.validStaged(item);
 }
 
 function dispatchBrief(brief) {
-  const result = childProcess.spawnSync(process.execPath, [DELEGATE_WRAPPER], {
-    input: JSON.stringify(brief), encoding: 'utf8',
-  });
-  try {
-    const parsed = JSON.parse(result.stdout);
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch {
-    return null;
-  }
+  return dispatchWrapper(DELEGATE_WRAPPER, brief);
 }
 
-function dispatchFailure(role) {
-  return { status: 'indeterminate', findings: [suiteFinding('PUBLISH_DISPATCH_FAILED', { gate: 'publish', role })] };
+// Distinguishes a truncated response (`dispatched.truncated`) from every other reason
+// `dispatched.ok` came back false -- a crashed wrapper, a killed process, a non-JSON
+// reply -- in the reported finding, rather than collapsing both into one opaque code.
+function dispatchFailure(role, dispatched) {
+  return {
+    status: 'indeterminate',
+    findings: [suiteFinding('PUBLISH_DISPATCH_FAILED', { gate: 'publish', role, truncated: !!(dispatched && dispatched.truncated) })],
+  };
 }
 
 // #149: the one delegation brief `publish` issues as a *reader*, a fail-fast
@@ -1246,7 +2188,7 @@ function executePublish(request, services) {
   const payload = request.payload;
   const context = setupContext(request, services);
   if (context.refusal) return context.refusal;
-  const { gitRoot, bundleName } = context;
+  const { gitRoot, bundleRoot, bundleName } = context;
 
   if (!lifecycle.isWritableTaskKind(payload.task_kind)) {
     return respond(request, 'blocked', { code: 'TASK_KIND_NOT_WRITE_ELIGIBLE' }, []);
@@ -1254,52 +2196,125 @@ function executePublish(request, services) {
   if (!Array.isArray(payload.staged) || payload.staged.length === 0 || !payload.staged.every(validPublishStagedRef)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (new Set(payload.staged.map((item) => item.concept)).size !== payload.staged.length) {
+  if (!publication.validPlan(payload.plan) || !publication.validMapping(payload.mapping)
+    || !Array.isArray(payload.split_review)
+    || !groupPackages.validAccepted(payload.group_packages)
+    || !publication.validCanonicalReview(payload.semantic_review)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  const planMapping = publication.planMappingCoverage(payload.plan, payload.mapping);
+  if (!planMapping.ok) {
+    return respond(request, 'blocked', { code: 'PUBLISH_PRECHECK_FAILED' }, [
+      suiteFinding(planMapping.finding.code, planMapping.finding.detail),
+    ]);
+  }
+  const splitReview = partition.validateSplitReviews(payload.mapping, payload.split_review);
+  if (!splitReview.ok) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [
+    partitionFinding(splitReview.code, true, splitReview.detail),
+  ]);
 
   const cwd = payload.cwd;
   const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
 
-  const precheck = dispatchBrief(publishPrecheckBrief(cwd, bundleName, payload.task_kind)) || dispatchFailure('okf-reader');
+  const precheckDispatch = dispatchBrief(publishPrecheckBrief(cwd, bundleName, payload.task_kind));
+  const precheck = precheckDispatch.ok ? precheckDispatch.response : dispatchFailure('okf-reader', precheckDispatch);
   if (precheck.status !== 'ok') {
     return respond(request, 'blocked', { code: 'PUBLISH_PRECHECK_FAILED' }, precheck.findings || []);
   }
 
-  const results = payload.staged.map((item) => {
-    const rel = monorepo.normalizeRelative(item.file);
-    const resolved = rel ? path.resolve(gitRoot, rel) : null;
-    if (!resolved || !inside(stagingRoot, resolved)) {
-      return { concept: item.concept, status: 'blocked: staged-file-outside-staging', findings: [] };
-    }
-    let text;
-    try {
-      text = services.readFile(resolved);
-    } catch {
-      return { concept: item.concept, status: 'blocked: staged-file-unreadable', findings: [] };
-    }
-    let parsed;
-    try {
-      parsed = stagedConceptContent(text);
-    } catch {
-      return { concept: item.concept, status: 'blocked: staged-file-unparseable', findings: [] };
-    }
-    const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, parsed.tree, parsed.body, item.sources || []);
-    const outcome = dispatchBrief(brief) || dispatchFailure('okf-writer');
-    return { concept: item.concept, status: outcome.status, findings: outcome.findings || [] };
+  const checked = publication.evaluate({
+    gitRoot, bundleRoot, stagingRoot, plan: payload.plan, mapping: payload.mapping, splitReview: payload.split_review,
+    groupPackages: payload.group_packages,
+    staged: payload.staged, semanticReview: payload.semantic_review, services,
   });
+  if (!checked.ok) {
+    return respond(request, 'blocked', { code: 'PUBLISH_PRECHECK_FAILED' }, [suiteFinding(checked.finding.code, checked.finding.detail)]);
+  }
+
+  const results = [];
+  const receiptFile = path.join(stagingRoot, publication.RECEIPT_FILE);
+  try { services.remove(receiptFile); } catch (error) {
+    return respond(request, 'failed/incomplete', { code: 'PUBLICATION_RECEIPT_WRITE_FAILED' }, [
+      suiteFinding('PUBLICATION_RECEIPT_WRITE_FAILED', { reason: writeFailureReason(error) }),
+    ]);
+  }
+  for (const item of checked.checked) {
+    const target = path.join(bundleRoot, item.target);
+    if (!publication.safePath(bundleRoot, target, services)) {
+      results.push({ concept: item.concept || item.path, status: 'blocked: target-symlink', findings: [suiteFinding('PUBLISH_TARGET_SYMLINK', { path: item.target })] });
+      break;
+    }
+    if (item.kind === 'index') {
+      try {
+        // A `created` index target must still be absent; an `updated` index
+        // replaces the file already there, so that file's current bytes are
+        // the compare-and-swap baseline (the same CAS discipline `init`'s own
+        // index repair uses), refusing a concurrent change in between.
+        const expected = services.exists(target) ? services.readFile(target) : null;
+        services.publishFile(target, item.text, expected);
+        results.push({ concept: item.path, status: 'clean', findings: [] });
+      } catch (error) {
+        results.push({ concept: item.path, status: 'failed', findings: [suiteFinding('PUBLISH_INDEX_WRITE_FAILED', {
+          path: item.path, reason: writeFailureReason(error),
+        })] });
+        break;
+      }
+      continue;
+    }
+    const tree = { ...item.tree };
+    delete tree.status;
+    const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, tree, item.body, item.sources);
+    const writeDispatch = dispatchBrief(brief);
+    const outcome = writeDispatch.ok ? writeDispatch.response : dispatchFailure('okf-writer', writeDispatch);
+    results.push({ concept: item.concept, status: outcome.status, findings: outcome.findings || [] });
+    if (outcome.status !== 'clean') break;
+  }
+  const attempted = new Set(results.map((item) => item.concept));
+  const skipped = checked.checked.filter((item) => !attempted.has(item.concept || item.path))
+    .map((item) => ({ concept: item.concept || item.path, status: 'not-attempted' }));
 
   const published = results.filter((item) => item.status === 'clean').map((item) => item.concept);
   const failed = results.filter((item) => item.status !== 'clean');
   const findings = failed.flatMap((item) => item.findings.map((finding) => (
     { ...finding, detail: { ...finding.detail, concept: item.concept } }
   )));
-
-  return respond(request, 'ok', {
+  const classification = {
     status: failed.length === 0 ? 'complete' : 'partial',
     published,
     failed: failed.map((item) => ({ concept: item.concept, status: item.status })),
-    results,
+    skipped,
+  };
+  const receipt = publication.buildReceipt(checked.checked, {
+    plan: payload.plan, mapping: payload.mapping, splitReview: payload.split_review,
+    groupPackages: payload.group_packages, semanticReview: payload.semantic_review,
+  }, [...results, ...skipped.map((item) => ({ ...item, findings: [] }))], classification);
+  const receiptText = `${JSON.stringify(receipt, null, 2)}\n`;
+  try { services.writeFile(receiptFile, receiptText); } catch (error) {
+    return respond(request, 'failed/incomplete', {
+      code: 'PUBLICATION_RECEIPT_WRITE_FAILED',
+      status: 'partial',
+      published: classification.published,
+      failed: classification.failed,
+      skipped: classification.skipped,
+      results: receipt.results,
+      candidate_conformance: receipt.candidate_conformance,
+    }, [
+      ...findings,
+      suiteFinding('PUBLICATION_RECEIPT_WRITE_FAILED', {
+        reason: writeFailureReason(error), phase: 'post-dispatch',
+      }),
+    ]);
+  }
+  const publicationReceiptRef = {
+    path: path.relative(gitRoot, receiptFile).split(path.sep).join('/'),
+    identity: contentIdentity(Buffer.from(receiptText)),
+  };
+
+  return respond(request, 'ok', {
+    ...classification,
+    candidate_conformance: receipt.candidate_conformance,
+    publication_receipt: publicationReceiptRef,
+    results: receipt.results,
   }, findings);
 }
 

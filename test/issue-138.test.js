@@ -8,14 +8,13 @@ const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-// `okf-setup`'s `inspect`/`repair` operations run even without a valid `.okf-active`
-// marker (that is one of the things `inspect` reports on), so fixtures here build a
-// bare Git repository directly rather than using the shared `repository()` helper,
-// which always creates the marker.
-function repo(t, { active = false } = {}) {
+// `okf-setup`'s `inspect`/`repair` operations run even without a valid manifest
+// (that is one of the things `inspect` reports on), so fixtures here build a bare
+// Git repository directly rather than using the shared `repository()` helper,
+// which always creates one.
+function repo(t) {
   const root = temporaryRoot(t, 'okf-138-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  if (active) fs.writeFileSync(path.join(root, '.okf-active'), '');
   return root;
 }
 
@@ -40,21 +39,26 @@ function validManifest(workspaceId) {
     schema_version: 1,
     workspace_id: workspaceId,
     repositories: [{ name: 'repo', path: '.', local: true }],
-    bundles: [{ alias: 'okf', owner: 'repo', root: 'okf', required: true, mode: 'source' }],
+    bundles: [{ alias: 'okf', owner: 'repo', root: 'okf', okf_version: '0.2', project_mode: 'knowledge-only' }],
   };
 }
 
 // --------------------------------------------------------------- index.md
 
+// #196/#197: the root is navigation only now, so there is no `okf_version` left
+// to check -- an old-format declaration is just parseable content, not a wrong
+// version, and inspect reports it `ok` like any other parseable root.
 test('inspect reports index.md as missing, invalid, and ok', (t) => {
   const root = repo(t);
   assert.deepEqual(run(inspectRequest(root)).data.index_md, { state: 'missing' });
 
   fs.mkdirSync(path.join(root, 'okf'));
-  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.1"\n---\n# Bundle\n');
-  assert.deepEqual(run(inspectRequest(root)).data.index_md, { state: 'invalid', reason: 'missing_or_wrong_okf_version' });
+  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: [\n---\n# Bundle\n');
+  const state = run(inspectRequest(root)).data.index_md;
+  assert.equal(state.state, 'invalid');
+  assert.ok(state.reason);
 
-  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.1"\n---\n# Bundle\n');
   assert.deepEqual(run(inspectRequest(root)).data.index_md, { state: 'ok' });
 });
 
@@ -75,45 +79,26 @@ test('inspect honors a non-default bundle directory for index.md', (t) => {
   assert.deepEqual(run(inspectRequest(root)).data.index_md, { state: 'missing' });
 });
 
-// --------------------------------------------------------------- .okf-active
+// --------------------------------------------------------------- activation gate
 
-test('inspect reports .okf-active as missing, invalid, and ok', (t) => {
+test('discover and migration-plan require a valid manifest: missing or invalid manifest blocks', (t) => {
   const root = repo(t);
-  assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'missing' });
+  const discoverRequest = { protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'discover', payload: { cwd: root, bundle: 'okf' } };
+  const migrationPlanRequest = { protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'migration-plan', payload: { cwd: root, sources: [] } };
 
-  fs.mkdirSync(path.join(root, '.okf-active'));
-  assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'invalid', reason: 'not_zero_byte_regular_file' });
-  fs.rmSync(path.join(root, '.okf-active'), { recursive: true });
+  assert.equal(run(discoverRequest).result, 'not-configured');
+  assert.equal(run(migrationPlanRequest).result, 'not-configured');
 
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
-  assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'ok' });
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
+  assert.equal(run(discoverRequest).result, 'blocked');
+  assert.equal(run(migrationPlanRequest).result, 'blocked');
 
-  fs.writeFileSync(path.join(root, '.okf-active'), 'not empty');
-  assert.deepEqual(run(inspectRequest(root)).data.activation, { state: 'invalid', reason: 'not_zero_byte_regular_file' });
-});
-
-test('repair creates the missing zero-byte activation marker', (t) => {
-  const root = repo(t);
-  const response = run(repairRequest(root, ['activation']));
-  assert.equal(response.result, 'applied');
-  assert.deepEqual(response.data.activation, { written: true });
-  const stat = fs.statSync(path.join(root, '.okf-active'));
-  assert.equal(stat.isFile(), true);
-  assert.equal(stat.size, 0);
-});
-
-test('repair replaces an invalid activation marker and then leaves the fixed marker untouched', (t) => {
-  const root = repo(t);
-  fs.writeFileSync(path.join(root, '.okf-active'), 'garbage');
-
-  const fixed = run(repairRequest(root, ['activation']));
-  assert.equal(fixed.result, 'applied');
-  assert.deepEqual(fixed.data.activation, { written: true });
-  assert.equal(fs.readFileSync(path.join(root, '.okf-active'), 'utf8'), '');
-
-  const noop = run(repairRequest(root, ['activation']));
-  assert.equal(noop.result, 'no-op');
-  assert.deepEqual(noop.data.activation, { written: false });
+  const workspaceId = '99999999-9999-4999-8999-999999999999';
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify(validManifest(workspaceId)));
+  fs.mkdirSync(path.join(root, 'okf'));
+  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  assert.equal(run(discoverRequest).result, 'ok');
+  assert.equal(run(migrationPlanRequest).result, 'ok');
 });
 
 // --------------------------------------------------------------- .okf-workspace.json
@@ -127,7 +112,9 @@ test('inspect reports .okf-workspace.json as missing, invalid, and ok', (t) => {
 
   const workspaceId = '11111111-1111-4111-8111-111111111111';
   fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify(validManifest(workspaceId)));
-  assert.deepEqual(run(inspectRequest(root)).data.manifest, { state: 'ok', monorepo: false });
+  assert.deepEqual(run(inspectRequest(root)).data.manifest, {
+    state: 'ok', monorepo: false, settings: { max_words_per_file: 1000 }, settings_findings: [],
+  });
 });
 
 test('inspect salvages a well-formed workspace_id from an otherwise invalid manifest, and reports none when there is nothing to salvage', (t) => {
@@ -158,7 +145,7 @@ test('inspect warns of a monorepo from .gitmodules when the manifest is missing,
     schema_version: 1,
     workspace_id: '33333333-3333-4333-8333-333333333333',
     repositories: [{ name: 'a', path: 'a', local: true }, { name: 'b', path: 'b', local: true }],
-    bundles: [{ alias: 'a', owner: 'a', root: 'a', required: true, mode: 'source' }],
+    bundles: [{ alias: 'a', owner: 'a', root: 'a', okf_version: '0.2', project_mode: 'knowledge-only' }],
   }));
   const report = run(inspectRequest(root)).data.manifest;
   assert.equal(report.state, 'ok', 'the manifest itself is well-formed; only the hint is asserted here');
@@ -167,7 +154,7 @@ test('inspect warns of a monorepo from .gitmodules when the manifest is missing,
 
 test('repair generates a validated single-bundle manifest template when missing', (t) => {
   const root = repo(t);
-  const response = run(repairRequest(root, ['manifest']));
+  const response = run(repairRequest(root, ['manifest'], { project_mode: 'code-backed' }));
   assert.equal(response.result, 'applied');
   assert.equal(response.data.manifest.written, true);
   assert.match(response.data.manifest.workspace_id, uuid);
@@ -182,13 +169,25 @@ test('repair generates a validated single-bundle manifest template when missing'
   assert.equal(written.bundles.length, 1);
   assert.equal(written.bundles[0].alias, 'okf');
   assert.equal(written.bundles[0].root, 'okf');
-  assert.equal(written.bundles[0].mode, 'source');
+  assert.equal(written.bundles[0].okf_version, '0.2');
+  assert.equal(written.bundles[0].project_mode, 'code-backed');
   assert.equal(written.bundles[0].owner, written.repositories[0].name);
 });
 
+test('repair refuses to generate a manifest without a recognized project_mode', (t) => {
+  const root = repo(t);
+  for (const projectMode of [undefined, 'sandbox']) {
+    const payload = projectMode === undefined ? {} : { project_mode: projectMode };
+    const response = run(repairRequest(root, ['manifest'], payload));
+    assert.equal(response.result, 'blocked', JSON.stringify(payload));
+    assert.equal(response.data.code, 'UNSUPPORTED_INPUT', JSON.stringify(payload));
+    assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false, JSON.stringify(payload));
+  }
+});
+
 test('repair templates a fresh workspace_id each time the manifest is missing, never a fixed value', (t) => {
-  const first = run(repairRequest(repo(t), ['manifest'])).data.manifest.workspace_id;
-  const second = run(repairRequest(repo(t), ['manifest'])).data.manifest.workspace_id;
+  const first = run(repairRequest(repo(t), ['manifest'], { project_mode: 'code-backed' })).data.manifest.workspace_id;
+  const second = run(repairRequest(repo(t), ['manifest'], { project_mode: 'code-backed' })).data.manifest.workspace_id;
   assert.match(first, uuid);
   assert.match(second, uuid);
   assert.notEqual(first, second);
@@ -206,20 +205,25 @@ test('repair regenerates an invalid manifest only once the caller supplies the s
 
   // The approval and the choice to keep the salvaged value both happen above the
   // runtime, in `okf-setup`'s procedure; `repair` only ever does what it is told.
-  const response = run(repairRequest(root, ['manifest'], { workspace_id: reported.salvage.workspace_id }));
+  const response = run(repairRequest(root, ['manifest'], { workspace_id: reported.salvage.workspace_id, project_mode: 'code-backed' }));
   assert.equal(response.result, 'applied');
   assert.equal(response.data.manifest.workspace_id, workspaceId);
   const written = JSON.parse(fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8'));
   assert.equal(written.workspace_id, workspaceId);
-  assert.deepEqual(run(inspectRequest(root)).data.manifest, { state: 'ok', monorepo: false });
+  assert.deepEqual(run(inspectRequest(root)).data.manifest, {
+    state: 'ok', monorepo: false, settings: { max_words_per_file: 1000 }, settings_findings: [],
+  });
 });
 
 test('repair leaves an already-ok manifest untouched and ignores a redundant payload', (t) => {
   const root = repo(t);
-  run(repairRequest(root, ['manifest']));
+  run(repairRequest(root, ['manifest'], { project_mode: 'code-backed' }));
   const before = fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8');
 
-  const response = run(repairRequest(root, ['manifest'], { workspace_id: '55555555-5555-4555-8555-555555555555' }));
+  // The manifest already exists and is `ok`, so the template `repair` builds to
+  // compare against is never written -- but it is still built and validated, so a
+  // repeat call still needs a recognized `project_mode` to reach the no-op check.
+  const response = run(repairRequest(root, ['manifest'], { workspace_id: '55555555-5555-4555-8555-555555555555', project_mode: 'code-backed' }));
   assert.equal(response.result, 'no-op');
   assert.deepEqual(response.data.manifest, { written: false });
   assert.equal(fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8'), before);
@@ -235,8 +239,8 @@ test('repair accepts a hand-authored manifest for a monorepo, validated the same
       { name: 'lib', path: 'lib', local: true },
     ],
     bundles: [
-      { alias: 'app', owner: 'app', root: 'app/okf', required: true, mode: 'source' },
-      { alias: 'lib', owner: 'lib', root: 'lib/okf', required: false, mode: 'source' },
+      { alias: 'app', owner: 'app', root: 'app/okf', okf_version: '0.2', project_mode: 'knowledge-only' },
+      { alias: 'lib', owner: 'lib', root: 'lib/okf', okf_version: '0.2', project_mode: 'knowledge-only' },
     ],
   };
   const response = run(repairRequest(root, ['manifest'], { manifest: custom }));
@@ -252,14 +256,6 @@ test('repair refuses a hand-authored manifest that fails validation, without wri
   assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
 });
 
-test('repair refuses a manifest payload named without "manifest" in targets', (t) => {
-  const root = repo(t);
-  const response = run(repairRequest(root, ['activation'], { manifest: { schema_version: 1 } }));
-  assert.equal(response.result, 'blocked');
-  assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
-});
-
 // --------------------------------------------------------------- repair input shape
 
 test('repair rejects a structurally empty targets list at the protocol layer, before the runtime', (t) => {
@@ -269,22 +265,17 @@ test('repair rejects a structurally empty targets list at the protocol layer, be
   assert.equal(result.stdout, '');
 });
 
+// #197: `manifest` is the only recognized target left -- `activation` (the target
+// that used to write the now-retired marker) is unrecognized input exactly like
+// any other unknown target name, not a special case.
 test('repair refuses unrecognized or duplicate targets without writing anything', (t) => {
   const root = repo(t);
-  for (const targets of [['index_md'], ['activation', 'activation']]) {
+  for (const targets of [['index_md'], ['activation'], ['manifest', 'manifest']]) {
     const response = run(repairRequest(root, targets));
     assert.equal(response.result, 'blocked', JSON.stringify(targets));
     assert.equal(response.data.code, 'UNSUPPORTED_INPUT', JSON.stringify(targets));
   }
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
-});
-
-test('repair does both targets in one call and reports each independently', (t) => {
-  const root = repo(t);
-  const response = run(repairRequest(root, ['activation', 'manifest']));
-  assert.equal(response.result, 'applied');
-  assert.deepEqual(response.data.activation, { written: true });
-  assert.equal(response.data.manifest.written, true);
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
 });
 
 // --------------------------------------------------------------- ownership, activation bypass, automatic invocation
@@ -292,19 +283,19 @@ test('repair does both targets in one call and reports each independently', (t) 
 test('inspect and repair report not-configured entirely outside a Git repository, exactly like every other operation', (t) => {
   const root = temporaryRoot(t, 'okf-138-no-repo-');
   assert.equal(run(inspectRequest(root)).result, 'not-configured');
-  assert.equal(run(repairRequest(root, ['activation'])).result, 'not-configured');
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
+  assert.equal(run(repairRequest(root, ['manifest'])).result, 'not-configured');
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
 });
 
-test('inspect and repair run without a valid activation marker, unlike every other operation', (t) => {
+test('inspect and repair run without a valid manifest, unlike every other operation', (t) => {
   const root = repo(t);
   assert.equal(run(inspectRequest(root)).result, 'ok');
-  assert.equal(run(repairRequest(root, ['activation'])).result, 'applied');
+  assert.equal(run(repairRequest(root, ['manifest'], { project_mode: 'code-backed' })).result, 'applied');
 });
 
 test('automatic invocation of inspect or repair is silent, matching every operation\'s automatic behavior when OKF is not active', (t) => {
-  const root = repo(t, { active: true });
-  for (const request of [inspectRequest(root), repairRequest(root, ['activation'])]) {
+  const root = repo(t);
+  for (const request of [inspectRequest(root), repairRequest(root, ['manifest'])]) {
     const result = spawnWrapper(wrapper, { ...request, invocation: 'automatic' });
     assert.equal(result.status, 0);
     assert.equal(result.stdout, '');
@@ -322,13 +313,13 @@ test('a non-writable Git root blocks repair with a blocking finding, without tou
   fs.chmodSync(root, 0o555);
   let response;
   try {
-    response = run(repairRequest(root, ['activation']));
+    response = run(repairRequest(root, ['manifest'], { project_mode: 'code-backed' }));
   } finally {
     fs.chmodSync(root, 0o755);
   }
   assert.equal(response.result, 'blocked');
   assert.ok(response.findings.some((item) => item.code === 'PARENT_DIRECTORY_NOT_WRITABLE'));
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
 });
 
 test('the generic okf router reaches inspect and repair too, and also bypasses the activation gate', (t) => {
@@ -338,22 +329,25 @@ test('the generic okf router reaches inspect and repair too, and also bypasses t
   assert.equal(inspected.result, 'ok');
   assert.deepEqual(inspected.data.activation, { state: 'missing' });
 
-  const repaired = runWrapper(routerWrapper, { ...repairRequest(root, ['activation']), skill: 'okf' });
+  const repaired = runWrapper(routerWrapper, { ...repairRequest(root, ['manifest'], { project_mode: 'knowledge-only' }), skill: 'okf' });
   assert.equal(repaired.skill, 'okf');
   assert.equal(repaired.result, 'applied');
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), true);
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), true);
 });
 
 // --------------------------------------------------------------- full chain
 
+// #196's documented order (inspect -> consent -> repair manifest -> init ->
+// discover) writes the manifest before `init` ever runs; this test's own name
+// already matches that order for free.
 test('a full setup chain (inspect, repair, init) leaves all three files ok and a normal create then passes the write gate', (t) => {
   const root = repo(t);
   const before = run(inspectRequest(root)).data;
   assert.deepEqual([before.index_md.state, before.activation.state, before.manifest.state], ['missing', 'missing', 'missing']);
 
-  const repaired = run(repairRequest(root, ['activation', 'manifest']));
+  const repaired = run(repairRequest(root, ['manifest'], { project_mode: 'knowledge-only' }));
   assert.equal(repaired.result, 'applied');
-  const initResponse = run(initRequest(root, { project_mode: 'knowledge-only' }));
+  const initResponse = run(initRequest(root));
   assert.equal(initResponse.result, 'applied');
 
   const after = run(inspectRequest(root)).data;
@@ -362,6 +356,6 @@ test('a full setup chain (inspect, repair, init) leaves all three files ok and a
   assert.equal(after.manifest.state, 'ok');
 
   // A second inspect/repair pass over an already-fixed project is a pure no-op.
-  const secondRepair = run(repairRequest(root, ['activation', 'manifest']));
+  const secondRepair = run(repairRequest(root, ['manifest'], { project_mode: 'knowledge-only' }));
   assert.equal(secondRepair.result, 'no-op');
 });

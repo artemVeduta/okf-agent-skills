@@ -11,7 +11,7 @@ OpenCode. One `okf` router skill dispatches to five leaf skills:
 | `okf-write` | The sole path for bounded mutations — create, revise, format, relate, machine-verify. |
 | `okf-lifecycle` | Narrow automatic synchronization, plus explicit reconciliation. |
 | `okf-review` | Reads, validates, and reports trust tiers and staleness. It never confirms, approves, or mutates. |
-| `okf-setup` | Inspects the three `/setup` config files and, once approved, bootstraps the bundle-root `index.md` via `init` and repairs `.okf-active`/`.okf-workspace.json`; for a monorepo, `plan` detects package boundaries and builds one sub-agent brief per package and `aggregate` reports their results into the shared workspace manifest; `discover` scans the active project (or, scoped to one monorepo package, its own subtree) and classifies each candidate source document as markdown, unsupported, other, or ambiguous; `migration-plan` turns that inventory into a fully-determined migration plan — migrate, skip, retain as residue, or blocked pending one compact batched round of user decisions; `partition` groups an executable plan into shards by directory locality, builds each shard's fresh-context worker brief, and validates a worker's returned shard against it; `assemble` combines every validated shard into one staged bundle, blocking on a cross-shard concept-target collision, surfacing an exact cross-shard duplicate as a candidate, resolving a cross-shard link or naming the migration-caused relationship loss when it cannot, and marking the result `partial` while any shard blocker remains; `migration-validate` gates that staged bundle before publication — structural/conformance and link-integrity checks reused from the write gate, every selected source cross-checked against its own recorded disposition, and a semantic-fidelity disclosure that stays `false` unless a human review was actually declared, however clean the rest of the check comes back; `publish` promotes a validated staged bundle into real bundle concepts by delegating one `okf-write` `create` call per concept through the same delegation bridge a sub-agent uses, never writing a concept directly; `report` turns migration signals into post-setup analytics for the agent to render. Direct invocation only. |
+| `okf-setup` | Inspects the `/setup` config files and, once approved, bootstraps the bundle-root `index.md` via `init` and repairs `.okf-workspace.json`; for a monorepo, `plan` detects package boundaries and builds one sub-agent brief per package and `aggregate` reports their results into the shared workspace manifest; `discover` scans the active project (or, scoped to one monorepo package, its own subtree) and classifies each candidate source document as markdown, unsupported, other, or ambiguous; `migration-plan` turns that inventory into a fully-determined migration plan — migrate, skip, retain as residue, or blocked pending one compact batched round of user decisions; `partition` groups an executable plan into shards by directory locality, builds each shard's fresh-context worker brief, and validates a worker's returned shard against it; `assemble` combines every validated shard into one staged bundle, blocking on a cross-shard concept-target collision, surfacing an exact cross-shard duplicate as a candidate, resolving a cross-shard link or naming the migration-caused relationship loss when it cannot, and marking the result `partial` while any shard blocker remains; `migration-validate` gates that staged bundle before publication — structural/conformance and link-integrity checks reused from the write gate, every selected source cross-checked against its own recorded disposition, and a semantic-fidelity disclosure that stays `false` unless a human review was actually declared, however clean the rest of the check comes back; `publish` promotes a validated staged bundle into real bundle concepts by delegating one `okf-write` `create` call per concept through the same delegation bridge a sub-agent uses, never writing a concept directly; `report` turns migration signals into post-setup analytics for the agent to render. Direct invocation only. |
 
 The skills are backed by a zero-dependency Node.js runtime (`scripts/lib/`)
 driven through one thin wrapper script per skill. See
@@ -39,16 +39,14 @@ directory or `PATH`.
 
 **The base install only makes the skills discoverable.** It does not wire a
 native session-start hook into any harness, does not create the OKF bundle
-the skills operate on, and does not turn on any automatic behavior. Three
-separate steps close those gaps, and the base install performs none of
+the skills operate on, and does not turn on any automatic behavior. Two
+separate steps close those gaps, and the base install performs neither of
 them:
 
 1. Install a native adapter (below) to wire the read-only orientation hook
    into a harness's session start.
-2. Hand-author your bundle-root `index.md` (below) — this release cannot
-   create it for you.
-3. Create the `.okf-active` activation marker (below) — nothing runs
-   automatically until you do, and installing never does this for you.
+2. Create the workspace manifest and bundle root (below) — this release
+   cannot create them for you.
 
 ### Claude Code
 
@@ -124,21 +122,29 @@ Either `okf-setup` `init` writes that file for you, or you author it by hand
 at the bundle root. One of the two must happen before your first `okf-write`
 call can pass the write gate.
 
-### 2. Create the zero-byte activation marker
+### 2. Create the workspace manifest and bundle root
 
 Automatic behavior — the read-only orientation a native adapter injects at
-session start — stays off until a zero-byte regular file named
-`.okf-active` exists at the Git worktree root:
+session start — activates the OKF bundle only when a valid `.okf-workspace.json`
+manifest exists at the Git worktree root. The manifest declares the bundle's
+location, version, and federated workspace structure. There is no CLI flag
+surface — every wrapper, `okf-setup`'s included, reads one JSON request line
+from stdin, exactly as `skills/okf-setup/SKILL.md` documents. Create the
+manifest and initialize the bundle root:
 
 ```
-touch .okf-active
+echo '{"protocol":"okf-wrapper/1","skill":"okf-setup","operation":"repair","payload":{"cwd":"<absolute path to your working tree>","targets":["manifest"],"project_mode":"code-backed"}}' | node <skill-root>/scripts/okf-setup.js
+echo '{"protocol":"okf-wrapper/1","skill":"okf-setup","operation":"init","payload":{"cwd":"<absolute path to your working tree>"}}' | node <skill-root>/scripts/okf-setup.js
 ```
 
-Neither installing the base suite nor installing a native adapter creates
-or modifies this file, and neither does entering a harness session.
-Installing an adapter arms nothing by itself. Without the marker, automatic
+`project_mode` (`code-backed` or `knowledge-only`) is required on `repair`'s
+`payload` whenever it generates the manifest itself, as above — the manifest
+grammar requires every bundle record to declare one. Neither installing the
+base suite nor installing a native adapter creates or modifies the manifest,
+and neither does entering a harness session.
+Installing an adapter arms nothing by itself. Without a valid manifest, automatic
 behavior is a silent no-op and an explicit read reports `not-configured`;
-mutation stays blocked either way until the marker exists.
+mutation stays blocked either way until the manifest exists.
 
 ## Limitations
 

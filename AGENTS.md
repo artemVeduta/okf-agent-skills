@@ -16,4 +16,17 @@ apply on top:
 - **No new skill without a recorded decision.** See "Repository setup" and
   "Open-item resolutions" in `docs/spec/okf-agent-skills-v0.1.0-completion.md`.
 
+## Workflow integration
+
+- **The agent connector** — `okf/agents/index.md` plus the `okf/agents/okf.md`
+  playbook. This repository does not carry it yet. Setup writes it through the
+  target-tree proposal that migrates this repository's own documents; `init`
+  never adds it to a root whose `index.md` already exists. Once it is present,
+  read this chain before working in the docs store: `okf/index.md` →
+  `okf/agents/index.md` → any playbook it links. Skills that record terms or
+  decisions refuse without it.
+- **`.agent-workflow.json`** — configures the tracker, SCM, CI and docs for
+  workflow skills (`/implement-ticket`, `/deliver-ticket`, `/review-pr`, etc.).
+  Edit by hand or re-run `/setup-agent-workflow` to start over.
+
 For how to run the suite and what a good test is, see `CONTRIBUTING.md`.

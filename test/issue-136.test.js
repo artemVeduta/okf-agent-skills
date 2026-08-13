@@ -7,7 +7,7 @@ const { runWrapper, spawnWrapper, temporaryRoot } = require('../test-support/sna
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 
-// `report` runs without a valid `.okf-active` marker, like `inspect`/`plan`/
+// `report` runs without a valid manifest, like `inspect`/`plan`/
 // `aggregate` (#133/#135/#138), so this builds a bare Git repository directly.
 function repo(t) {
   return temporaryRoot(t, 'okf-136-repo-');
@@ -147,8 +147,24 @@ test('residue is reported inertly, distinct from a skip or an ambiguity, and doe
     semantic_review: reviewed,
   }));
   assert.equal(response.data.status, 'complete');
-  assert.deepEqual(response.data.residue, [{ source: 'docs/legacy.docx', reason: 'unsupported_format' }]);
+  // #177 (#157): the row names the source's own original path, its reason, and
+  // states outright that setup left that source where it was.
+  assert.deepEqual(response.data.residue, [
+    { source: 'docs/legacy.docx', reason: 'unsupported_format', unchanged: true },
+  ]);
   assert.deepEqual(response.data.summary.sources_residue, 1);
+});
+
+test('residue alone, with nothing migrated, is still a complete run rather than a partial one', (t) => {
+  const root = repo(t);
+  git(root);
+  const response = run(reportRequest(root, {
+    sources: [residue('docs/legacy.docx', 'unsupported_format')],
+    semantic_review: reviewed,
+  }));
+  assert.equal(response.data.status, 'complete');
+  assert.equal(response.data.summary.sources_residue, 1);
+  assert.equal(response.data.residue[0].unchanged, true);
 });
 
 // --------------------------------------------------------- semantic fidelity
@@ -181,7 +197,7 @@ test('a green structural report never implies semantic fidelity: no ambiguity, n
 test('semantic_review is required and must be a well-formed object', (t) => {
   const root = repo(t);
   git(root);
-  for (const semantic_review of [undefined, {}, { performed: 'yes' }, null, 'true']) {
+  for (const semantic_review of [undefined, {}, { performed: 'yes' }, { performed: true, sources: [], candidates: [] }, null, 'true']) {
     const payload = { sources: [migrated('docs/a.md', 'decisions/a.md')] };
     if (semantic_review !== undefined) payload.semantic_review = semantic_review;
     const response = run(reportRequest(root, payload));

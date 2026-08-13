@@ -66,13 +66,23 @@ function renderConcept(type, sources, body) {
   return validation.serializeFrontmatter(tree) + body;
 }
 
+function renderIndex(group) {
+  const children = group.child_entries.map((child) => {
+    const target = require('node:path').posix.relative(require('node:path').posix.dirname(group.index_entry.path), child.path);
+    return `- [${child.title}](${target})`;
+  });
+  return `# ${group.index_entry.title}\n\n${group.purpose}\n\n${children.join('\n')}\n`;
+}
+
 // Combines every shard's own already-validated content. `shardContents` is a
 // `Map<shardId, shardObject>`; `partitionShards` is `partition`'s own
 // `data.shards` array (`{shard, sources, brief}`), unmodified. Returns either
 // `{ok: false, ...}` naming exactly what was wrong, or `{ok: true, concepts,
-// references, blockers, duplicates}` -- `concepts` already carries each
-// item's own rendered file text, ready to stage.
-function computeAssembly(partitionShards, shardContents) {
+// indexes, blockers, duplicates}` -- `concepts` already carries each
+// item's own rendered file text, ready to stage. #177 (#157): assembly has no
+// residue role at all -- a residue source never reached a shard, so there is
+// nothing here to collect and no `references/` tree to build.
+function computeAssembly(partitionShards, shardContents, groupPackages) {
   // Defense in depth: `skills/okf-setup/SKILL.md` already requires every
   // shard to pass `partition`'s own validate mode before it is ever staged,
   // but nothing stops a caller from handing this operation a shard that
@@ -83,19 +93,20 @@ function computeAssembly(partitionShards, shardContents) {
   }
 
   const concepts = [];
-  const references = [];
   const blockers = [];
-  const claimed = new Map(); // source path -> the one shard allowed to claim it
+  const claimed = new Map(); // source path -> the one shard and result kind allowed to claim it
 
   for (const shard of partitionShards) {
     const content = shardContents.get(shard.shard);
-    for (const [list, items] of [[concepts, content.concepts], [references, content.references], [blockers, content.blockers]]) {
+    for (const [kind, list, items] of [['concept', concepts, content.concepts], ['blocker', blockers, content.blockers]]) {
       for (const item of items) {
         const owner = claimed.get(item.path);
-        if (owner !== undefined) {
-          return { ok: false, shard: shard.shard, code: 'ASSEMBLY_SOURCE_DUPLICATE', detail: { path: item.path, shards: [owner, shard.shard] } };
+        const split = kind === 'concept' && owner && owner.kind === 'concept' && owner.shard === shard.shard
+          && shard.brief.split_review.some((review) => review.path === item.path && review.proposal !== null);
+        if (owner !== undefined && !split) {
+          return { ok: false, shard: shard.shard, code: 'ASSEMBLY_SOURCE_DUPLICATE', detail: { path: item.path, shards: [owner.shard, shard.shard] } };
         }
-        claimed.set(item.path, shard.shard);
+        claimed.set(item.path, { shard: shard.shard, kind });
         list.push({ ...item, shard: shard.shard });
       }
     }
@@ -126,11 +137,35 @@ function computeAssembly(partitionShards, shardContents) {
   const briefByShard = new Map(partitionShards.map((shard) => [shard.shard, shard.brief]));
   const rendered = concepts.map((item) => {
     const approved = briefByShard.get(item.shard).mapping.find((entry) => entry.path === item.path);
-    const sources = approved ? approved.sources : null;
-    return { path: item.path, concept: item.concept, type: item.type, shard: item.shard, rendered: renderConcept(item.type, sources, item.body) };
+    const acceptedOutput = item.output === undefined ? null
+      : briefByShard.get(item.shard).split_review.find((review) => review.path === item.path)
+        .proposal.outputs.find((output) => output.output === item.output);
+    const sources = acceptedOutput === null ? approved && approved.sources
+      : acceptedOutput.provenance_assignments.map((assignment) => assignment.source);
+    return {
+      path: item.path, concept: item.concept, type: item.type, shard: item.shard,
+      ...(item.output === undefined ? {} : {
+        output: item.output,
+        sections: item.sections,
+        accepted_output: acceptedOutput,
+      }),
+      rendered: renderConcept(item.type, sources, item.body),
+    };
   });
 
-  return { ok: true, concepts: rendered, references, blockers, duplicates };
+  // #203 (#202): navigation comes from the accepted concept-group packages, not
+  // from whatever the shards happened to produce, and no substantive concept may
+  // sit at the direct bundle root. The exact-set proof against the accepted
+  // packages is the later conformance gate's (`publication.js`); what assembly
+  // owns is refusing to stage a tree that already contradicts them.
+  const rootConcept = rendered.find((item) => !item.concept.includes('/'));
+  if (rootConcept !== undefined) {
+    return { ok: false, code: 'ASSEMBLY_ROOT_CONCEPT', detail: { path: `${rootConcept.concept}.md`, source: rootConcept.path } };
+  }
+  const indexes = groupPackages.indexes
+    .map((group) => ({ kind: 'index', path: group.index_entry.path, group, rendered: renderIndex(group) }));
+
+  return { ok: true, concepts: rendered, indexes, blockers, duplicates };
 }
 
 // #146's own `cross_shard_links` re-checked against the concepts assembly
@@ -150,4 +185,4 @@ function resolveCrossShardLinks(crossShardLinks, concepts) {
   return { resolved, lost };
 }
 
-module.exports = { renderConcept, computeAssembly, resolveCrossShardLinks };
+module.exports = { renderConcept, renderIndex, computeAssembly, resolveCrossShardLinks };

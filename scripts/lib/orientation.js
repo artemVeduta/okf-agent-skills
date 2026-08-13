@@ -118,16 +118,17 @@ function computeFromAdmission(request, services, key) {
   return outcome('clean', orientationData('active', { bundle_alias: candidate.bundle_alias, bundle_root: candidate.bundle_root }, 'index.md', workspaceHealthOf(admitted, partial), key), []);
 }
 
-// `marker` is the activation state the caller already computed: 'absent',
-// 'invalid' (malformed marker file), or 'valid'.
-function orient(request, services, marker) {
+// `manifestState` is the activation state the caller already computed (#197: was
+// the activation marker's state): 'absent' (no manifest discoverable), 'invalid'
+// (a manifest was found but is malformed), or 'valid'.
+function orient(request, services, manifestState) {
   const payload = request.payload;
   const key = deriveKey(payload, services);
-  if (marker === 'absent') {
-    return outcome('not-configured', noEvidence('absent', key), [orientationFinding('unreadable', 'marker_absent', false)]);
+  if (manifestState === 'absent') {
+    return outcome('not-configured', noEvidence('absent', key), [orientationFinding('unreadable', 'manifest_missing', false)]);
   }
-  if (marker !== 'valid') {
-    return outcome('invalid', noEvidence('invalid', key), [orientationFinding('invalid', 'marker_invalid', true)]);
+  if (manifestState !== 'valid') {
+    return outcome('invalid', noEvidence('invalid', key), [orientationFinding('invalid', 'manifest_invalid', true)]);
   }
 
   const reason = invalidPayloadReason(payload);

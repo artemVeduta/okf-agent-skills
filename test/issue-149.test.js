@@ -2,8 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
 const path = require('node:path');
-const { runWrapper, adapterManifest, temporaryRoot } = require('../test-support/snapshot');
+const { runWrapper, adapterManifest, temporaryRoot, writeManifest } = require('../test-support/snapshot');
 
 // #149: setup's orchestration adapter over the shared semantic contract seam.
 // `publish` is the operation under test -- the one thing in this skill that
@@ -27,7 +28,7 @@ const harnesses = ['claude-code', 'codex', 'opencode'];
 function repo(t) {
   const root = temporaryRoot(t, 'okf-149-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, 'okf');
   fs.mkdirSync(path.join(root, 'okf', 'decisions'), { recursive: true });
   fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   return root;
@@ -50,15 +51,69 @@ function stage(root, relative, content, bundle = 'okf') {
 
 function stagedRef(root, sourcePath, concept, type, content) {
   const file = stage(root, `${concept}.md`, content);
-  return { path: sourcePath, concept, type, shard: 'x', file };
+  return { path: sourcePath, concept, type, shard: 'x', file, sources: [] };
 }
+
+function authority(root, staged) {
+  for (const item of staged) {
+    const source = path.join(root, item.path);
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    if (!fs.existsSync(source)) fs.writeFileSync(source, `# ${item.concept}\n`);
+    item.sources = [{
+      path: item.path,
+      sha256: require('node:crypto').createHash('sha256').update(fs.readFileSync(source)).digest('hex'),
+    }];
+  }
+  return {
+    plan: {
+      entries: staged.map((item) => ({
+        path: item.path, disposition: 'migrate', reason: 'type_preserved', concept: item.concept, type: item.type,
+      })),
+      executable: true,
+      duplicates: [],
+    },
+    mapping: staged.map((item) => ({
+      path: item.path, concept: item.concept, type: item.type, sources: null,
+      source_identity: `sha256:${item.sources[0].sha256}`,
+      body: validationBody(root, item),
+    })),
+    split_review: staged.map((item) => ({
+      path: item.path, accounting_status: 'not_required', sections: [], outputs: [], proposal: null,
+    })),
+    semantic_review: {
+      human_assessed: false,
+      candidates: staged.map((item) => ({
+        path: `${item.concept}.md`,
+        identity: `sha256:${crypto.createHash('sha256').update(fs.readFileSync(path.resolve(root, item.file))).digest('hex')}`,
+      })),
+      sources: [],
+    },
+  };
+}
+
+function validationBody(root, item) {
+  const text = fs.readFileSync(path.resolve(root, item.file), 'utf8');
+  const closing = text.split('\n').findIndex((line, index) => index > 0 && line === '---');
+  return text.split('\n').slice(closing + 1).join('\n');
+}
+
+// #203: `publish` now also demands the accepted concept-group packages
+// exactly as `migration-plan` returned them. None of this file's own
+// fixtures stage a group index, so an empty accepted package set -- no
+// packages, no index rows -- is exactly the correct shape to carry: there is
+// nothing here for it to match against.
+const EMPTY_GROUP_PACKAGES = {
+  packages: [],
+  root: { purpose: 'Bundle root', index: { disposition: 'unchanged', title: 'Bundle' }, log: { disposition: 'none' }, children: [] },
+  indexes: [],
+};
 
 function publishRequest(root, staged, payload = {}) {
   return {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'publish',
-    payload: { cwd: root, task_kind: 'feature work', staged, ...payload },
+    payload: { cwd: root, task_kind: 'feature work', staged, group_packages: EMPTY_GROUP_PACKAGES, ...authority(root, staged), ...payload },
   };
 }
 
@@ -74,7 +129,7 @@ function bundleFile(root, concept) {
 
 test('publish promotes a staged concept into the real bundle by delegating one okf-write create call', (t) => {
   const root = repo(t);
-  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\n---\n# A\n\nBody text.\n')];
+  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# A\n\nBody text.\n')];
   const stagedFile = fs.readFileSync(path.join(root, staged[0].file), 'utf8');
 
   const response = run(publishRequest(root, staged));
@@ -115,7 +170,7 @@ test('publish is refused by the same write gate an inline create would hit, and 
   fs.mkdirSync(path.join(root, 'okf', 'decisions'), { recursive: true });
   fs.writeFileSync(bundleFile(root, 'decisions/a'), original);
 
-  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\n---\n# Would-be replacement\n')];
+  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# Would-be replacement\n')];
   const response = run(publishRequest(root, staged));
 
   assert.equal(response.result, 'ok');
@@ -131,34 +186,37 @@ test('publish is refused by the same write gate an inline create would hit, and 
   assert.equal(fs.readFileSync(bundleFile(root, 'decisions/a'), 'utf8'), original);
 });
 
-test("one failing concept never withdraws another concept's own successful publish", (t) => {
+test("a failed concept leaves every later concept unattempted", (t) => {
   const root = repo(t);
   fs.mkdirSync(path.join(root, 'okf', 'decisions'), { recursive: true });
   fs.writeFileSync(bundleFile(root, 'decisions/blocked'), '---\ntype: Decision\n---\n# Already there\n');
 
   const staged = [
-    stagedRef(root, 'docs/blocked.md', 'decisions/blocked', 'Decision', '---\ntype: Decision\n---\n# Replacement attempt\n'),
-    stagedRef(root, 'docs/ok.md', 'decisions/ok', 'Decision', '---\ntype: Decision\n---\n# OK\n'),
+    stagedRef(root, 'docs/ok.md', 'decisions/ok', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# OK\n'),
+    stagedRef(root, 'docs/blocked.md', 'decisions/blocked', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# Replacement attempt\n'),
+    stagedRef(root, 'docs/later.md', 'decisions/later', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# Later\n'),
   ];
   const response = run(publishRequest(root, staged));
 
   assert.equal(response.data.status, 'partial');
   assert.deepEqual(response.data.published, ['decisions/ok']);
   assert.deepEqual(response.data.failed.map((item) => item.concept), ['decisions/blocked']);
+  assert.deepEqual(response.data.skipped, [{ concept: 'decisions/later', status: 'not-attempted' }]);
   assert.equal(fs.existsSync(bundleFile(root, 'decisions/ok')), true);
+  assert.equal(fs.existsSync(bundleFile(root, 'decisions/later')), false);
 });
 
 // --------------------------------------------- read reaches the shared seam
 
 test('publish is blocked at one clear precheck, through a delegated read, when the bundle is not active -- never per-concept noise', (t) => {
   const root = repo(t);
-  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\n---\n# A\n')];
+  const staged = [stagedRef(root, 'docs/a.md', 'decisions/a', 'Decision', '---\ntype: Decision\nstatus: draft\n---\n# A\n')];
 
   // Publish carries no admission of its own (#149): it never touches the
   // bundle directly, so nothing else here would have caught a bundle that
   // stopped being active. Only the delegated `okf-reader` `validate` call
   // this operation issues before any write is attempted does.
-  fs.rmSync(path.join(root, '.okf-active'));
+  fs.rmSync(path.join(root, '.okf-workspace.json'));
 
   const response = run(publishRequest(root, staged));
 
@@ -179,6 +237,7 @@ test('migration-validate and okf-read validate report the identical structural f
       selected: ['docs/a.md'],
       plan: { entries: [{ path: 'docs/a.md', disposition: 'migrate', reason: 'type_preserved', concept: 'decisions/a', type: 'Decision' }], executable: true },
       semantic_review: { performed: true },
+      group_packages: EMPTY_GROUP_PACKAGES,
     },
   });
   const stagingFinding = migrationValidateResponse.findings.find((item) => item.code === 'TYPE_MISSING');
@@ -219,20 +278,19 @@ test('okf-setup gains no role in the delegation bridge: still absent from bridge
 
 test('assemble and migration-validate still need no admitted bundle at all: staging is not, and never was, gated by activation', (t) => {
   const root = bareRepo(t);
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
+  assert.equal(fs.existsSync(path.join(root, '.okf-workspace.json')), false);
   assert.equal(fs.existsSync(path.join(root, 'okf', 'index.md')), false);
 
   const brief = {
     shard: 'x', cwd: root, bundle: 'okf', project_mode: null, okf_version: '0.2',
     sources: ['docs/a.md'],
     mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, body: '# A\n' }],
-    references: [],
+    split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', sections: [], outputs: [], proposal: null }],
     neighbors: [],
   };
   const shard = {
     shard: 'x',
     concepts: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', body: '# A\n' }],
-    references: [],
     warnings: [],
     blockers: [],
   };
@@ -248,6 +306,7 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
       cwd: root,
       partition: { shards: [{ shard: 'x', sources: ['docs/a.md'], brief }], cross_shard_links: [] },
       shards: [{ shard: 'x', path: path.relative(root, shardFile) }],
+      group_packages: EMPTY_GROUP_PACKAGES,
     },
   });
   assert.equal(assembleResponse.result, 'ok', JSON.stringify(assembleResponse));
@@ -263,6 +322,7 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
       selected: ['docs/a.md'],
       plan: { entries: [{ path: 'docs/a.md', disposition: 'migrate', reason: 'type_preserved', concept: 'decisions/a', type: 'Decision' }], executable: true },
       semantic_review: { performed: true },
+      group_packages: EMPTY_GROUP_PACKAGES,
     },
   });
   assert.equal(migrationValidateResponse.result, 'ok');

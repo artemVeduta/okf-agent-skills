@@ -153,16 +153,21 @@ _Avoid_: Automatic repair, conformance waiver
 
 **Suite profile**:
 The two rules `okf-agent-skills` imposes beyond OKF conformance: mutation
-requires an exact `okf_version: "0.2"` bundle-root declaration, and a rewrite
-must reproduce the frontmatter's parsed semantics through the suite's own
-writer. Reported with origin `suite`, never as an OKF conformance error.
+requires an exact `okf_version: "0.2"` declaration in the selected manifest
+bundle record, and a rewrite must reproduce the frontmatter's parsed
+semantics through the suite's own writer. Reported with origin `suite`, never
+as an OKF conformance error.
 _Avoid_: OKF conformance, product extension
 
-**Activation marker**:
-The explicit project-local `.okf-active` marker at a Git worktree root that
-selects whether harness adapters provide automatic OKF behavior. It does not
-grant trust, authority, access, write ownership, approval, or permission. A
-cross-repository operation requires valid markers in both affected worktrees.
+**Activation**:
+The condition under which harness adapters provide automatic OKF behavior: a
+valid `.okf-workspace.json` manifest resolved for the current worktree, with
+an admitted bundle record. It does not grant trust, authority, access, write
+ownership, approval, or permission. A missing manifest leaves automatic
+behavior silent and makes an explicit call report `not-configured`; an
+invalid manifest reports `MANIFEST_INVALID` and blocks mutation. A
+cross-repository operation requires a valid manifest in both affected
+worktrees.
 _Avoid_: Authorization marker, permission flag, automatic setup
 
 **Harness adapter**:
@@ -339,7 +344,7 @@ _Avoid_: Workspace merge, shared write scope
 The target-side, uncommitted grant that permits one exact source repository
 instance to perform a bounded operation against one exact foreign bundle. It
 is separate from reach, presence, trust, filesystem access, federation,
-`.okf-active`, project mode, approval, and the guard ledger. It is scoped to
+workspace manifest, project mode, approval, and the guard ledger. It is scoped to
 allowed effects, can be revoked by an authorized target owner, and never
 permits automatic mutation. The specification's target-owner consent is the
 same grant named for the act of issuing it, not a second concept.
@@ -349,9 +354,12 @@ target-owner consent
 **Workspace manifest**:
 The user-authored `.okf-workspace.json` federation declaration whose containing
 directory is the workspace root, and of which exactly one is active. It names
-which bundles may be read and under which aliases; it does not grant trust,
-filesystem access, discovery authority, or write ownership, and it records no
-operation.
+which bundles may be read and under which aliases, and each bundle record
+declares its own `okf_version` and `project_mode`. A valid manifest with an
+admitted bundle record is also the activation condition for automatic OKF
+behavior, and it may carry an optional `settings` object. It does not grant
+trust, filesystem access, discovery authority, or write ownership, and it
+records no operation.
 _Avoid_: Operation manifest, trust store, permission file
 
 **Bundle admission**:
@@ -688,10 +696,12 @@ _Avoid_: Migration residue, final concept content
 
 **Bootstrap exception**:
 The one condition under which a write that creates a bundle root is permitted
-without a pre-existing `okf_version: "0.2"` declaration, and without an
-activation marker. It covers an explicit `okf-setup` `init` alone: an
-automatic request stays silent, an invalid marker still blocks, and `init`
-writes only the bundle-root `index.md`.
+without a pre-existing manifest bundle record declaring `okf_version: "0.2"`.
+It covers an explicit `okf-setup` `init` alone, inside an existing Git
+repository: an automatic request stays silent, an invalid manifest still
+blocks, and `init` writes only the navigation-only bundle-root `index.md`. A
+separate explicit `repair` writes the manifest, which normally precedes
+`init` in the documented setup order.
 _Avoid_: Write gate, adoption operation
 
 **Operation identity**:
@@ -996,3 +1006,44 @@ _Avoid_: Complete read, parse finding
 The finding returned when readable bytes carry malformed frontmatter. It
 blocks status inference and never triggers repair during a read.
 _Avoid_: Finding labels, invalid finding, validation verdict
+
+**Concept group**:
+A bundle subdirectory for one bounded, current reader-purpose area. Every
+substantive concept belongs to exactly one approved group. A source directory,
+concept type, file count, or directory depth is evidence only; none of them can
+select the group.
+_Avoid_: Type directory, source mirror, folder
+
+**Concept group package**:
+The complete set of one group's own files and their dispositions: the required
+navigation `index.md`, the `glossary.md` it has only when it owns local terms,
+the local guidance concept it has only when current guidance requires one, and
+the `log.md` it has only for a real independent audit need. An accepted proposal
+records a disposition for each, including an explicit no-change and an explicit
+no-local-terms result.
+_Avoid_: Folder template, scaffolding
+
+**Reader purpose**:
+The exact bounded question a concept group answers, stated on the group's own
+index. It is a human decision, never derived from a path or a type.
+_Avoid_: Category, topic label
+
+**Canonical owning glossary**:
+The one group glossary that holds the definition of a term with one shared
+meaning. A consuming group links to it instead of copying it. Two separate
+meanings stay in two local glossaries, each with its own explicit scope, and no
+general `shared/` glossary is ever created as a fallback.
+_Avoid_: Shared glossary, global glossary
+
+**Touched concept group**:
+A group whose concept or direct package changes in the accepted operation. A
+known structural defect inside one joins that proposal; a defect outside the
+touched groups is reported separately and never blocks unrelated local work.
+_Avoid_: Affected folder, dirty group
+
+**Group needing repair**:
+A touched group left inconsistent because an accepted concept, index, glossary,
+guidance, or log write failed or was never attempted. The report names it, and
+its next mutation must carry the repair. Nothing retries, moves, or rolls back
+on its own.
+_Avoid_: Partial group, rollback

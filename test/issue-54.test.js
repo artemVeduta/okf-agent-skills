@@ -10,12 +10,23 @@ const scripts = path.join(__dirname, '..', 'scripts');
 const runtime = require(path.join(scripts, 'lib', 'runtime'));
 const services = require(path.join(scripts, 'lib', 'services'));
 
+// #197: `okf_version`/`project_mode` live in the manifest's selected bundle
+// record now, not `index.md`'s frontmatter -- the root is navigation only.
+function setManifest(root, { okfVersion = '0.2', projectMode = 'knowledge-only' } = {}) {
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: '.', okf_version: okfVersion, project_mode: projectMode }],
+  }));
+}
+
 function bundle(t, mode = 'knowledge-only') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-54-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
-  fs.writeFileSync(path.join(root, 'index.md'), `---\nokf_version: "0.2"\nproject_mode: "${mode}"\n---\n# Bundle\n`);
+  setManifest(root, { projectMode: mode });
+  fs.writeFileSync(path.join(root, 'index.md'), '# Bundle\n');
   fs.writeFileSync(path.join(root, 'evidence.md'), 'observed\n');
   return root;
 }
@@ -132,13 +143,13 @@ test('writer blocks root, evidence, mode, and scope gates before publication', (
   const root = bundle(t);
   concept(root);
   const cases = [
-    ['root', () => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.1"\nproject_mode: "knowledge-only"\n---\n'), 'ROOT_DECLARATION_NOT_EXACT'],
-    ['mode', () => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "invalid"\n---\n'), 'PROJECT_MODE_INVALID'],
+    ['root', () => setManifest(root, { okfVersion: '0.1' }), 'ROOT_DECLARATION_NOT_EXACT'],
+    ['mode', () => setManifest(root, { projectMode: 'invalid' }), 'PROJECT_MODE_INVALID'],
     ['evidence', () => {}, 'EVIDENCE_CHANGED', { evidence: [{ path: 'evidence.md', sha256: 'a'.repeat(64) }] }],
     ['scope', () => {}, 'INVALID_SCOPE', {}, { concepts: ['other.md'] }],
   ];
   for (const [label, setup, code, extra, scope] of cases) {
-    fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n');
+    setManifest(root);
     setup();
     const value = request(root, 'revise', extra);
     if (scope) value.scope = scope;

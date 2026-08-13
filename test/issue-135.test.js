@@ -8,7 +8,7 @@ const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-// `plan`/`aggregate` run without a valid `.okf-active` marker (like `inspect`/
+// `plan`/`aggregate` run without a valid manifest (like `inspect`/
 // `repair`), so this builds a bare Git repository directly.
 function repo(t) {
   return temporaryRoot(t, 'okf-135-repo-');
@@ -310,7 +310,7 @@ test('aggregate reports "complete" and a valid multi-package manifest when every
   const response = run(aggregateRequest(root, [
     { package: 'foo', status: 'ok' },
     { package: 'bar', status: 'ok' },
-  ]));
+  ], { project_mode: 'code-backed' }));
 
   assert.equal(response.result, 'ok');
   assert.equal(response.data.status, 'complete');
@@ -330,8 +330,8 @@ test('aggregate reports "complete" and a valid multi-package manifest when every
   assert.deepEqual(
     manifest.bundles.sort((a, b) => (a.alias < b.alias ? -1 : 1)),
     [
-      { alias: 'bar', owner: path.basename(root), root: 'packages/bar/okf', required: true, mode: 'source' },
-      { alias: 'foo', owner: path.basename(root), root: 'packages/foo/okf', required: true, mode: 'source' },
+      { alias: 'bar', owner: path.basename(root), root: 'packages/bar/okf', okf_version: '0.2', project_mode: 'code-backed' },
+      { alias: 'foo', owner: path.basename(root), root: 'packages/foo/okf', okf_version: '0.2', project_mode: 'code-backed' },
     ],
   );
 
@@ -343,12 +343,23 @@ test('aggregate reports "complete" and a valid multi-package manifest when every
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, '.okf-workspace.json'), 'utf8')), manifest);
 });
 
+test('aggregate refuses to build a manifest without a recognized project_mode', (t) => {
+  const root = twoPackageWorkspace(t);
+  const results = [{ package: 'foo', status: 'ok' }, { package: 'bar', status: 'ok' }];
+  for (const projectMode of [undefined, 'sandbox']) {
+    const payload = projectMode === undefined ? {} : { project_mode: projectMode };
+    const response = run(aggregateRequest(root, results, payload));
+    assert.equal(response.result, 'blocked', JSON.stringify(payload));
+    assert.equal(response.data.code, 'UNSUPPORTED_INPUT', JSON.stringify(payload));
+  }
+});
+
 test('aggregate reports "partial" and names the failed package and its reason, never silently dropping it', (t) => {
   const root = twoPackageWorkspace(t);
   const response = run(aggregateRequest(root, [
     { package: 'foo', status: 'ok' },
     { package: 'bar', status: 'failed', reason: 'evidence file missing' },
-  ]));
+  ], { project_mode: 'code-backed' }));
 
   assert.equal(response.data.status, 'partial');
   assert.deepEqual(response.data.failed, ['bar']);
@@ -364,7 +375,7 @@ test('aggregate carries per-package warnings through untouched', (t) => {
   const response = run(aggregateRequest(root, [
     { package: 'foo', status: 'ok', warnings: ['duplicate concept candidate'] },
     { package: 'bar', status: 'ok' },
-  ]));
+  ], { project_mode: 'code-backed' }));
   const foo = response.data.packages.find((p) => p.package === 'foo');
   assert.deepEqual(foo.warnings, ['duplicate concept candidate']);
 });
@@ -375,7 +386,7 @@ test('aggregate keeps a salvaged workspace_id when the caller supplies one', (t)
   const response = run(aggregateRequest(root, [
     { package: 'foo', status: 'ok' },
     { package: 'bar', status: 'ok' },
-  ], { workspace_id: workspaceId }));
+  ], { workspace_id: workspaceId, project_mode: 'code-backed' }));
   assert.equal(response.data.manifest.workspace_id, workspaceId);
 });
 

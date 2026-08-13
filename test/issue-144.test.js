@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runWrapper, spawnWrapper, temporaryRoot } = require('../test-support/snapshot');
+const { runWrapper, spawnWrapper, temporaryRoot, writeManifest, TEST_WORKSPACE_ID } = require('../test-support/snapshot');
+const { planWithGroups } = require('../test-support/groups');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
@@ -12,7 +13,15 @@ const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 function repo(t, { active = true } = {}) {
   const root = temporaryRoot(t, 'okf-144-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  if (active) fs.writeFileSync(path.join(root, '.okf-active'), '');
+  if (active) {
+    writeManifest(root, '.');
+    // #203: an accepted root package's default `index` disposition is
+    // `unchanged`, which claims `okf/index.md` already exists -- so every
+    // active fixture needs one, exactly like `test/issue-203.test.js`'s own
+    // `repo()`.
+    fs.mkdirSync(path.join(root, 'okf'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'okf', 'index.md'), '# Bundle\n');
+  }
   return root;
 }
 
@@ -38,6 +47,13 @@ function discoverSources(root, payload = {}) {
   return run(discoverRequest(root, payload)).data.sources;
 }
 
+// #203: `planWithGroups` (test-support/groups.js) needs a request builder that
+// takes only the extra payload -- `root`/`sources` are already fixed by the
+// time a test reaches for an accepted group.
+function planner(root, sources) {
+  return (payload) => planRequest(root, sources, payload);
+}
+
 function entryFor(response, sourcePath) {
   return response.data.plan.entries.find((item) => item.path === sourcePath);
 }
@@ -55,7 +71,11 @@ test('derives a fully determined, executable plan from a discovery inventory nee
   write(root, 'docs/decisions/use-postgres.md', '---\ntype: Decision\ntitle: Use Postgres\n---\n# Use Postgres\n');
   const sources = discoverSources(root);
 
-  const response = run(planRequest(root, sources));
+  // #203: a typed source still needs an accepted reader-purpose group before
+  // it can migrate -- `decisions` is this call's own accepted answer to that.
+  const { response } = planWithGroups(run, planner(root, sources), {
+    root, placement: { 'docs/decisions/use-postgres.md': 'decisions' },
+  });
 
   assert.equal(response.result, 'ok');
   assert.equal(response.data.plan.executable, true);
@@ -67,8 +87,9 @@ test('derives a fully determined, executable plan from a discovery inventory nee
   assert.deepEqual(entryFor(response, 'notes/wiki.md'), {
     path: 'notes/wiki.md', disposition: 'residue', reason: 'unsupported_format', concept: null, type: null,
   });
-  // #145: the concept path comes from the type's own canonical directory
-  // (`decisions/`), not a mechanical mirror of the source's own directory.
+  // #203: the concept path comes from the accepted reader-purpose group
+  // (`decisions`), not a type-directory mapping or a mechanical mirror of the
+  // source's own directory.
   assert.deepEqual(entryFor(response, 'docs/decisions/use-postgres.md'), {
     path: 'docs/decisions/use-postgres.md', disposition: 'migrate', reason: 'type_preserved',
     concept: 'decisions/use-postgres', type: 'Decision',
@@ -79,7 +100,9 @@ test('the one-source-one-concept default holds: every source produces exactly on
   const root = repo(t);
   write(root, 'docs/glossary.md', '---\ntype: Glossary\n---\n**Term**: definition.\n\n**Other**: another.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const { response } = planWithGroups(run, planner(root, sources), {
+    root, placement: { 'docs/glossary.md': 'docs' },
+  });
 
   assert.equal(response.data.plan.entries.length, sources.length);
   const entry = entryFor(response, 'docs/glossary.md');
@@ -98,7 +121,11 @@ test('a question is derived only for a genuinely undecidable source, never for a
   fs.writeFileSync(path.join(root, 'garbled.md'), Buffer.from([0x23, 0x20, 0xff, 0xfe, 0x0a])); // ambiguous -> question
   const sources = discoverSources(root);
 
-  const response = run(planRequest(root, sources));
+  // #203: the Decision source above is deterministic evidence, but still
+  // needs its accepted group answered before it can migrate.
+  const { response } = planWithGroups(run, planner(root, sources), {
+    root, placement: { 'docs/decisions/use-postgres.md': 'decisions' },
+  });
 
   assert.equal(response.data.plan.executable, false);
   const openPaths = response.data.questions.map((q) => q.path).sort();
@@ -138,14 +165,19 @@ test('a question is derived only for a genuinely undecidable source, never for a
 test('a target-path collision blocks pending a user decision, offering only "skip"', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/collide.md', '---\ntype: Decision\n---\n# Collide\n');
-  // #145: the pre-existing bundle file must sit at the type-directory-mapped
-  // concept path (`decisions/collide.md`), not the old mechanical-mirror path,
-  // for the collision below to actually occur.
+  // #203: the pre-existing bundle file must sit at the accepted-group concept
+  // path (`decisions/collide.md`), not a type-directory or mechanical-mirror
+  // path, for the collision below to actually occur.
   write(root, 'okf/decisions/collide.md', '---\ntype: Decision\n---\n# Already here\n');
   write(root, 'okf/index.md', '---\nokf_version: "0.2"\n---\n# Bundle\n');
   const sources = discoverSources(root);
 
-  const response = run(planRequest(root, sources));
+  // #203: the collision check is the last gate a placed concept passes, one
+  // round after its accepted group is answered -- so reaching it here first
+  // answers `docs/decisions/collide.md` into the accepted `decisions` group.
+  const { response } = planWithGroups(run, planner(root, sources), {
+    root, placement: { 'docs/decisions/collide.md': 'decisions' },
+  });
 
   assert.equal(response.data.plan.executable, false);
   assert.deepEqual(entryFor(response, 'docs/decisions/collide.md'), {
@@ -161,30 +193,42 @@ test('a target-path collision blocks pending a user decision, offering only "ski
 test('answers are applied, producing a fully determined and executable plan', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/collide.md', '---\ntype: Decision\n---\n# Collide\n');
-  // #145: the pre-existing bundle file must sit at the type-directory-mapped
-  // concept path (`decisions/collide.md`), not the old mechanical-mirror path,
-  // for the collision below to actually occur.
+  // #203: the pre-existing bundle file must sit at the accepted-group concept
+  // path (`decisions/collide.md`), not a type-directory or mechanical-mirror
+  // path, for the collision below to actually occur.
   write(root, 'okf/decisions/collide.md', '---\ntype: Decision\n---\n# Already here\n');
   write(root, 'okf/index.md', '---\nokf_version: "0.2"\n---\n# Bundle\n');
   write(root, 'docs/notes.md', '# Notes\n\nJust prose, no frontmatter.\n');
   fs.writeFileSync(path.join(root, 'garbled.md'), Buffer.from([0x23, 0x20, 0xff, 0xfe, 0x0a]));
   const sources = discoverSources(root);
 
-  const answers = {
-    'docs/decisions/collide.md': 'skip',
-    'docs/notes.md': 'Playbook',
-    'garbled.md': 'residue',
-  };
-  const response = run(planRequest(root, sources, { answers }));
+  // #203: each source's own decision is now a chain -- `docs/decisions/collide.md`
+  // needs its accepted group before the collision it hits can even be asked
+  // about, and `docs/notes.md` needs its accepted group once its answered type
+  // is approved -- so every answer names every step its own round opens.
+  const { response } = planWithGroups(run, planner(root, sources), {
+    root,
+    placement: { 'docs/decisions/collide.md': 'decisions', 'docs/notes.md': 'playbooks' },
+    answers: {
+      'docs/decisions/collide.md': { target_collision: 'skip' },
+      'docs/notes.md': 'Playbook',
+      'garbled.md': { discovery_ambiguous: 'residue' },
+    },
+  });
 
   assert.equal(response.result, 'ok');
   assert.equal(response.data.plan.executable, true);
   assert.deepEqual(response.data.questions, []);
-  assert.deepEqual(response.findings, []);
+  // `decisions` carries no eventual output -- its only source resolved to
+  // `skip` through the collision it was answered into -- so the accepted
+  // group this round needed is now genuinely unused. That is real, expected
+  // #203 behavior (an answer round cannot know a later collision is coming),
+  // not the leftover-open-question noise this assertion originally guarded.
+  assert.deepEqual(response.findings.map((f) => f.code), ['GROUP_PACKAGE_UNUSED']);
   assert.deepEqual(entryFor(response, 'docs/decisions/collide.md'), {
     path: 'docs/decisions/collide.md', disposition: 'skip', reason: 'target_collision', concept: null, type: null,
   });
-  // #145: an approved type also goes through the type-directory mapping.
+  // #203: an approved type also goes through the accepted-group mapping.
   assert.deepEqual(entryFor(response, 'docs/notes.md'), {
     path: 'docs/notes.md', disposition: 'migrate', reason: 'type_approved', concept: 'playbooks/notes', type: 'Playbook',
   });
@@ -193,7 +237,7 @@ test('answers are applied, producing a fully determined and executable plan', (t
   });
 });
 
-test('a partial answer set resolves what it names and leaves the rest open', (t) => {
+test('a partial answer set resolves what it names, but a scalar only answers the one question open right now', (t) => {
   const root = repo(t);
   write(root, 'docs/notes.md', '# Notes\n\nJust prose, no frontmatter.\n');
   fs.writeFileSync(path.join(root, 'garbled.md'), Buffer.from([0x23, 0x20, 0xff, 0xfe, 0x0a]));
@@ -202,9 +246,15 @@ test('a partial answer set resolves what it names and leaves the rest open', (t)
   const response = run(planRequest(root, sources, { answers: { 'docs/notes.md': 'Playbook' } }));
 
   assert.equal(response.data.plan.executable, false);
-  assert.equal(entryFor(response, 'docs/notes.md').disposition, 'migrate');
+  // #203: a scalar answers only the question open right now. The approved
+  // type opens a *new* `reader_purpose_group` question the same round, which
+  // this one scalar answer cannot also settle -- so the source stays blocked,
+  // now on its own accepted group rather than its type.
+  assert.deepEqual(entryFor(response, 'docs/notes.md'), {
+    path: 'docs/notes.md', disposition: 'blocked_pending_decision', reason: 'reader_purpose_group_not_assigned', concept: null, type: 'Playbook',
+  });
   assert.equal(entryFor(response, 'garbled.md').disposition, 'blocked_pending_decision');
-  assert.deepEqual(response.data.questions.map((q) => q.path), ['garbled.md']);
+  assert.deepEqual(response.data.questions.map((q) => q.path).sort(), ['docs/notes.md', 'garbled.md']);
 });
 
 // ------------------------------------------------- unanswered plans are not executable
@@ -231,7 +281,9 @@ test('every disposition kind can be present at once, and each entry always carri
   write(root, 'docs/notes.md', '# Notes\n\nJust prose, no frontmatter.\n'); // -> blocked_pending_decision
   const sources = discoverSources(root);
 
-  const response = run(planRequest(root, sources));
+  const { response } = planWithGroups(run, planner(root, sources), {
+    root, placement: { 'docs/decisions/use-postgres.md': 'decisions' },
+  });
   const dispositions = new Map(response.data.plan.entries.map((e) => [e.disposition, e]));
 
   assert.deepEqual(new Set(dispositions.keys()), new Set(['skip', 'residue', 'migrate', 'blocked_pending_decision']));
@@ -282,9 +334,12 @@ test('rejects an answer that names a question this source set does not have open
 test('rejects an answer value outside the question\'s own closed options, and an empty type answer', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/collide.md', '---\ntype: Decision\n---\n# Collide\n');
-  // #145: the pre-existing bundle file must sit at the type-directory-mapped
-  // concept path (`decisions/collide.md`), not the old mechanical-mirror path,
-  // for the collision below to actually occur.
+  // #203: no group package is supplied, so no collision occurs below anymore --
+  // `docs/decisions/collide.md`'s open question is `reader_purpose_group` with an
+  // empty accepted-group option set, and `proceed_anyway` fails that question's
+  // option validation before any concept path or disk check is ever derived. The
+  // pre-existing bundle file stays as inert fixture from the pre-#203 collision
+  // shape; the refusal below never consults it.
   write(root, 'okf/decisions/collide.md', '---\ntype: Decision\n---\n# Already here\n');
   write(root, 'okf/index.md', '---\nokf_version: "0.2"\n---\n# Bundle\n');
   write(root, 'docs/notes.md', '# Notes\n\nJust prose.\n');
@@ -325,12 +380,12 @@ test('migration-plan does not bypass the activation gate: an inactive bundle ans
   assert.equal(response.data.plan, undefined);
 });
 
-test('migration-plan reports ACTIVATION_MARKER_INVALID like every other setup operation on a broken marker', (t) => {
+test('migration-plan reports MANIFEST_INVALID like every other setup operation on a broken manifest', (t) => {
   const root = repo(t, { active: false });
-  fs.mkdirSync(path.join(root, '.okf-active'));
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
   const response = run(planRequest(root, []));
   assert.equal(response.result, 'blocked');
-  assert.equal(response.data.code, 'ACTIVATION_MARKER_INVALID');
+  assert.equal(response.data.code, 'MANIFEST_INVALID');
 });
 
 // -------------------------------------------------------- automatic + router
@@ -347,7 +402,10 @@ test('the generic okf router reaches migration-plan too, still behind the activa
   const active = repo(t);
   write(active, 'docs/decisions/use-postgres.md', '---\ntype: Decision\n---\n# Use Postgres\n');
   const sources = discoverSources(active);
-  const ok = runWrapper(routerWrapper, { ...planRequest(active, sources), skill: 'okf' });
+  const routerRun = (value) => runWrapper(routerWrapper, { ...value, skill: 'okf' });
+  const { response: ok } = planWithGroups(routerRun, planner(active, sources), {
+    root: active, placement: { 'docs/decisions/use-postgres.md': 'decisions' },
+  });
   assert.equal(ok.skill, 'okf');
   assert.equal(ok.result, 'ok');
   assert.equal(ok.data.plan.executable, true);
@@ -355,4 +413,57 @@ test('the generic okf router reaches migration-plan too, still behind the activa
   const inactive = repo(t, { active: false });
   const notConfigured = runWrapper(routerWrapper, { ...planRequest(inactive, []), skill: 'okf' });
   assert.equal(notConfigured.result, 'not-configured');
+});
+
+// -------------------------------------------------------- settings exposure (#197)
+
+// `migration-plan` is the proposal `/setup`'s migration flow builds, so the
+// effective `max_words_per_file` value must reach it the same way `inspect`
+// already reports it for the manifest itself -- this writes the manifest
+// directly (rather than through `repo()`'s fixed template) so each test
+// controls its own `settings` block.
+function writeManifestWithSettings(root, settings) {
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: TEST_WORKSPACE_ID,
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' }],
+    ...(settings === undefined ? {} : { settings }),
+  }));
+}
+
+test('migration-plan exposes the built-in max_words_per_file default when the manifest declares no settings', (t) => {
+  const root = repo(t, { active: false });
+  writeManifestWithSettings(root, undefined);
+
+  const response = run(planRequest(root, []));
+  assert.equal(response.result, 'ok');
+  assert.deepEqual(response.data.settings, { max_words_per_file: 1000 });
+  assert.deepEqual(response.data.settings_findings, []);
+});
+
+test('migration-plan exposes an override value from .okf-workspace.json as the effective max_words_per_file', (t) => {
+  const root = repo(t, { active: false });
+  writeManifestWithSettings(root, { max_words_per_file: 250 });
+
+  const response = run(planRequest(root, []));
+  assert.equal(response.result, 'ok');
+  assert.deepEqual(response.data.settings, { max_words_per_file: 250 });
+  assert.deepEqual(response.data.settings_findings, []);
+});
+
+test('migration-plan keeps the built-in max_words_per_file default effective and reports SETTING_INVALID when the override is invalid', (t) => {
+  const root = repo(t, { active: false });
+  writeManifestWithSettings(root, { max_words_per_file: 0 });
+
+  const response = run(planRequest(root, []));
+  assert.equal(response.result, 'ok');
+  assert.deepEqual(response.data.settings, { max_words_per_file: 1000 });
+  assert.deepEqual(response.data.settings_findings, [{
+    code: 'SETTING_INVALID', origin: 'suite', severity: 'warning', blocks: false,
+    detail: { gate: 'settings', reason: 'invalid_setting_value', key: 'max_words_per_file' },
+  }]);
+  // The invalid override never invalidates the manifest or the plan itself --
+  // the same non-blocking guarantee `inspect` already gives (#197 task 1).
+  assert.equal(response.data.plan.executable, true);
 });
