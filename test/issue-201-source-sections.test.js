@@ -114,7 +114,7 @@ function assigned(lineStart, lineEnd, output, order) {
 
 // A complete, legal accounting of the whole fixture: every line disposed once.
 function completeAccounting() {
-  return [residue(1, 3), residue(4, 5), residue(6, 9), residue(10, 11), residue(12, 23), residue(24, 26)];
+  return [residue(1, 5), residue(6, 9), residue(10, 11), residue(12, 23), residue(24, 26)];
 }
 
 function withAccounting(root, sections, identity) {
@@ -125,23 +125,22 @@ function withAccounting(root, sections, identity) {
 
 // ------------------------------------------------------------------ derivation
 
-test('a source under split review carries its derived sections: frontmatter, the preamble before the first heading, then one section per heading', (t) => {
+test('a source under split review carries one complete preamble before its heading sections', (t) => {
   const root = fixtureRepo(t);
   const review = reviewFor(plan(root), SOURCE);
 
   assert.equal(review.line_count, 26);
   assert.equal(review.accounting_status, 'derived');
   assert.deepEqual(review.sections.map((item) => [item.kind, item.line_start, item.line_end]), [
-    ['frontmatter', 1, 3],
-    ['preamble', 4, 5],
+    ['preamble', 1, 5],
     ['heading', 6, 11],
     ['heading', 12, 23],
     ['heading', 24, 26],
   ]);
   assert.deepEqual(review.sections.map((item) => item.heading_path), [
-    [], [], ['Title'], ['Title', 'Details'], ['Title', 'Notes'],
+    [], ['Title'], ['Title', 'Details'], ['Title', 'Notes'],
   ]);
-  assert.deepEqual(review.sections.map((item) => item.disposition), [null, null, null, null, null]);
+  assert.deepEqual(review.sections.map((item) => item.disposition), [null, null, null, null]);
 });
 
 test('derived section ranges cover the complete source once, with no gap and no overlap', (t) => {
@@ -166,12 +165,12 @@ test('a source that is not under split review is not sectioned at all', (t) => {
   assert.deepEqual(review.sections, []);
 });
 
-test('a source with no heading at all is one preamble section covering everything after its frontmatter', (t) => {
+test('a source with no heading at all is one indivisible preamble including frontmatter', (t) => {
   const root = fixtureRepo(t, '---\ntype: Note\n---\njust a line\n\nand another\n');
   const review = reviewFor(plan(root), SOURCE);
 
   assert.deepEqual(review.sections.map((item) => [item.kind, item.line_start, item.line_end]), [
-    ['frontmatter', 1, 3], ['preamble', 4, 6],
+    ['preamble', 1, 6],
   ]);
 });
 
@@ -181,19 +180,19 @@ test('a CRLF source is sectioned exactly like its LF twin, and a CRLF accounting
 
   assert.equal(derived.line_count, 26);
   assert.deepEqual(derived.sections.map((item) => [item.kind, item.line_start, item.line_end]), [
-    ['frontmatter', 1, 3], ['preamble', 4, 5], ['heading', 6, 11], ['heading', 12, 23], ['heading', 24, 26],
+    ['preamble', 1, 5], ['heading', 6, 11], ['heading', 12, 23], ['heading', 24, 26],
   ]);
   assert.deepEqual(derived.sections.map((item) => item.heading_path), [
-    [], [], ['Title'], ['Title', 'Details'], ['Title', 'Notes'],
+    [], ['Title'], ['Title', 'Details'], ['Title', 'Notes'],
   ]);
   assert.equal(reviewFor(withAccounting(root, completeAccounting()), SOURCE).accounting_status, 'complete');
 });
 
-test('a frontmatter block closed on the final line, with no trailing newline, is its own section', (t) => {
+test('frontmatter without a heading is the complete preamble section', (t) => {
   const root = fixtureRepo(t, '---\ntype: Note\n---');
   const review = reviewFor(plan(root), SOURCE);
 
-  assert.deepEqual(review.sections.map((item) => [item.kind, item.line_start, item.line_end]), [['frontmatter', 1, 3]]);
+  assert.deepEqual(review.sections.map((item) => [item.kind, item.line_start, item.line_end]), [['preamble', 1, 3]]);
 });
 
 // #200's "a Markdown heading and its content form the normal source section"
@@ -205,7 +204,7 @@ test('a setext heading is not a section boundary, exactly as documented', (t) =>
   const review = reviewFor(plan(root), SOURCE);
 
   assert.deepEqual(review.sections.map((item) => [item.kind, item.line_start, item.line_end]), [
-    ['frontmatter', 1, 3], ['preamble', 4, 7],
+    ['preamble', 1, 7],
   ]);
 });
 
@@ -214,7 +213,7 @@ test('a heading inside a fenced code block never starts a section', (t) => {
   const review = reviewFor(plan(root), SOURCE);
 
   assert.deepEqual(review.sections.map((item) => [item.kind, item.line_start, item.line_end]), [
-    ['frontmatter', 1, 3], ['heading', 4, 10],
+    ['preamble', 1, 3], ['heading', 4, 10],
   ]);
 });
 
@@ -256,7 +255,7 @@ test('a changed source invalidates an accounting bound to the old identity, and 
   assert.deepEqual(response.findings.filter((item) => item.code.startsWith('SPLIT_')).map((item) => item.code), ['SPLIT_SOURCE_CHANGED']);
   // The current source's own sections are still reported, so the caller can
   // build the new accounting the refusal asks for.
-  assert.deepEqual(review.sections.map((item) => item.disposition), [null, null, null]);
+  assert.deepEqual(review.sections.map((item) => item.disposition), [null, null]);
 });
 
 // ------------------------------------------------- review the target itself opened
@@ -281,7 +280,7 @@ test('a source the word target itself put under review carries its sections, wit
   assert.equal(review.review_reason, 'above_target');
   assert.equal(review.accounting_status, 'derived');
   assert.deepEqual(review.sections.map((item) => [item.kind, item.line_start, item.line_end]), [
-    ['frontmatter', 1, 3], ['heading', 4, 7], ['heading', 8, 10],
+    ['preamble', 1, 3], ['heading', 4, 7], ['heading', 8, 10],
   ]);
 });
 
@@ -314,7 +313,7 @@ test('an accounting for a source under no split review is refused, and nothing i
 test('a complete accounting reports one disposition for every section and no finding', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), assigned(6, 9, 'concept-a'), assigned(10, 11, 'concept-a'),
+    residue(1, 5), assigned(6, 9, 'concept-a'), assigned(10, 11, 'concept-a'),
     assigned(12, 23, 'concept-b'), residue(24, 26),
   ]);
   const review = reviewFor(response, SOURCE);
@@ -322,11 +321,11 @@ test('a complete accounting reports one disposition for every section and no fin
   assert.equal(response.result, 'ok');
   assert.equal(review.accounting_status, 'complete');
   assert.deepEqual(review.sections.map((item) => [item.line_start, item.line_end, item.disposition, item.output]), [
-    [1, 3, 'residue', null], [4, 5, 'residue', null], [6, 9, 'assigned', 'concept-a'],
+    [1, 5, 'residue', null], [6, 9, 'assigned', 'concept-a'],
     [10, 11, 'assigned', 'concept-a'], [12, 23, 'assigned', 'concept-b'], [24, 26, 'residue', null],
   ]);
   assert.deepEqual(review.sections.map((item) => item.heading_path), [
-    [], [], ['Title'], ['Title'], ['Title', 'Details'], ['Title', 'Notes'],
+    [], ['Title'], ['Title'], ['Title', 'Details'], ['Title', 'Notes'],
   ]);
 });
 
@@ -340,10 +339,18 @@ test('a heading section may be divided at a visible block boundary', (t) => {
   assert.equal(review.accounting_status, 'complete');
 });
 
+test('a preamble cannot be divided at a visible block boundary', (t) => {
+  const root = fixtureRepo(t, '---\ntype: Note\n---\nFirst paragraph.\n\nSecond paragraph.\n');
+  const response = withAccounting(root, [residue(1, 5), residue(6, 6)]);
+
+  assert.equal(reviewFor(response, SOURCE).accounting_status, 'refused');
+  assert.equal(codes(response, 'SPLIT_SECTION_SUBDIVISION_INVALID').length, 2);
+});
+
 test('a boundary inside a fenced code block is refused, never quietly moved', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), residue(6, 9), residue(10, 11),
+    residue(1, 5), residue(6, 9), residue(10, 11),
     residue(12, 14), residue(15, 23), residue(24, 26),
   ]);
 
@@ -357,7 +364,7 @@ test('a boundary inside a fenced code block is refused, never quietly moved', (t
 test('a boundary inside a table is refused', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), residue(6, 9), residue(10, 11),
+    residue(1, 5), residue(6, 9), residue(10, 11),
     residue(12, 20), residue(21, 23), residue(24, 26),
   ]);
 
@@ -367,7 +374,7 @@ test('a boundary inside a table is refused', (t) => {
 test('one range swallowing a second heading is refused', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), residue(6, 9), residue(10, 11), residue(12, 26),
+    residue(1, 5), residue(6, 9), residue(10, 11), residue(12, 26),
   ]);
 
   const finding = codes(response, 'SPLIT_SECTION_SPANS_HEADING');
@@ -381,7 +388,7 @@ test('one range swallowing a second heading is refused', (t) => {
 test('a missing range is a refusal naming the exact uncovered lines', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), residue(6, 9), residue(12, 23), residue(24, 26),
+    residue(1, 5), residue(6, 9), residue(12, 23), residue(24, 26),
   ]);
 
   const finding = codes(response, 'SPLIT_COVERAGE_GAP');
@@ -393,7 +400,7 @@ test('a missing range is a refusal naming the exact uncovered lines', (t) => {
 
 test('an accounting that stops before the end of the source is a refusal, never a silently dropped tail', (t) => {
   const root = fixtureRepo(t);
-  const response = withAccounting(root, [residue(1, 3), residue(4, 5), residue(6, 9), residue(10, 11), residue(12, 23)]);
+  const response = withAccounting(root, [residue(1, 5), residue(6, 9), residue(10, 11), residue(12, 23)]);
 
   assert.deepEqual(codes(response, 'SPLIT_COVERAGE_GAP')[0].detail, { path: SOURCE, line_start: 24, line_end: 26 });
 });
@@ -401,7 +408,7 @@ test('an accounting that stops before the end of the source is a refusal, never 
 test('an overlapping range is a refusal naming the exact overlapping lines', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), assigned(6, 11, 'concept-a'), assigned(10, 11, 'concept-b'), residue(12, 23), residue(24, 26),
+    residue(1, 5), assigned(6, 11, 'concept-a'), assigned(10, 11, 'concept-b'), residue(12, 23), residue(24, 26),
   ]);
 
   const finding = codes(response, 'SPLIT_COVERAGE_OVERLAP');
@@ -413,7 +420,7 @@ test('an overlapping range is a refusal naming the exact overlapping lines', (t)
 test('a doubly assigned section is refused as exactly that, not as a generic overlap', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), residue(6, 9),
+    residue(1, 5), residue(6, 9),
     assigned(10, 11, 'concept-a'), assigned(10, 11, 'concept-b'),
     residue(12, 23), residue(24, 26),
   ]);
@@ -426,7 +433,7 @@ test('a doubly assigned section is refused as exactly that, not as a generic ove
 
 test('a range outside the source is refused against the real line count', (t) => {
   const root = fixtureRepo(t);
-  const response = withAccounting(root, [residue(1, 3), residue(4, 5), residue(6, 11), residue(12, 40)]);
+  const response = withAccounting(root, [residue(1, 5), residue(6, 11), residue(12, 40)]);
 
   const finding = codes(response, 'SPLIT_SECTION_RANGE_INVALID');
   assert.equal(finding.length, 1);
@@ -438,7 +445,7 @@ test('a range outside the source is refused against the real line count', (t) =>
 test('an output taking non-adjacent sections keeps source order by default', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), assigned(6, 9, 'concept-a'), residue(10, 11),
+    residue(1, 5), assigned(6, 9, 'concept-a'), residue(10, 11),
     residue(12, 23), assigned(24, 26, 'concept-a'),
   ]);
   const review = reviewFor(response, SOURCE);
@@ -454,7 +461,7 @@ test('an output taking non-adjacent sections keeps source order by default', (t)
 test('a different output order must be explicit, and is reported exactly as accepted', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), assigned(6, 9, 'concept-a', 2), residue(10, 11),
+    residue(1, 5), assigned(6, 9, 'concept-a', 2), residue(10, 11),
     residue(12, 23), assigned(24, 26, 'concept-a', 1),
   ]);
   const review = reviewFor(response, SOURCE);
@@ -471,7 +478,7 @@ test('a different output order must be explicit, and is reported exactly as acce
 test('an output ordering only some of its sections is refused', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), assigned(6, 9, 'concept-a', 1), residue(10, 11),
+    residue(1, 5), assigned(6, 9, 'concept-a', 1), residue(10, 11),
     residue(12, 23), assigned(24, 26, 'concept-a'),
   ]);
 
@@ -481,7 +488,7 @@ test('an output ordering only some of its sections is refused', (t) => {
 test('an output order that is not one position per section is refused', (t) => {
   const root = fixtureRepo(t);
   const response = withAccounting(root, [
-    residue(1, 3), residue(4, 5), assigned(6, 9, 'concept-a', 1), residue(10, 11),
+    residue(1, 5), assigned(6, 9, 'concept-a', 1), residue(10, 11),
     residue(12, 23), assigned(24, 26, 'concept-a', 3),
   ]);
 
@@ -517,7 +524,7 @@ test('a malformed split_sections payload is UNSUPPORTED_INPUT before anything is
 
 test('a blocking split accounting finding never rewrites the plan itself', (t) => {
   const root = fixtureRepo(t);
-  const response = withAccounting(root, [residue(1, 3), residue(4, 5), residue(6, 11), residue(12, 23)]);
+  const response = withAccounting(root, [residue(1, 5), residue(6, 11), residue(12, 23)]);
 
   assert.equal(response.result, 'ok');
   assert.equal(response.data.plan.entries.find((item) => item.path === SOURCE).disposition, 'migrate');

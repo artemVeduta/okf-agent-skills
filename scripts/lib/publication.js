@@ -310,15 +310,15 @@ function routeTargets(splitReview, bundlePath) {
   for (const review of splitReview.filter((item) => item.proposal !== null)) {
     const outputs = new Map(review.proposal.outputs.map((item) => [item.output, item]));
     for (const output of review.proposal.outputs) {
-      targets.push(...output.link_routes.map((route) => `${output.path}\0${route.target}`));
-      targets.push(...output.anchor_routes.map((route) => (
-        `${output.path}\0${path.posix.join(bundlePath, output.path)}#${route.target_anchor}`
+      targets.push(...output.link_routes.map((route) => `${outputs.get(route.origin).path}\0${route.target}`));
+      targets.push(...output.anchor_routes.filter((route) => route.origin !== null).map((route) => (
+        `${outputs.get(route.origin).path}\0${path.posix.join(bundlePath, outputs.get(route.target_output).path)}#${route.target_anchor}`
       )));
     }
-    for (const route of review.proposal.whole_source_link_routes) {
+    for (const route of review.proposal.whole_source_link_routes.filter((item) => item.origin !== null)) {
       const targetPath = route.target.kind === 'output'
         ? outputs.get(route.target.output).path : `${route.target.group}/index.md`;
-      targets.push(`${targetPath}\0${path.posix.join(bundlePath, targetPath)}`);
+      targets.push(`${outputs.get(route.origin).path}\0${path.posix.join(bundlePath, targetPath)}`);
     }
   }
   return targets.sort();
@@ -377,7 +377,7 @@ function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview
 
   const canonical = semanticReview.canonicalCoverage(review, splitReview);
   if (!canonical.ok) return { ok: false, finding: finding('PUBLISH_SEMANTIC_REVIEW_STALE', canonical.detail) };
-  const reviewedCandidates = canonical.reviewed.length === 0 ? [] : currentPaths;
+  const reviewedCandidates = currentPaths;
   const candidates = semanticReview.exactSet(reviewedCandidates, review.candidates.map((item) => item.path));
   if (semanticReview.differs(candidates)) {
     return { ok: false, finding: finding('PUBLISH_SEMANTIC_REVIEW_STALE', { candidates }) };

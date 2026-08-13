@@ -300,7 +300,7 @@ function validAcceptedSection(section) {
   return isPlainObject(section) && Object.keys(section).length === fields.length
     && Object.keys(section).every((field) => fields.includes(field))
     && Number.isInteger(section.index) && section.index >= 0
-    && ['frontmatter', 'preamble', 'heading'].includes(section.kind)
+    && ['preamble', 'heading'].includes(section.kind)
     && Array.isArray(section.heading_path) && section.heading_path.every((item) => typeof item === 'string')
     && Number.isInteger(section.word_count) && section.word_count >= 0
     && isPlainObject(section.boundary_excerpt)

@@ -94,10 +94,10 @@ function output(key, conceptId, title, group = null, provenance = []) {
     heading_outline: [{ level: 1, text: 'Install' }, { level: 2, text: 'Operate' }],
     reader_purpose_group: group,
     provenance_assignments: provenance,
-    link_routes: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md', target: 'docs/other.md' }],
+    link_routes: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md', origin: key, target: 'docs/other.md' }],
     anchor_routes: [{
       from: 'README.md', line: 1, occurrence: 2, resource: 'docs/guide.md#operate',
-      source_anchor: 'operate', line_start: 10, line_end: 12, target_anchor: 'operate',
+      origin: null, target_output: key, source_anchor: 'operate', line_start: 10, line_end: 12, target_anchor: 'operate',
     }],
   };
 }
@@ -113,7 +113,7 @@ function proposal(result, outputs, extra = {}) {
     heading_changes: [],
     whole_source_link_routes: [{
       from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md',
-      target: { kind: 'output', output: outputs[0].output },
+      origin: null, target: { kind: 'output', output: outputs[0].output },
     }],
     ...extra,
   }];
@@ -153,15 +153,15 @@ test('an accepted keep-as-one proposal carries the complete output shape and its
     heading_changes: [],
     whole_source_link_routes: [{
       from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md',
-      target: { kind: 'output', output: 'guide' },
+      origin: null, target: { kind: 'output', output: 'guide' },
     }],
     known_routes: {
-      whole_source: [{ from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md' }],
+      whole_source: [{ from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md', origin: null }],
       heading_anchor: [{
         from: 'README.md', line: 1, occurrence: 2, resource: 'docs/guide.md#operate',
-        source_anchor: 'operate', line_start: 10, line_end: 12,
+        origin: null, target_output: 'guide', source_anchor: 'operate', line_start: 10, line_end: 12,
       }],
-      ordinary: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md' }],
+      ordinary: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md', origin: 'guide' }],
     },
     known_headings: [
       { line: 6, level: 1, text: 'Install', anchor: 'install', line_start: 6, line_end: 9, output: 'guide' },
@@ -224,7 +224,7 @@ test('an ambiguous whole-source link route blocks acceptance until it names an o
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', outputs, {
       whole_source_link_routes: [{
-        from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md', target: null,
+        from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md', origin: null, target: null,
       }],
     }),
   }));
@@ -256,12 +256,12 @@ test('complete accounting derives the first complete refused proposal view witho
     child_entry: { concept_id: null, path: null, title: null, order: null },
   });
   assert.deepEqual(proposed.known_routes, {
-    whole_source: [{ from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md' }],
+    whole_source: [{ from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md', origin: null }],
     heading_anchor: [{
       from: 'README.md', line: 1, occurrence: 2, resource: 'docs/guide.md#operate',
-      source_anchor: 'operate', line_start: 10, line_end: 12,
+      origin: null, target_output: 'guide', source_anchor: 'operate', line_start: 10, line_end: 12,
     }],
-    ordinary: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md' }],
+    ordinary: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md', origin: 'guide' }],
   });
   assert.deepEqual(proposed.tree, { root: [], groups: [], unresolved: ['guide'] });
   assert.deepEqual(new Set(splitFindings(response)
@@ -285,20 +285,20 @@ test('route inventory includes local anchors and links from the bundle root', (t
 
   assert.deepEqual(review(response).proposal.known_routes, {
     whole_source: [
-      { from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md' },
-      { from: 'okf/index.md', line: 1, occurrence: 1, resource: '../docs/guide.md' },
+      { from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md', origin: null },
+      { from: 'okf/index.md', line: 1, occurrence: 1, resource: '../docs/guide.md', origin: null },
     ],
     heading_anchor: [
       {
         from: 'README.md', line: 1, occurrence: 2, resource: 'docs/guide.md#operate',
-        source_anchor: 'operate', line_start: 10, line_end: 12,
+        origin: null, target_output: 'guide', source_anchor: 'operate', line_start: 10, line_end: 12,
       },
       {
         from: SOURCE, line: 8, occurrence: 2, resource: '#operate',
-        source_anchor: 'operate', line_start: 10, line_end: 12,
+        origin: 'guide', target_output: 'guide', source_anchor: 'operate', line_start: 10, line_end: 12,
       },
     ],
-    ordinary: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md' }],
+    ordinary: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md', origin: 'guide' }],
   });
 });
 
@@ -309,7 +309,7 @@ test('a case-variant Markdown extension contributes a required route', (t) => {
   const complete = proposal('keep_as_one', outputs);
   complete[0].whole_source_link_routes.push({
     from: 'inbound.MARKDOWN', line: 1, occurrence: 1, resource: 'docs/guide.md',
-    target: { kind: 'output', output: 'guide' },
+    origin: null, target: { kind: 'output', output: 'guide' },
   });
 
   const accepted = run(request(root, {
@@ -321,8 +321,8 @@ test('a case-variant Markdown extension contributes a required route', (t) => {
 
   assert.equal(review(accepted).proposal.status, 'accepted');
   assert.deepEqual(review(accepted).proposal.known_routes.whole_source, [
-    { from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md' },
-    { from: 'inbound.MARKDOWN', line: 1, occurrence: 1, resource: 'docs/guide.md' },
+    { from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md', origin: null },
+    { from: 'inbound.MARKDOWN', line: 1, occurrence: 1, resource: 'docs/guide.md', origin: null },
   ]);
   assert.equal(splitFindings(omitted).some((item) => item.code === 'SPLIT_PROPOSAL_ROUTE_MISSING'), true);
   assert.equal(review(omitted).proposal.accepted, false);
@@ -391,7 +391,7 @@ test('duplicate source heading anchors stay visible and block ambiguous routing'
   ]);
   assert.deepEqual(proposed.known_routes.heading_anchor, [{
     from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md#operate',
-    source_anchor: 'operate', line_start: null, line_end: null, candidate_lines: [4, 8],
+    origin: null, target_output: null, source_anchor: 'operate', line_start: null, line_end: null, candidate_lines: [4, 8],
   }]);
   assert.deepEqual(splitFindings(response).filter((item) => item.code === 'SPLIT_HEADING_ANCHOR_AMBIGUOUS'), [{
     code: 'SPLIT_HEADING_ANCHOR_AMBIGUOUS',
@@ -442,11 +442,11 @@ test('missing, extra, and duplicate routes refuse acceptance against the known r
       whole_source_link_routes: [
         {
           from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md',
-          target: { kind: 'output', output: 'guide' },
+          origin: null, target: { kind: 'output', output: 'guide' },
         },
         {
           from: 'extra.md', line: 1, occurrence: 1, resource: 'docs/guide.md',
-          target: { kind: 'output', output: 'guide' },
+          origin: null, target: { kind: 'output', output: 'guide' },
         },
       ],
     }),
@@ -614,6 +614,24 @@ test('a proposal must bind the exact opaque output keys from complete source acc
 
   assert.equal(review(response).proposal.status, 'refused');
   assert.equal(splitFindings(response).some((item) => item.code === 'SPLIT_PROPOSAL_OUTPUT_MISMATCH'), true);
+});
+
+test('proposal output order becomes canonical without alphabetical reordering', (t) => {
+  const root = repo(t);
+  const zeta = output('zeta', 'zeta', 'Zeta', null, [{ source_index: 0, support: 'supported' }]);
+  zeta.heading_outline = [{ level: 1, text: 'Install' }];
+  zeta.anchor_routes = [];
+  const alpha = output('alpha', 'alpha', 'Alpha');
+  alpha.heading_outline = [{ level: 2, text: 'Operate' }];
+  alpha.link_routes = [];
+  const response = run(request(root, {
+    split_sections: accounting(['zeta', 'alpha']),
+    split_proposals: proposal('split', [zeta, alpha]),
+  }));
+
+  assert.equal(review(response).proposal.status, 'accepted', JSON.stringify(response));
+  assert.deepEqual(review(response).outputs.map((item) => item.output), ['zeta', 'alpha']);
+  assert.deepEqual(review(response).proposal.outputs.map((item) => item.output), ['zeta', 'alpha']);
 });
 
 test('a proposal refuses a reserved concept path instead of accepting it as an output', (t) => {

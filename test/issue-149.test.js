@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const { runWrapper, adapterManifest, temporaryRoot, writeManifest } = require('../test-support/snapshot');
 
@@ -79,7 +80,14 @@ function authority(root, staged) {
     split_review: staged.map((item) => ({
       path: item.path, accounting_status: 'not_required', sections: [], outputs: [], proposal: null,
     })),
-    semantic_review: { human_assessed: false, candidates: [], sources: [] },
+    semantic_review: {
+      human_assessed: false,
+      candidates: staged.map((item) => ({
+        path: `${item.concept}.md`,
+        identity: `sha256:${crypto.createHash('sha256').update(fs.readFileSync(path.resolve(root, item.file))).digest('hex')}`,
+      })),
+      sources: [],
+    },
   };
 }
 

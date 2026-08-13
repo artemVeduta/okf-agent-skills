@@ -19,10 +19,8 @@
  *     one section per heading, from its own line to the line before the next
  *     heading of any level. `heading_path` carries the hierarchy the flat
  *     section list itself does not.
- *   - "Content before the first heading forms a section" -> the `preamble`
- *     section. A frontmatter block is not prose, so it is its own
- *     `frontmatter` section rather than part of the preamble -- it still has
- *     to be disposed of, because the ranges must cover the *complete* source.
+ *   - "Content before the first heading forms a section" -> one `preamble`
+ *     section from line 1, including frontmatter when present.
  *   - "setup can divide it only at visible Markdown block boundaries such as
  *     paragraphs, lists, tables, or code blocks. It never cuts one of those
  *     blocks only to meet the word target" -> a supplied range may begin only
@@ -68,20 +66,6 @@ function splitLines(raw) {
   return lines;
 }
 
-// The 1-based line of the closing `---`, or 0 when there is no frontmatter
-// block this repo's own reader accepts. The reader stays the authority on
-// whether the block is one; only the closing line is located here, because
-// neither the extracted frontmatter nor the extracted body can tell an empty
-// line apart from no line at all.
-function frontmatterEnd(raw, lines) {
-  try {
-    validation.parseFrontmatter(raw);
-  } catch {
-    return 0;
-  }
-  return lines.findIndex((line, index) => index > 0 && line === '---') + 1;
-}
-
 function parseAtxHeading(line) {
   if (!HEADING.test(line)) return null;
   const match = line.match(HEADING_TEXT);
@@ -118,14 +102,11 @@ function deriveSections(raw, lines) {
     sections.push(sectionRow(sections.length, kind, headingPath, start, end, lines));
   };
 
-  const frontmatter = frontmatterEnd(raw, lines);
-  if (frontmatter > 0) push('frontmatter', [], 1, frontmatter);
-
   const stack = [];
-  let start = frontmatter + 1;
+  let start = 1;
   let kind = 'preamble';
   let headingPath = [];
-  for (let i = frontmatter; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; i++) {
     const heading = fenced[i] ? null : parseAtxHeading(lines[i]);
     if (!heading) continue;
     const line = i + 1;
@@ -224,6 +205,14 @@ function boundaryFindings(ordered, derived, starts, lineCount) {
   const headings = new Set(derived.filter((item) => item.kind === 'heading').map((item) => item.line_start));
   const findings = [];
   for (const section of ordered) {
+    const holder = containing(derived, section.line_start);
+    const exact = holder !== null && section.line_start === holder.line_start && section.line_end === holder.line_end;
+    if (holder === null || section.line_end > holder.line_end || (!exact && holder.kind !== 'heading')) {
+      findings.push({
+        code: 'SPLIT_SECTION_SUBDIVISION_INVALID',
+        detail: { line_start: section.line_start, line_end: section.line_end, kind: holder?.kind || null },
+      });
+    }
     if (!starts.has(section.line_start)) {
       findings.push({ code: 'SPLIT_SECTION_BOUNDARY_INVALID', detail: { line: section.line_start, edge: 'start' } });
     }
@@ -256,7 +245,7 @@ function outputGroups(ordered, rows) {
   });
 
   const findings = [];
-  const outputs = [...groups.keys()].sort().map((output) => {
+  const outputs = [...groups.keys()].map((output) => {
     const items = groups.get(output);
     const declared = items.filter((item) => Number.isInteger(item.order));
     const explicit = declared.length === items.length;

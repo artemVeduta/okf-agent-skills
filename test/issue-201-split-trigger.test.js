@@ -123,6 +123,47 @@ test('split_requested naming a source that stays at or below the target never up
   assert.equal(reviewFor(response, 'docs/other.md').review_reason, null);
 });
 
+test('setup-derived semantic boundaries open review without becoming a user request', (t) => {
+  const root = repo(t);
+  write(root, 'docs/small.md', markdownSource(10));
+  const sources = discoverSources(root);
+  const response = run(planRequest(root, sources, { semantic_boundary_sources: ['docs/small.md'] }));
+
+  const review = reviewFor(response, 'docs/small.md');
+  assert.equal(review.review_required, false);
+  assert.equal(review.review_reason, 'semantic_boundaries');
+});
+
+test('above-target and user-request reasons take precedence over derived semantic boundaries', (t) => {
+  const root = repo(t);
+  write(root, 'docs/small.md', markdownSource(10));
+  write(root, 'docs/big.md', markdownSource(1200));
+  const sources = discoverSources(root);
+  const response = run(planRequest(root, sources, {
+    split_requested: ['docs/small.md'],
+    semantic_boundary_sources: ['docs/small.md', 'docs/big.md'],
+  }));
+
+  assert.equal(reviewFor(response, 'docs/small.md').review_reason, 'user_requested');
+  assert.equal(reviewFor(response, 'docs/big.md').review_reason, 'above_target');
+});
+
+test('semantic boundary sources require unique selected migrate paths', (t) => {
+  const root = repo(t);
+  write(root, 'docs/small.md', markdownSource(10));
+  const sources = discoverSources(root);
+  for (const semantic_boundary_sources of [
+    'docs/small.md',
+    [''],
+    ['docs/small.md', 'docs/small.md'],
+    ['docs/missing.md'],
+  ]) {
+    const response = run(planRequest(root, sources, { semantic_boundary_sources }));
+    assert.equal(response.result, 'blocked', JSON.stringify(semantic_boundary_sources));
+    assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
+  }
+});
+
 // ----------------------------------------------------- invalid settings override
 
 test('an invalid max_words_per_file override leaves the built-in default (1000) effective, and the trigger uses it', (t) => {

@@ -270,6 +270,27 @@ test('a malformed accepted review is refused instead of causing a runtime failur
   assert.equal(response.findings[0].code, 'SPLIT_WORKER_REVIEW_INVALID');
 });
 
+test('accepted whole-source routes require exact existing targets at every later boundary', (t) => {
+  for (const [name, target] of [
+    ['null', null],
+    ['unknown output', { kind: 'output', output: 'missing' }],
+    ['unknown group', { kind: 'group_index', group: 'missing' }],
+    ['malformed', { kind: 'output' }],
+  ]) {
+    const { root, plan } = fixture(t);
+    const splitReview = structuredClone(plan.split_review);
+    splitReview[0].proposal.whole_source_link_routes = [{
+      from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md', origin: null, target,
+    }];
+    const response = validateWith(root, plan, semanticReview(root, plan), splitReview, {});
+
+    assert.equal(response.result, 'blocked', name);
+    assert.notEqual(response.result, 'failed/incomplete', name);
+    assert.equal(response.findings[0].code, 'SPLIT_WORKER_REVIEW_INVALID', name);
+    assert.equal(response.findings[0].detail.reason, 'proposal_shape', name);
+  }
+});
+
 test('null, malformed, and duplicate accepted review rows and ranges are refused before evidence comparison', (t) => {
   const cases = [
     ['null row', (rows) => rows.push(null), 'SPLIT_WORKER_REVIEW_SET_MISMATCH'],

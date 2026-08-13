@@ -90,6 +90,7 @@ test('publish survives a pre-publish precheck whose delegated validate answer ex
   fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
   fs.writeFileSync(path.join(root, 'docs/a.md'), '# Source A\n');
   const sourceDigest = require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root, 'docs/a.md'))).digest('hex');
+  const candidateDigest = require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex');
   const response = runWrapper(setupWrapper, {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
@@ -105,7 +106,11 @@ test('publish survives a pre-publish precheck whose delegated validate answer ex
       },
       mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, source_identity: `sha256:${sourceDigest}`, body: '# A\n\nBody text.\n' }],
       split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', sections: [], outputs: [], proposal: null }],
-      semantic_review: { human_assessed: false, candidates: [], sources: [] },
+      semantic_review: {
+        human_assessed: false,
+        candidates: [{ path: 'decisions/a.md', identity: `sha256:${candidateDigest}` }],
+        sources: [],
+      },
     },
   });
 

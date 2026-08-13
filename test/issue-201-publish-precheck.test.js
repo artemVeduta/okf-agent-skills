@@ -57,7 +57,7 @@ function proposalOutput(output, title) {
   };
 }
 
-function acceptedPlan(root, installRoute = null) {
+function acceptedPlan(root, installRoute = null, installAnchorRoute = null) {
   const sources = run('discover', root, {}).data.sources
     .filter((item) => [SPLIT_SOURCE, UNSPLIT_SOURCE].includes(item.path));
   const response = run('migration-plan', root, {
@@ -77,7 +77,11 @@ function acceptedPlan(root, installRoute = null) {
       keep_as_one_reason: null,
       accepted: true,
       outputs: [
-        { ...proposalOutput('install', 'Install'), link_routes: installRoute === null ? [] : [installRoute] },
+        {
+          ...proposalOutput('install', 'Install'),
+          link_routes: installRoute === null ? [] : [installRoute],
+          anchor_routes: installAnchorRoute === null ? [] : [installAnchorRoute],
+        },
         proposalOutput('operate', 'Operate'),
       ],
       provenance_exclusions: [],
@@ -156,7 +160,7 @@ function semanticInput(root, plan) {
 function fixture(t, options = {}) {
   const root = repo(t);
   if (options.prepare) options.prepare(root);
-  const plan = acceptedPlan(root, options.installRoute || null);
+  const plan = acceptedPlan(root, options.installRoute || null, options.installAnchorRoute || null);
   const staged = assemble(root, plan, options.bodies);
   const validated = run('migration-validate', root, {
     selected: [SPLIT_SOURCE, UNSPLIT_SOURCE],
@@ -331,7 +335,7 @@ function addAnchorRoute(value, targetAnchor = 'install') {
   const output = review.proposal.outputs.find((item) => item.output === 'install');
   output.anchor_routes.push({
     from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md#install',
-    source_anchor: 'install', line_start: 4, line_end: 7, target_anchor: targetAnchor,
+    origin: null, target_output: 'install', source_anchor: 'install', line_start: 4, line_end: 7, target_anchor: targetAnchor,
   });
   value.staged.find((item) => item.output === 'install').accepted_output = structuredClone(output);
   bindAcceptedReview(value);
@@ -340,7 +344,7 @@ function addAnchorRoute(value, targetAnchor = 'install') {
 function addWholeSourceRoute(value, target = 'install') {
   acceptedSource(value).proposal.whole_source_link_routes.push({
     from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md',
-    target: { kind: 'output', output: target },
+    origin: null, target: { kind: 'output', output: target },
   });
   bindAcceptedReview(value);
 }
@@ -438,6 +442,22 @@ test('malformed Task 6 publication input is refused at the boundary with zero wr
   assert.deepEqual(snapshot(path.join(value.root, 'okf')), before);
 });
 
+test('malformed accepted route rows fail closed at publication without throwing', (t) => {
+  const value = fixture(t);
+  acceptedSource(value).proposal.whole_source_link_routes.push({
+    from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md', origin: null, target: null,
+  });
+  bindAcceptedReview(value);
+  const before = snapshot(path.join(value.root, 'okf'));
+
+  const response = publish(value);
+
+  assert.equal(response.result, 'blocked');
+  assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
+  assert.equal(response.findings[0].code, 'SPLIT_WORKER_REVIEW_INVALID');
+  assert.deepEqual(snapshot(path.join(value.root, 'okf')), before);
+});
+
 test('a later write failure reports successful, failed, and unattempted writes exactly', (t) => {
   const value = fixture(t);
   value.staged.sort((left, right) => ['install', 'operate', 'decisions/decision'].indexOf(left.concept)
@@ -495,9 +515,10 @@ test('an unsplit candidate requires its exact current source binding', (t) => {
   }
 });
 
-test('missing or wrong heading-anchor routes block publication', (t) => {
-  const missing = fixture(t);
-  assertZeroWriteRefusal(missing, (value) => addAnchorRoute(value), 'PUBLISH_ROUTE_MISMATCH');
+test('external inbound anchor decisions do not invent a candidate link, but an invented link blocks', (t) => {
+  const inbound = fixture(t);
+  addAnchorRoute(inbound);
+  assert.equal(publish(inbound).data.status, 'complete');
 
   const wrong = fixture(t);
   assertZeroWriteRefusal(wrong, (value) => {
@@ -509,9 +530,10 @@ test('missing or wrong heading-anchor routes block publication', (t) => {
   }, 'PUBLISH_ROUTE_MISMATCH');
 });
 
-test('missing or wrong whole-source targets block publication', (t) => {
-  const missing = fixture(t);
-  assertZeroWriteRefusal(missing, (value) => addWholeSourceRoute(value), 'PUBLISH_ROUTE_MISMATCH');
+test('external inbound whole-source decisions do not invent a candidate self-link, but an invented link blocks', (t) => {
+  const inbound = fixture(t);
+  addWholeSourceRoute(inbound);
+  assert.equal(publish(inbound).data.status, 'complete');
 
   const wrong = fixture(t);
   assertZeroWriteRefusal(wrong, (value) => {
@@ -597,7 +619,7 @@ test('multiple group indexes and a concept route to an indexed child publish', (
   const routeOwner = acceptedSource(value).proposal.outputs.find((item) => item.output === 'operate');
   routeOwner.link_routes.push({
     from: SPLIT_SOURCE, line: 8, occurrence: 1,
-    resource: 'docs/decision.md', target: 'okf/operators/install.md',
+    resource: 'docs/decision.md', origin: 'operate', target: 'okf/operators/install.md',
   });
   value.staged.find((item) => item.output === 'operate').accepted_output = structuredClone(routeOwner);
   const routeFile = path.join(value.root, '.okf-staging/okf/runbooks/operate.md');
@@ -621,7 +643,7 @@ test('a route cannot move to another accepted output with the same global target
     },
     installRoute: {
       from: SPLIT_SOURCE, line: 6, occurrence: 1,
-      resource: 'other.md', target: 'docs/other.md',
+      resource: 'other.md', origin: 'install', target: 'docs/other.md',
     },
     bodies: { [`${SPLIT_SOURCE}:install`]: '# Install\n\n[Other](../docs/other.md)\n' },
   });
@@ -635,6 +657,26 @@ test('a route cannot move to another accepted output with the same global target
   assertZeroWriteRefusal(value, () => {}, 'PUBLISH_ROUTE_MISMATCH');
 });
 
+test('a local anchor link in output A routes to its accepted heading in output B', (t) => {
+  const value = fixture(t, {
+    prepare(root) {
+      fs.writeFileSync(path.join(root, SPLIT_SOURCE), SPLIT_CONTENT.replace(
+        'Install the tool.', 'Install the tool and see [operations](#operate).',
+      ));
+    },
+    installAnchorRoute: {
+      from: SPLIT_SOURCE, line: 6, occurrence: 1, resource: '#operate',
+      origin: 'install', target_output: 'operate', source_anchor: 'operate',
+      line_start: 8, line_end: 10, target_anchor: 'operate',
+    },
+    bodies: { [`${SPLIT_SOURCE}:install`]: '# Install\n\n[Operations](operate.md#operate)\n' },
+  });
+
+  const response = publish(value);
+
+  assert.equal(response.data.status, 'complete', JSON.stringify(response));
+});
+
 test('an ordinary split route retains its accepted query and fragment', (t) => {
   const resource = 'other.md?view=full#section';
   const value = fixture(t, {
@@ -643,7 +685,7 @@ test('an ordinary split route retains its accepted query and fragment', (t) => {
       fs.writeFileSync(path.join(root, SPLIT_SOURCE), SPLIT_CONTENT.replace('Install the tool.', `Install [other](${resource}).`));
     },
     installRoute: {
-      from: SPLIT_SOURCE, line: 6, occurrence: 1, resource,
+      from: SPLIT_SOURCE, line: 6, occurrence: 1, resource, origin: 'install',
       target: 'docs/other.md?view=full#section',
     },
     bodies: { [`${SPLIT_SOURCE}:install`]: '# Install\n\n[Other](../docs/other.md?view=full#section)\n' },
@@ -657,7 +699,7 @@ test('an ordinary split route retains its accepted query and fragment', (t) => {
       fs.writeFileSync(path.join(root, SPLIT_SOURCE), SPLIT_CONTENT.replace('Install the tool.', `Install [other](${resource}).`));
     },
     installRoute: {
-      from: SPLIT_SOURCE, line: 6, occurrence: 1, resource,
+      from: SPLIT_SOURCE, line: 6, occurrence: 1, resource, origin: 'install',
       target: 'docs/other.md?view=full#section',
     },
     bodies: { [`${SPLIT_SOURCE}:install`]: '# Install\n\n[Other](../docs/other.md?view=full#section)\n' },
@@ -790,4 +832,43 @@ test('a receipt removal failure is reported without a runtime failure or reporta
   assert.equal(response.data.publication_receipt, undefined);
   assert.equal(response.findings[0].code, 'PUBLICATION_RECEIPT_WRITE_FAILED');
   assert.equal(fs.existsSync(path.join(value.root, 'okf/install.md')), false);
+});
+
+test('a receipt persistence failure after dispatch reports every actual write outcome', (t) => {
+  const value = fixture(t);
+  value.staged.sort((left, right) => ['install', 'operate', 'decisions/decision'].indexOf(left.concept)
+    - ['install', 'operate', 'decisions/decision'].indexOf(right.concept));
+  const receiptFile = path.join(value.root, '.okf-staging', 'okf', '.okf-publication-receipt.json');
+  const response = runtime.run('okf-setup', {
+    protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'publish',
+    payload: {
+      cwd: value.root, task_kind: 'feature work', staged: value.staged,
+      plan: value.plan.plan, mapping: value.plan.mapping,
+      split_review: value.plan.split_review, semantic_review: value.semantic_review,
+    },
+  }, {
+    ...defaultServices,
+    writeFile(file, content) {
+      if (path.resolve(file) === receiptFile) throw Object.assign(new Error('receipt unavailable'), { code: 'EACCES' });
+      return defaultServices.writeFile(file, content);
+    },
+  });
+
+  assert.equal(response.result, 'failed/incomplete');
+  assert.equal(response.data.code, 'PUBLICATION_RECEIPT_WRITE_FAILED');
+  assert.equal(response.data.status, 'partial');
+  assert.deepEqual(response.data.published, ['install', 'operate', 'decisions/decision']);
+  assert.deepEqual(response.data.failed, []);
+  assert.deepEqual(response.data.skipped, []);
+  assert.deepEqual(response.data.results.map(({ concept, status }) => ({ concept, status })), [
+    { concept: 'install', status: 'clean' },
+    { concept: 'operate', status: 'clean' },
+    { concept: 'decisions/decision', status: 'clean' },
+  ]);
+  assert.equal(response.data.candidate_conformance.passed, true);
+  assert.equal(response.data.publication_receipt, undefined);
+  assert.equal(response.findings.at(-1).code, 'PUBLICATION_RECEIPT_WRITE_FAILED');
+  assert.equal(fs.existsSync(path.join(value.root, 'okf/install.md')), true);
+  assert.equal(fs.existsSync(path.join(value.root, 'okf/operate.md')), true);
+  assert.equal(fs.existsSync(path.join(value.root, 'okf/decisions/decision.md')), true);
 });

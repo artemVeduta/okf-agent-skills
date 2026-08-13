@@ -46,12 +46,13 @@ function routeIdentity(value) {
 }
 
 function linkRoute(value) {
-  return routeIdentity(value) && text(value.target);
+  return routeIdentity(value) && text(value.origin) && text(value.target);
 }
 
 function anchorRoute(value) {
-  return routeIdentity(value) && text(value.source_anchor) && positive(value.line_start)
-    && positive(value.line_end) && value.line_start <= value.line_end && text(value.target_anchor);
+  return routeIdentity(value) && (value.origin === null || text(value.origin)) && text(value.target_output)
+    && text(value.source_anchor) && positive(value.line_start) && positive(value.line_end)
+    && value.line_start <= value.line_end && text(value.target_anchor);
 }
 
 function output(value) {
@@ -74,7 +75,7 @@ function headingChange(value) {
 }
 
 function wholeSourceRoute(value) {
-  if (!routeIdentity(value)) return false;
+  if (!routeIdentity(value) || !(value.origin === null || text(value.origin))) return false;
   if (value.target === null) return true;
   return object(value.target) && ((value.target.kind === 'output' && text(value.target.output))
     || (value.target.kind === 'group_index' && text(value.target.group)));
@@ -106,11 +107,17 @@ function validAccepted(value) {
     && item.heading_outline.every((row) => only(row, ['level', 'text']))
     && item.provenance_assignments.every((row) => only(row, ['source_index', 'support', 'source'])
       && object(row.source))
-    && item.link_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'target']))
-    && item.anchor_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'source_anchor', 'line_start', 'line_end', 'target_anchor']));
+    && item.link_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'origin', 'target']))
+    && item.anchor_routes.every((row) => only(row, [
+      'from', 'line', 'occurrence', 'resource', 'origin', 'target_output', 'source_anchor',
+      'line_start', 'line_end', 'target_anchor',
+    ]));
   const knownRoute = (route) => routeIdentity(route) && only(route, [
-    'from', 'line', 'occurrence', 'resource', 'source_anchor', 'line_start', 'line_end', 'candidate_lines',
-  ]) && (route.source_anchor === undefined || text(route.source_anchor))
+    'from', 'line', 'occurrence', 'resource', 'origin', 'target_output', 'source_anchor',
+    'line_start', 'line_end', 'candidate_lines',
+  ]) && (route.origin === null || text(route.origin))
+    && (route.target_output === undefined || route.target_output === null || text(route.target_output))
+    && (route.source_anchor === undefined || text(route.source_anchor))
     && (route.line_start === undefined || positive(route.line_start))
     && (route.line_end === undefined || positive(route.line_end))
     && (route.line_start === undefined || route.line_end === undefined || route.line_start <= route.line_end)
@@ -143,12 +150,19 @@ function validAccepted(value) {
     && ((value.result === 'keep_as_one' && value.outputs.length === 1)
       || (value.result === 'split' && value.outputs.length >= 2))
     && value.outputs.every(responseOutput)
+    && value.outputs.every((item) => item.link_routes.every((row) => row.origin === item.output)
+      && item.anchor_routes.every((row) => (row.origin === null || row.origin === item.output)
+        && value.outputs.some((target) => target.output === row.target_output)))
     && value.provenance_exclusions.every((row) => only(row, ['source_index', 'reason', 'source'])
       && object(row.source))
     && value.heading_changes.every((row) => only(row, [
       'line', 'source_heading', 'action', 'output', 'target_heading', 'target_level', 'target_anchor',
     ]))
-    && value.whole_source_link_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'target']))
+    && value.whole_source_link_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'origin', 'target']))
+    && value.whole_source_link_routes.every((row) => row.target !== null
+      && (row.target.kind === 'output'
+        ? value.outputs.some((item) => item.output === row.target.output)
+        : value.outputs.some((item) => item.reader_purpose_group?.key === row.target.group)))
     && object(value.known_routes)
     && ['whole_source', 'heading_anchor', 'ordinary'].every((key) => Array.isArray(value.known_routes[key])
       && value.known_routes[key].every(knownRoute))
@@ -230,27 +244,30 @@ function buildInventory(sourcePath, raw, review, gitRoot, bundleRoot, services) 
 
   function classify(from, content) {
     for (const item of fileLinks(from, content)) {
+      const sourceSection = from === sourcePath
+        ? review.sections.find((candidate) => candidate.line_start <= item.line && item.line <= candidate.line_end)
+        : null;
+      const origin = sourceSection?.output || null;
       const targetPath = validation.bodyLinkPath(item.resource);
       const local = from === sourcePath && item.resource.startsWith('#');
       const targetsSource = local || (targetPath && mapping.resolveLinkTarget(from, targetPath) === sourcePath);
       if (!targetsSource) {
         if (from !== sourcePath || !targetPath) continue;
-        const section = review.sections.find((candidate) => candidate.line_start <= item.line && item.line <= candidate.line_end);
-        if (section && section.output !== null) {
-          ordinary.push({ ...item, target: mapping.normalizedLinkTarget(from, item.resource), output: section.output });
+        if (origin !== null) {
+          ordinary.push({ ...item, target: mapping.normalizedLinkTarget(from, item.resource), origin });
         }
         continue;
       }
       const sourceAnchor = fragment(item.resource);
       if (sourceAnchor === null) {
-        whole_source.push(item);
+        whole_source.push({ ...item, origin });
         continue;
       }
       const matches = headings.filter((heading) => heading.anchor === sourceAnchor);
       if (matches.length > 1) {
         const candidate_lines = matches.map((heading) => heading.line);
         heading_anchor.push({
-          ...item, source_anchor: sourceAnchor, line_start: null, line_end: null, candidate_lines, output: null,
+          ...item, origin, source_anchor: sourceAnchor, line_start: null, line_end: null, candidate_lines, target_output: null,
         });
         findings.push(finding('SPLIT_HEADING_ANCHOR_AMBIGUOUS', {
           ...item, source_anchor: sourceAnchor, candidate_lines,
@@ -262,9 +279,10 @@ function buildInventory(sourcePath, raw, review, gitRoot, bundleRoot, services) 
       heading_anchor.push({
         ...item,
         source_anchor: sourceAnchor,
+        origin,
         line_start: owner.line_start,
         line_end: owner.line_end,
-        output: owner.output,
+        target_output: owner.output,
       });
     }
   }
@@ -400,16 +418,16 @@ function provenanceFindings(supplied, authoredSources) {
   return findings;
 }
 
-const routeKey = (kind, route, outputKey = '') => [
-  kind, route.from, route.line, route.occurrence, route.resource, outputKey,
+const routeKey = (kind, route) => [
+  kind, route.from, route.line, route.occurrence, route.resource, route.origin || '', route.target_output || '',
 ].join('\0');
 
 function compareRoutes(kind, expected, actual) {
   const findings = [];
-  const expectedByKey = new Map(expected.map((item) => [routeKey(kind, item, item.output || ''), item]));
+  const expectedByKey = new Map(expected.map((item) => [routeKey(kind, item), item]));
   const counts = new Map();
   for (const item of actual) {
-    const key = routeKey(kind, item, item.output || '');
+    const key = routeKey(kind, item);
     counts.set(key, (counts.get(key) || 0) + 1);
   }
   for (const [key, count] of counts) {
@@ -421,7 +439,7 @@ function compareRoutes(kind, expected, actual) {
       findings.push(finding('SPLIT_PROPOSAL_ROUTE_MISSING', { route_kind: kind }));
       continue;
     }
-    const proposed = actual.find((candidate) => routeKey(kind, candidate, candidate.output || '') === key);
+    const proposed = actual.find((candidate) => routeKey(kind, candidate) === key);
     if (kind === 'ordinary' && proposed.target !== item.target) {
       findings.push(finding('SPLIT_PROPOSAL_ROUTE_TARGET_INVALID', { route_kind: kind }));
     }
@@ -473,11 +491,11 @@ function routeFindings(supplied, inventory) {
     item.reader_purpose_group === null ? [] : [item.reader_purpose_group.key]
   )));
   const whole = supplied.whole_source_link_routes;
-  const ordinary = supplied.outputs.flatMap((item) => item.link_routes.map((route) => ({ ...route, output: item.output })));
-  const anchors = supplied.outputs.flatMap((item) => item.anchor_routes.map((route) => ({ ...route, output: item.output })));
+  const ordinary = supplied.outputs.flatMap((item) => item.link_routes);
+  const anchors = supplied.outputs.flatMap((item) => item.anchor_routes);
   findings.push(...compareRoutes('whole_source', inventory.routes.whole_source, whole));
   findings.push(...compareRoutes('ordinary', inventory.routes.ordinary, ordinary));
-  findings.push(...compareRoutes('heading_anchor', inventory.routes.heading_anchor.filter((item) => item.output !== null), anchors));
+  findings.push(...compareRoutes('heading_anchor', inventory.routes.heading_anchor.filter((item) => item.target_output !== null), anchors));
 
   for (const route of whole) {
     if (route.target === null) findings.push(finding('SPLIT_WHOLE_SOURCE_LINK_AMBIGUOUS', { from: route.from }));
@@ -486,12 +504,17 @@ function routeFindings(supplied, inventory) {
       findings.push(finding('SPLIT_WHOLE_SOURCE_LINK_ROUTE_INVALID', { from: route.from }));
     }
   }
+  for (const item of supplied.outputs) {
+    if (item.link_routes.some((route) => route.origin !== item.output)
+      || item.anchor_routes.some((route) => route.origin !== null && route.origin !== item.output)) {
+      findings.push(finding('SPLIT_PROPOSAL_ROUTE_TARGET_INVALID', { route_kind: 'origin' }));
+    }
+  }
   for (const route of anchors) {
-    const known = inventory.routes.heading_anchor.find((item) => routeKey('heading_anchor', item, item.output || '')
-      === routeKey('heading_anchor', route, route.output));
+    const known = inventory.routes.heading_anchor.find((item) => routeKey('heading_anchor', item) === routeKey('heading_anchor', route));
     if (!known || !positive(known.line_start) || !positive(known.line_end)) continue;
     const change = supplied.heading_changes.find((item) => item.line === known.line_start);
-    const outputRow = supplied.outputs.find((item) => item.output === route.output);
+    const outputRow = supplied.outputs.find((item) => item.output === route.target_output);
     const retainedAnchors = new Set((outputRow && outputRow.heading_outline || []).map((item) => headingAnchor(item.text)));
     const targetValid = change && change.action === 'changed'
       ? route.target_anchor === change.target_anchor
@@ -530,18 +553,20 @@ function tree(outputs) {
 
 function knownRoutes(inventory) {
   return {
-    whole_source: inventory.routes.whole_source.map(({ from, line, occurrence, resource }) => ({ from, line, occurrence, resource })),
+    whole_source: inventory.routes.whole_source.map(({ from, line, occurrence, resource, origin }) => ({ from, line, occurrence, resource, origin })),
     heading_anchor: inventory.routes.heading_anchor.map((item) => ({
       from: item.from,
       line: item.line,
       occurrence: item.occurrence,
       resource: item.resource,
+      origin: item.origin,
+      target_output: item.target_output,
       source_anchor: item.source_anchor,
       line_start: item.line_start,
       line_end: item.line_end,
       ...(item.candidate_lines ? { candidate_lines: item.candidate_lines } : {}),
     })),
-    ordinary: inventory.routes.ordinary.map(({ from, line, occurrence, resource }) => ({ from, line, occurrence, resource })),
+    ordinary: inventory.routes.ordinary.map(({ from, line, occurrence, resource, origin }) => ({ from, line, occurrence, resource, origin })),
   };
 }
 
@@ -617,11 +642,12 @@ function derive(review, mapped, authoredSources, inventory) {
       heading_outline: [],
       reader_purpose_group: initialGroup(),
       provenance_assignments: authoredSources.map((source, source_index) => ({ source_index, support: 'unclear', source })),
-      link_routes: inventory.routes.ordinary.filter((item) => item.output === accounted.output)
-        .map(({ from, line, occurrence, resource, target }) => ({ from, line, occurrence, resource, target })),
-      anchor_routes: inventory.routes.heading_anchor.filter((item) => item.output === accounted.output)
-        .map(({ from, line, occurrence, resource, source_anchor, line_start, line_end }) => ({
-          from, line, occurrence, resource, source_anchor, line_start, line_end, target_anchor: null,
+      link_routes: inventory.routes.ordinary.filter((item) => item.origin === accounted.output)
+        .map(({ from, line, occurrence, resource, origin, target }) => ({ from, line, occurrence, resource, origin, target })),
+      anchor_routes: inventory.routes.heading_anchor.filter((item) => (
+        item.origin === accounted.output || item.origin === null && item.target_output === accounted.output
+      )).map(({ from, line, occurrence, resource, origin, target_output, source_anchor, line_start, line_end }) => ({
+          from, line, occurrence, resource, origin, target_output, source_anchor, line_start, line_end, target_anchor: null,
         })),
     };
   });
@@ -633,8 +659,8 @@ function derive(review, mapped, authoredSources, inventory) {
     outputs,
     provenance_exclusions: [],
     heading_changes: [],
-    whole_source_link_routes: inventory.routes.whole_source.map(({ from, line, occurrence, resource }) => ({
-      from, line, occurrence, resource, target: null,
+    whole_source_link_routes: inventory.routes.whole_source.map(({ from, line, occurrence, resource, origin }) => ({
+      from, line, occurrence, resource, origin, target: null,
     })),
     known_routes: knownRoutes(inventory),
     known_headings: inventory.headings,

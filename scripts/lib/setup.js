@@ -1047,6 +1047,7 @@ function validSplitSections(value) {
  */
 function accountSplits(entries, payload, maxWords, gitRoot, services) {
   const requested = new Set(payload.split_requested || []);
+  const semanticBoundaries = new Set(payload.semantic_boundary_sources || []);
   const supplied = new Map((payload.split_sections || []).map((item) => [item.path, item]));
   const findings = [];
   const refuse = (source, code, detail = {}) => findings.push(suiteFinding(code, { path: source, ...detail }));
@@ -1065,7 +1066,9 @@ function accountSplits(entries, payload, maxWords, gitRoot, services) {
       path: item.path,
       word_count: wordCount,
       review_required: aboveTarget,
-      review_reason: aboveTarget ? 'above_target' : (requested.has(item.path) ? 'user_requested' : null),
+      review_reason: aboveTarget ? 'above_target'
+        : requested.has(item.path) ? 'user_requested'
+          : semanticBoundaries.has(item.path) ? 'semantic_boundaries' : null,
       source_identity: sections.identify(raw),
       line_count: 0,
       sections: [],
@@ -1132,7 +1135,14 @@ function applySplitProposals(reviews, payload, mapped, entries, gitRoot, bundleR
         ? { proposal: null, findings: [] }
         : splitProposal.evaluate(review, proposal, mappedSource.sources || [], inventory);
     findings.push(...evaluated.findings.map((item) => suiteFinding(item.code, { path: review.path, ...item.detail })));
-    return { path: review.path, review: { ...review, proposal: evaluated.proposal }, proposal: evaluated.proposal };
+    const canonicalOutputs = evaluated.proposal?.status === 'accepted'
+      ? evaluated.proposal.outputs.map((output) => review.outputs.find((item) => item.output === output.output))
+      : review.outputs;
+    return {
+      path: review.path,
+      review: { ...review, outputs: canonicalOutputs, proposal: evaluated.proposal },
+      proposal: evaluated.proposal,
+    };
   });
   const known = new Set(reviews.map((item) => item.path));
   for (const source of supplied.keys()) {
@@ -1218,6 +1228,13 @@ function executeMigrationPlan(request, services) {
       && payload.split_requested.every((item) => typeof item === 'string' && item !== '');
     if (!requestedOk) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  if (payload.semantic_boundary_sources !== undefined) {
+    const boundarySources = payload.semantic_boundary_sources;
+    const boundarySourcesOk = Array.isArray(boundarySources)
+      && boundarySources.every((item) => typeof item === 'string' && item !== '')
+      && new Set(boundarySources).size === boundarySources.length;
+    if (!boundarySourcesOk) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
   // #201 task 2: the caller's own accounting of a source under split review --
   // one entry per source, each carrying that source's exact section ranges and
   // their dispositions, and optionally the source identity the accounting was
@@ -1232,6 +1249,10 @@ function executeMigrationPlan(request, services) {
 
   const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers);
   if (outcome.invalid) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  const migratePaths = new Set(outcome.entries.filter((item) => item.disposition === 'migrate').map((item) => item.path));
+  if ((payload.semantic_boundary_sources || []).some((item) => !migratePaths.has(item))) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
 
   // #197 (#200): `migration-plan` is the proposal `/setup`'s migration flow builds,
   // so the effective `max_words_per_file` and any settings finding are exposed here
@@ -1700,16 +1721,28 @@ function contentIdentity(bytes) {
 function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoot, services) {
   const reviewed = splitReview.filter((item) => item.proposal !== null).sort((a, b) => a.path.localeCompare(b.path));
   const rich = semanticReview.sources !== undefined || semanticReview.candidates !== undefined;
-  if (reviewed.length === 0 && !rich) return {
-    ok: true,
-    passed: true,
-    findings: [],
-    result: { human_assessed: semanticReview.performed, candidates: [], sources: [] },
-  };
-  if (!rich) return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'review_missing' });
+  if (reviewed.length > 0 && !rich) return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'review_missing' });
 
-  const sourceRows = semanticReview.sources;
-  const candidateRows = semanticReview.candidates;
+  const sourceRows = semanticReview.sources || [];
+  let listing;
+  try { listing = services.exists(stagingRoot) ? services.listFiles(stagingRoot) : { files: [], complete: true }; } catch {
+    listing = { files: [], complete: false };
+  }
+  if (!listing.complete) return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_SCAN_INCOMPLETE', {});
+  const currentCandidates = listing.files
+    .filter(discovery.isMarkdownFile)
+    .map((file) => path.relative(stagingRoot, file).split(path.sep).join('/'))
+    .sort();
+  const candidateRows = semanticReview.candidates || [];
+  if (semanticReview.candidates === undefined) {
+    for (const candidatePath of currentCandidates) {
+      let bytes;
+      try { bytes = services.readBuffer(path.join(stagingRoot, candidatePath)); } catch {
+        return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_READ_FAILED', { path: candidatePath });
+      }
+      candidateRows.push({ path: candidatePath, identity: contentIdentity(bytes) });
+    }
+  }
   const sourceShape = sourceRows.every((item) => item && typeof item === 'object' && !Array.isArray(item)
     && Object.keys(item).every((field) => ['path', 'source_identity', 'accepted', 'sections'].includes(field))
     && typeof item.path === 'string' && item.path !== ''
@@ -1727,13 +1760,6 @@ function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoo
   const sourceSet = canonicalReview.exactSet(expectedSources, sourceRows.map((item) => item.path));
   if (canonicalReview.differs(sourceSet)) return semanticRefusal('SEMANTIC_REVIEW_SOURCE_SET_MISMATCH', sourceSet);
 
-  let listing;
-  try { listing = services.listFiles(stagingRoot); } catch { listing = { files: [], complete: false }; }
-  if (!listing.complete) return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_SCAN_INCOMPLETE', {});
-  const currentCandidates = listing.files
-    .filter(discovery.isMarkdownFile)
-    .map((file) => path.relative(stagingRoot, file).split(path.sep).join('/'))
-    .sort();
   const candidateSet = canonicalReview.exactSet(currentCandidates, candidateRows.map((item) => item.path));
   if (canonicalReview.differs(candidateSet)) return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_MISMATCH', candidateSet);
 
@@ -2098,8 +2124,19 @@ function executePublish(request, services) {
   }, [...results, ...skipped.map((item) => ({ ...item, findings: [] }))], classification);
   const receiptText = `${JSON.stringify(receipt, null, 2)}\n`;
   try { services.writeFile(receiptFile, receiptText); } catch (error) {
-    return respond(request, 'failed/incomplete', { code: 'PUBLICATION_RECEIPT_WRITE_FAILED' }, [
-      suiteFinding('PUBLICATION_RECEIPT_WRITE_FAILED', { reason: writeFailureReason(error) }),
+    return respond(request, 'failed/incomplete', {
+      code: 'PUBLICATION_RECEIPT_WRITE_FAILED',
+      status: 'partial',
+      published: classification.published,
+      failed: classification.failed,
+      skipped: classification.skipped,
+      results: receipt.results,
+      candidate_conformance: receipt.candidate_conformance,
+    }, [
+      ...findings,
+      suiteFinding('PUBLICATION_RECEIPT_WRITE_FAILED', {
+        reason: writeFailureReason(error), phase: 'post-dispatch',
+      }),
     ]);
   }
   const publicationReceiptRef = {

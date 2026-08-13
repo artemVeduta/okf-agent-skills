@@ -52,7 +52,7 @@ function isPlaceholder(value) {
 // fixture can't fill is a doc/runtime mismatch, not something to hide.
 const OPTIONAL_PLACEHOLDER_KEYS = new Set([
   'today', 'project_mode', 'manifest', 'workspace_id', 'mappings', 'answers', 'package_root',
-  'split_requested', 'split_sections', 'split_proposals', 'split_review',
+  'split_requested', 'semantic_boundary_sources', 'split_sections', 'split_proposals', 'split_review',
 ]);
 
 function fixtureRequest(example, fixture) {

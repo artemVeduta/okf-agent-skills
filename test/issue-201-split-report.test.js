@@ -230,6 +230,45 @@ test('one reviewed source with three published outputs counts three concepts and
   assert.deepEqual(response.data.semantic_fidelity, { assessed: false });
 });
 
+test('non-alphabetical accepted output order stays canonical through report', (t) => {
+  const outputs = [output('zeta', 'Zeta'), output('alpha', 'Alpha')];
+  const value = fixture(t, outputs);
+  const publication = publish(value);
+  const response = report(value, publication);
+
+  assert.equal(publication.result, 'ok', JSON.stringify(publication));
+  assert.deepEqual(value.accepted.split_review[0].outputs.map((item) => item.output), ['zeta', 'alpha']);
+  assert.deepEqual(value.staged.filter((item) => item.kind !== 'index').map((item) => item.output), ['zeta', 'alpha']);
+  assert.deepEqual(publication.data.candidate_conformance.concepts.map((item) => item.concept), ['zeta', 'alpha']);
+  assert.equal(response.result, 'ok', JSON.stringify(response));
+  assert.deepEqual(response.data.reviewed_sources[0].planned_outputs.map((item) => item.output), ['zeta', 'alpha']);
+  assert.deepEqual(response.data.writes.published, ['zeta', 'alpha']);
+});
+
+test('an unsplit migration completes validation, publication, and report with one concept', (t) => {
+  const root = repo(t, [], true);
+  const sources = run('discover', root, {}).data.sources.filter((item) => item.path === UNSPLIT_SOURCE);
+  const accepted = run('migration-plan', root, { sources }).data;
+  const staged = assemble(root, accepted);
+  const validation = run('migration-validate', root, {
+    selected: [UNSPLIT_SOURCE], plan: accepted.plan, split_review: accepted.split_review,
+    semantic_review: { performed: false },
+  });
+  assert.equal(validation.data.agent_semantic_review.passed, true, JSON.stringify(validation));
+  assert.deepEqual(validation.data.semantic_review.sources, []);
+  assert.deepEqual(validation.data.semantic_review.candidates.map((item) => item.path), ['decisions/decision.md']);
+  const value = { root, bundle: 'okf', accepted, staged, validated: validation.data };
+  const publication = publish(value);
+  const response = report(value, publication);
+
+  assert.equal(publication.result, 'ok', JSON.stringify(publication));
+  assert.equal(response.result, 'ok', JSON.stringify(response));
+  assert.deepEqual(response.data.summary, {
+    sources_total: 1, concepts_created: 1, concepts_planned: 1, writes_failed: 0, writes_skipped: 0,
+  });
+  assert.deepEqual(response.data.reviewed_sources, []);
+});
+
 test('a keep-as-one report retains its accepted result and reason', (t) => {
   const reason = 'The source has one reader purpose.';
   const item = output('guide', 'Guide');

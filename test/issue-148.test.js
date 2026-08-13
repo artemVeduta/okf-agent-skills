@@ -76,7 +76,14 @@ test('a clean staged bundle validates: complete, publishable, no findings', (t) 
   assert.equal(response.data.publishable, true);
   assert.deepEqual(response.data.missing_disposition, []);
   assert.deepEqual(response.data.semantic_fidelity, { assessed: true });
-  assert.deepEqual(response.data.semantic_review, { human_assessed: true, candidates: [], sources: [] });
+  assert.deepEqual(response.data.semantic_review, {
+    human_assessed: true,
+    candidates: [{
+      path: 'decisions/a.md',
+      identity: `sha256:${require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root, '.okf-staging/okf/decisions/a.md'))).digest('hex')}`,
+    }],
+    sources: [],
+  });
   assert.deepEqual(response.findings, []);
 });
 
