@@ -88,6 +88,8 @@ function headingText(line) {
 }
 
 function sectionRow(index, kind, headingPath, lineStart, lineEnd, lines) {
+  const visible = lines.slice(lineStart - 1, lineEnd).filter((line) => line.trim() !== '');
+  const excerpt = (line) => (line || '').trim().slice(0, 120);
   return {
     index,
     kind,
@@ -95,6 +97,10 @@ function sectionRow(index, kind, headingPath, lineStart, lineEnd, lines) {
     line_start: lineStart,
     line_end: lineEnd,
     word_count: countWords(lines.slice(lineStart - 1, lineEnd).join('\n')),
+    boundary_excerpt: {
+      first: excerpt(visible[0]),
+      last: excerpt(visible[visible.length - 1]),
+    },
     disposition: null,
     output: null,
     output_order: null,

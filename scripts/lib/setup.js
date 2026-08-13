@@ -13,6 +13,7 @@ const discovery = require('./discovery');
 const migration = require('./migration');
 const words = require('./words');
 const sections = require('./sections');
+const splitProposal = require('./split-proposal');
 const partition = require('./partition');
 const assembly = require('./assembly');
 const lifecycle = require('./lifecycle');
@@ -784,6 +785,24 @@ function accountSplits(entries, payload, maxWords, gitRoot, services) {
   return { reviews, findings };
 }
 
+function applySplitProposals(reviews, payload, mapping) {
+  const supplied = new Map((payload.split_proposals || []).map((item) => [item.path, item]));
+  const authored = new Map(mapping.map((item) => [item.path, item.sources || []]));
+  const findings = [];
+  const enriched = reviews.map((review) => {
+    const proposal = supplied.get(review.path);
+    if (proposal === undefined) return { ...review, proposal: null };
+    const evaluated = splitProposal.evaluate(review, proposal, authored.get(review.path) || []);
+    findings.push(...evaluated.findings.map((item) => suiteFinding(item.code, { path: review.path, ...item.detail })));
+    return { ...review, proposal: evaluated.proposal };
+  });
+  const known = new Set(reviews.map((item) => item.path));
+  for (const source of supplied.keys()) {
+    if (!known.has(source)) findings.push(suiteFinding('SPLIT_PROPOSAL_SOURCE_UNKNOWN', { path: source }));
+  }
+  return { reviews: enriched, findings };
+}
+
 function validPlanSource(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
   if (typeof item.path !== 'string' || item.path === '') return false;
@@ -847,6 +866,9 @@ function executeMigrationPlan(request, services) {
   if (payload.split_sections !== undefined && !validSplitSections(payload.split_sections)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  if (payload.split_proposals !== undefined && !splitProposal.validPayload(payload.split_proposals)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
 
   const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers);
   if (outcome.invalid) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
@@ -862,6 +884,7 @@ function executeMigrationPlan(request, services) {
   const settingsReport = manifest.inspect(resolveManifestFile(payload, gitRoot, services), gitRoot, services);
 
   const split = accountSplits(outcome.entries, payload, settingsReport.settings.max_words_per_file, gitRoot, services);
+  const proposed = applySplitProposals(split.reviews, payload, outcome.mapping);
 
   const findings = [
     ...outcome.questions.map((q) => ({
@@ -898,6 +921,7 @@ function executeMigrationPlan(request, services) {
     // entry keeps its own `migrate` disposition and `data.plan.executable`
     // keeps its own meaning (every source has a disposition).
     ...split.findings,
+    ...proposed.findings,
   ];
   return respond(request, 'ok', {
     plan: { entries: outcome.entries, executable: outcome.executable, duplicates: outcome.duplicates },
@@ -906,7 +930,7 @@ function executeMigrationPlan(request, services) {
     references: outcome.references,
     settings: settingsReport.settings,
     settings_findings: settingsReport.settings_findings,
-    split_review: split.reviews,
+    split_review: proposed.reviews,
   }, findings);
 }
 

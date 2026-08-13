@@ -46,11 +46,12 @@ function isPlaceholder(value) {
 // `project_mode`, `manifest`, `workspace_id`, `mappings`, `answers`,
 // `package_root` (skills/okf-setup/SKILL.md, #146), `split_requested`
 // (skills/okf-setup/SKILL.md, #200/#201 task 1), and `split_sections`
-// (skills/okf-setup/SKILL.md, #200/#201 task 2); any other placeholder this
+// (skills/okf-setup/SKILL.md, #200/#201 task 2), and `split_proposals`
+// (skills/okf-setup/SKILL.md, #200/#201 task 3); any other placeholder this
 // fixture can't fill is a doc/runtime mismatch, not something to hide.
 const OPTIONAL_PLACEHOLDER_KEYS = new Set([
   'today', 'project_mode', 'manifest', 'workspace_id', 'mappings', 'answers', 'package_root',
-  'split_requested', 'split_sections',
+  'split_requested', 'split_sections', 'split_proposals',
 ]);
 
 function fixtureRequest(example, fixture) {
