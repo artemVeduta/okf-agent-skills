@@ -115,18 +115,19 @@ function headingAnchor(value) {
 
 function sourceHeadings(review, raw) {
   const lines = raw.split('\n').map((line) => line.replace(/\r$/, ''));
-  return review.sections.filter((section) => section.kind === 'heading').map((section) => {
+  return review.sections.filter((section) => section.kind === 'heading').flatMap((section) => {
     const match = (lines[section.line_start - 1] || '').match(/^[ \t]{0,3}(#{1,6})[ \t]*(.*)$/);
+    if (!match) return [];
     const headingText = section.heading_path[section.heading_path.length - 1];
-    return {
+    return [{
       line: section.line_start,
-      level: match ? match[1].length : null,
+      level: match[1].length,
       text: headingText,
       anchor: headingAnchor(headingText),
       line_start: section.line_start,
       line_end: section.line_end,
       output: section.output,
-    };
+    }];
   });
 }
 
@@ -156,34 +157,43 @@ function insideRoot(root, file) {
 }
 
 function buildInventory(sourcePath, raw, review, gitRoot, bundleRoot, services) {
-  const headings = sourceHeadings(review, raw);
-  const ordinary = fileLinks(sourcePath, raw).flatMap((item) => {
-    const targetPath = validation.bodyLinkPath(item.resource);
-    if (!targetPath) return [];
-    const target = mapping.resolveLinkTarget(sourcePath, targetPath);
-    const section = review.sections.find((candidate) => candidate.line_start <= item.line && item.line <= candidate.line_end);
-    return section && section.output !== null ? [{ ...item, target, output: section.output }] : [];
-  });
+  const source = raw === null ? '' : raw;
+  const headings = sourceHeadings(review, source);
+  const ordinary = [];
   const whole_source = [];
   const heading_anchor = [];
-  const excluded = new Set(['.git', 'node_modules', '.okf-staging']);
-  const listing = services.listFiles(gitRoot, (dir) => dir === bundleRoot || excluded.has(path.basename(dir)));
-  for (const file of listing.files) {
-    if (!file.endsWith('.md') || !insideRoot(gitRoot, file)) continue;
-    const from = path.relative(gitRoot, file).split(path.sep).join('/');
-    if (from === sourcePath) continue;
-    let content;
-    try { content = services.readFile(file); } catch { continue; }
+  const findings = [];
+
+  function classify(from, content) {
     for (const item of fileLinks(from, content)) {
       const targetPath = validation.bodyLinkPath(item.resource);
-      if (!targetPath || mapping.resolveLinkTarget(from, targetPath) !== sourcePath) continue;
+      const local = from === sourcePath && item.resource.startsWith('#');
+      const targetsSource = local || (targetPath && mapping.resolveLinkTarget(from, targetPath) === sourcePath);
+      if (!targetsSource) {
+        if (from !== sourcePath || !targetPath) continue;
+        const section = review.sections.find((candidate) => candidate.line_start <= item.line && item.line <= candidate.line_end);
+        if (section && section.output !== null) {
+          ordinary.push({ ...item, target: mapping.resolveLinkTarget(from, targetPath), output: section.output });
+        }
+        continue;
+      }
       const sourceAnchor = fragment(item.resource);
       if (sourceAnchor === null) {
         whole_source.push(item);
         continue;
       }
       const matches = headings.filter((heading) => heading.anchor === sourceAnchor);
-      const owner = matches.length === 1 ? matches[0] : null;
+      if (matches.length > 1) {
+        const candidate_lines = matches.map((heading) => heading.line);
+        heading_anchor.push({
+          ...item, source_anchor: sourceAnchor, line_start: null, line_end: null, candidate_lines, output: null,
+        });
+        findings.push(finding('SPLIT_HEADING_ANCHOR_AMBIGUOUS', {
+          ...item, source_anchor: sourceAnchor, candidate_lines,
+        }));
+        continue;
+      }
+      const owner = matches[0];
       if (!owner || owner.output === null) continue;
       heading_anchor.push({
         ...item,
@@ -194,7 +204,36 @@ function buildInventory(sourcePath, raw, review, gitRoot, bundleRoot, services) 
       });
     }
   }
-  return { headings, routes: { whole_source, heading_anchor, ordinary } };
+
+  if (raw === null) findings.push(finding('SPLIT_PROPOSAL_ROUTE_INVENTORY_INCOMPLETE', {
+    reason: 'read_failed', from: sourcePath,
+  }));
+  else classify(sourcePath, source);
+  const excluded = new Set(['.git', 'node_modules', '.okf-staging']);
+  const listing = services.listFiles(gitRoot, (dir) => excluded.has(path.basename(dir)));
+  if (!listing.complete) findings.push(finding('SPLIT_PROPOSAL_ROUTE_INVENTORY_INCOMPLETE', { reason: 'walk_incomplete' }));
+  for (const file of listing.files) {
+    if (!file.endsWith('.md') || !insideRoot(gitRoot, file)) continue;
+    const from = path.relative(gitRoot, file).split(path.sep).join('/');
+    if (from === sourcePath) continue;
+    let content;
+    try {
+      content = services.readFile(file);
+    } catch {
+      findings.push(finding('SPLIT_PROPOSAL_ROUTE_INVENTORY_INCOMPLETE', { reason: 'read_failed', from }));
+      continue;
+    }
+    classify(from, content);
+  }
+  const byIdentity = (left, right) => {
+    const leftKey = routeKey('', left);
+    const rightKey = routeKey('', right);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  };
+  whole_source.sort(byIdentity);
+  heading_anchor.sort(byIdentity);
+  ordinary.sort(byIdentity);
+  return { headings, routes: { whole_source, heading_anchor, ordinary }, findings };
 }
 
 function targetFindings(supplied) {
@@ -374,7 +413,7 @@ function routeFindings(supplied, inventory) {
   const anchors = supplied.outputs.flatMap((item) => item.anchor_routes.map((route) => ({ ...route, output: item.output })));
   findings.push(...compareRoutes('whole_source', inventory.routes.whole_source, whole));
   findings.push(...compareRoutes('ordinary', inventory.routes.ordinary, ordinary));
-  findings.push(...compareRoutes('heading_anchor', inventory.routes.heading_anchor, anchors));
+  findings.push(...compareRoutes('heading_anchor', inventory.routes.heading_anchor.filter((item) => item.output !== null), anchors));
 
   for (const route of whole) {
     if (route.target === null) findings.push(finding('SPLIT_WHOLE_SOURCE_LINK_AMBIGUOUS', { from: route.from }));
@@ -428,9 +467,16 @@ function tree(outputs) {
 function knownRoutes(inventory) {
   return {
     whole_source: inventory.routes.whole_source.map(({ from, line, occurrence, resource }) => ({ from, line, occurrence, resource })),
-    heading_anchor: inventory.routes.heading_anchor.map(({
-      from, line, occurrence, resource, source_anchor, line_start, line_end,
-    }) => ({ from, line, occurrence, resource, source_anchor, line_start, line_end })),
+    heading_anchor: inventory.routes.heading_anchor.map((item) => ({
+      from: item.from,
+      line: item.line,
+      occurrence: item.occurrence,
+      resource: item.resource,
+      source_anchor: item.source_anchor,
+      line_start: item.line_start,
+      line_end: item.line_end,
+      ...(item.candidate_lines ? { candidate_lines: item.candidate_lines } : {}),
+    })),
     ordinary: inventory.routes.ordinary.map(({ from, line, occurrence, resource }) => ({ from, line, occurrence, resource })),
   };
 }
@@ -464,7 +510,7 @@ function responseProposal(supplied, authoredSources, inventory, findings) {
 }
 
 function evaluate(review, supplied, authoredSources, inventory) {
-  const findings = [];
+  const findings = [...inventory.findings];
   if (review.accounting_status !== 'complete') {
     findings.push(finding('SPLIT_PROPOSAL_ACCOUNTING_INCOMPLETE', { accounting_status: review.accounting_status }));
   }
@@ -485,43 +531,33 @@ function evaluate(review, supplied, authoredSources, inventory) {
   return { proposal: responseProposal(supplied, authoredSources, inventory, findings), findings };
 }
 
-function initialGroup(conceptId, title) {
-  if (!text(conceptId)) {
-    return {
-      key: null, purpose: null, index_entry: { path: null, title: null },
-      child_entry: { concept_id: null, path: null, title, order: 1 },
-    };
-  }
-  const directory = path.posix.dirname(`${conceptId}.md`);
-  if (directory === '.') return null;
+function initialGroup() {
   return {
-    key: directory,
+    key: null,
     purpose: null,
-    index_entry: { path: `${directory}/index.md`, title: null },
-    child_entry: { concept_id: conceptId, path: `${conceptId}.md`, title, order: 1 },
+    index_entry: { path: null, title: null },
+    child_entry: { concept_id: null, path: null, title: null, order: null },
   };
 }
 
 function derive(review, mapped, authoredSources, inventory) {
   const one = review.outputs.length === 1;
   const outputs = review.outputs.map((accounted) => {
-    const headings = inventory.headings.filter((item) => item.output === accounted.output);
     const conceptId = one ? mapped.concept : null;
-    const title = headings[0] ? headings[0].text : null;
     return {
       output: accounted.output,
       concept_id: conceptId,
       path: conceptId === null ? null : `${conceptId}.md`,
       type: one ? mapped.type : null,
-      title,
-      heading_outline: headings.map((item) => ({ level: item.level, text: item.text })),
-      reader_purpose_group: initialGroup(conceptId, title),
+      title: null,
+      heading_outline: [],
+      reader_purpose_group: initialGroup(),
       provenance_assignments: authoredSources.map((source, source_index) => ({ source_index, support: 'unclear', source })),
       link_routes: inventory.routes.ordinary.filter((item) => item.output === accounted.output)
         .map(({ from, line, occurrence, resource, target }) => ({ from, line, occurrence, resource, target })),
       anchor_routes: inventory.routes.heading_anchor.filter((item) => item.output === accounted.output)
         .map(({ from, line, occurrence, resource, source_anchor, line_start, line_end }) => ({
-          from, line, occurrence, resource, source_anchor, line_start, line_end, target_anchor: source_anchor,
+          from, line, occurrence, resource, source_anchor, line_start, line_end, target_anchor: null,
         })),
     };
   });
@@ -540,19 +576,18 @@ function derive(review, mapped, authoredSources, inventory) {
     known_headings: inventory.headings,
     tree: tree(outputs),
   };
-  const findings = [];
+  const findings = [...inventory.findings];
   const unresolved = (field, outputKey) => findings.push(finding('SPLIT_PROPOSAL_VALUE_UNRESOLVED', {
     field, ...(outputKey === undefined ? {} : { output: outputKey }),
   }));
   if (one) unresolved('keep_as_one_reason');
   for (const item of outputs) {
     for (const field of ['concept_id', 'path', 'type', 'title']) if (!text(item[field])) unresolved(field, item.output);
-    if (item.reader_purpose_group !== null) {
-      if (!text(item.reader_purpose_group.key)) unresolved('reader_purpose_group.key', item.output);
-      if (!text(item.reader_purpose_group.purpose)) unresolved('reader_purpose_group.purpose', item.output);
-      if (!text(item.reader_purpose_group.index_entry.title)) unresolved('reader_purpose_group.index_entry.title', item.output);
-    }
+    unresolved('reader_purpose_group', item.output);
     if (item.heading_outline.length === 0) unresolved('heading_outline', item.output);
+    for (const route of item.anchor_routes) {
+      unresolved('anchor_routes.target_anchor', item.output);
+    }
     for (const assignment of item.provenance_assignments) {
       findings.push(finding('SPLIT_PROVENANCE_ASSIGNMENT_UNCLEAR', { output: item.output, source_index: assignment.source_index }));
     }

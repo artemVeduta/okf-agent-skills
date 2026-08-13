@@ -245,9 +245,16 @@ test('complete accounting derives the first complete refused proposal view witho
   assert.equal(proposed.result, 'keep_as_one');
   assert.equal(proposed.outputs[0].output, 'guide');
   assert.equal(proposed.outputs[0].concept_id, 'docs/guide');
-  assert.deepEqual(proposed.outputs[0].heading_outline, [
-    { level: 1, text: 'Install' }, { level: 2, text: 'Operate' },
-  ]);
+  assert.equal(proposed.outputs[0].path, 'docs/guide.md');
+  assert.equal(proposed.outputs[0].type, 'Note');
+  assert.equal(proposed.outputs[0].title, null);
+  assert.deepEqual(proposed.outputs[0].heading_outline, []);
+  assert.deepEqual(proposed.outputs[0].reader_purpose_group, {
+    key: null,
+    purpose: null,
+    index_entry: { path: null, title: null },
+    child_entry: { concept_id: null, path: null, title: null, order: null },
+  });
   assert.deepEqual(proposed.known_routes, {
     whole_source: [{ from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md' }],
     heading_anchor: [{
@@ -256,7 +263,145 @@ test('complete accounting derives the first complete refused proposal view witho
     }],
     ordinary: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md' }],
   });
-  assert.ok(splitFindings(response).some((item) => item.code === 'SPLIT_PROPOSAL_VALUE_UNRESOLVED'));
+  assert.deepEqual(proposed.tree, { root: [], groups: [], unresolved: ['guide'] });
+  assert.deepEqual(new Set(splitFindings(response)
+    .filter((item) => item.code === 'SPLIT_PROPOSAL_VALUE_UNRESOLVED')
+    .map((item) => item.detail.field)), new Set([
+    'keep_as_one_reason', 'title', 'heading_outline', 'reader_purpose_group', 'anchor_routes.target_anchor',
+  ]));
+});
+
+test('route inventory includes local anchors and links from the bundle root', (t) => {
+  const root = repo(t);
+  fs.mkdirSync(path.join(root, 'okf'));
+  fs.writeFileSync(path.join(root, 'okf/index.md'), '[Bundle guide](../docs/guide.md).\n');
+  writeManifest(root, 'okf');
+  fs.writeFileSync(path.join(root, SOURCE), CONTENT.replace(
+    'Install the [tool](other.md).',
+    'Install the [tool](other.md) and see [operations](#operate).',
+  ));
+
+  const response = run(request(root, { split_sections: accounting(['guide']) }));
+
+  assert.deepEqual(review(response).proposal.known_routes, {
+    whole_source: [
+      { from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md' },
+      { from: 'okf/index.md', line: 1, occurrence: 1, resource: '../docs/guide.md' },
+    ],
+    heading_anchor: [
+      {
+        from: 'README.md', line: 1, occurrence: 2, resource: 'docs/guide.md#operate',
+        source_anchor: 'operate', line_start: 10, line_end: 12,
+      },
+      {
+        from: SOURCE, line: 8, occurrence: 2, resource: '#operate',
+        source_anchor: 'operate', line_start: 10, line_end: 12,
+      },
+    ],
+    ordinary: [{ from: SOURCE, line: 8, occurrence: 1, resource: 'other.md' }],
+  });
+});
+
+test('an incomplete route inventory walk blocks the proposal with one exact finding', (t) => {
+  const root = repo(t);
+  fs.symlinkSync(path.join(root, 'README.md'), path.join(root, 'linked.md'));
+
+  const response = run(request(root, { split_sections: accounting(['guide']) }));
+
+  assert.equal(review(response).proposal.status, 'refused');
+  assert.deepEqual(splitFindings(response).filter((item) => item.code === 'SPLIT_PROPOSAL_ROUTE_INVENTORY_INCOMPLETE'), [{
+    code: 'SPLIT_PROPOSAL_ROUTE_INVENTORY_INCOMPLETE',
+    origin: 'suite',
+    severity: 'error',
+    blocks: true,
+    detail: { path: SOURCE, reason: 'walk_incomplete' },
+  }]);
+});
+
+test('an unreadable Markdown file blocks route inventory instead of being skipped', (t) => {
+  const root = repo(t);
+  const unreadable = path.join(root, 'inbound.md');
+  fs.writeFileSync(unreadable, '[Guide](docs/guide.md).\n');
+  const boundRequest = request(root, { split_sections: accounting(['guide']) });
+  fs.chmodSync(unreadable, 0o000);
+  let response;
+  try {
+    response = run(boundRequest);
+  } finally {
+    fs.chmodSync(unreadable, 0o644);
+  }
+
+  assert.deepEqual(splitFindings(response).filter((item) => item.code === 'SPLIT_PROPOSAL_ROUTE_INVENTORY_INCOMPLETE'), [{
+    code: 'SPLIT_PROPOSAL_ROUTE_INVENTORY_INCOMPLETE',
+    origin: 'suite',
+    severity: 'error',
+    blocks: true,
+    detail: { path: SOURCE, reason: 'read_failed', from: 'inbound.md' },
+  }]);
+});
+
+test('duplicate source heading anchors stay visible and block ambiguous routing', (t) => {
+  const root = repo(t);
+  const duplicate = [
+    '---', 'type: Note', '---', '# Operate', '', 'First.', '', '# Operate', '', 'Second.', '',
+  ].join('\n');
+  fs.writeFileSync(path.join(root, SOURCE), duplicate);
+  fs.writeFileSync(path.join(root, 'README.md'), '[Operations](docs/guide.md#operate).\n');
+  const splitSections = [{
+    path: SOURCE,
+    sections: [
+      { line_start: 1, line_end: 3, disposition: 'residue' },
+      { line_start: 4, line_end: 7, disposition: 'assigned', output: 'guide' },
+      { line_start: 8, line_end: 10, disposition: 'assigned', output: 'guide' },
+    ],
+  }];
+
+  const response = run(request(root, { split_sections: splitSections }));
+  const proposed = review(response).proposal;
+
+  assert.deepEqual(proposed.known_headings.map((item) => ({ line: item.line, text: item.text, anchor: item.anchor })), [
+    { line: 4, text: 'Operate', anchor: 'operate' },
+    { line: 8, text: 'Operate', anchor: 'operate' },
+  ]);
+  assert.deepEqual(proposed.known_routes.heading_anchor, [{
+    from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md#operate',
+    source_anchor: 'operate', line_start: null, line_end: null, candidate_lines: [4, 8],
+  }]);
+  assert.deepEqual(splitFindings(response).filter((item) => item.code === 'SPLIT_HEADING_ANCHOR_AMBIGUOUS'), [{
+    code: 'SPLIT_HEADING_ANCHOR_AMBIGUOUS',
+    origin: 'suite',
+    severity: 'error',
+    blocks: true,
+    detail: {
+      path: SOURCE,
+      from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md#operate',
+      source_anchor: 'operate', candidate_lines: [4, 8],
+    },
+  }]);
+});
+
+test('a block-boundary fragment inside a heading does not invent a second heading row', (t) => {
+  const root = repo(t);
+  const divided = ['---', 'type: Note', '---', '# Operate', '', 'First paragraph.', '', 'Second paragraph.'].join('\n');
+  fs.writeFileSync(path.join(root, SOURCE), divided);
+  fs.writeFileSync(path.join(root, 'README.md'), 'No links.\n');
+  const splitSections = [{
+    path: SOURCE,
+    sections: [
+      { line_start: 1, line_end: 3, disposition: 'residue' },
+      { line_start: 4, line_end: 7, disposition: 'assigned', output: 'guide' },
+      { line_start: 8, line_end: 8, disposition: 'assigned', output: 'guide' },
+    ],
+  }];
+
+  const response = run(request(root, { split_sections: splitSections }));
+
+  assert.deepEqual(review(response).sections.slice(1).map((item) => [item.kind, item.heading_path]), [
+    ['heading', ['Operate']], ['heading', ['Operate']],
+  ]);
+  assert.deepEqual(review(response).proposal.known_headings, [{
+    line: 4, level: 1, text: 'Operate', anchor: 'operate', line_start: 4, line_end: 7, output: 'guide',
+  }]);
 });
 
 test('missing, extra, and duplicate routes refuse acceptance against the known route inventory', (t) => {

@@ -792,7 +792,7 @@ function applySplitProposals(reviews, payload, mapped, entries, gitRoot, bundleR
   const records = reviews.map((review) => {
     const mappedSource = mappings.get(review.path);
     let raw;
-    try { raw = services.readFile(path.join(gitRoot, review.path)); } catch { raw = ''; }
+    try { raw = services.readFile(path.join(gitRoot, review.path)); } catch { raw = null; }
     const inventory = splitProposal.buildInventory(review.path, raw, review, gitRoot, bundleRoot, services);
     const proposal = supplied.get(review.path);
     const evaluated = proposal === undefined && review.accounting_status === 'complete'
