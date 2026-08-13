@@ -435,3 +435,165 @@ Self-review found and fixed these follow-up issues:
   independent evidence is the suite-owned on-disk receipt.
 
 No open Critical or Important fix-round finding remains.
+
+---
+
+## Fix report: round 2 of 5
+
+### Result
+
+This round closes the four concrete receipt boundary defects. It adds no trust
+mechanism and makes no authenticity claim.
+
+### Receipt path safety
+
+Task 7 now applies Task 6's `safePath` lstat walk to the receipt and all of its
+ancestors, then resolves the existing Git root and receipt with `realpath` and
+requires real containment. A symlinked receipt file, `.okf-staging` ancestor, or
+bundle ancestor returns `REPORT_ARTIFACT_MALFORMED` with
+`artifact: "publication_receipt"` and `reason: "symlink"`.
+
+The expected receipt path is now derived from normalized `payload.bundle`:
+
+```text
+.okf-staging/<normalized payload.bundle>/.okf-publication-receipt.json
+```
+
+This permits a nested bundle such as `docs/bundle` and still requires the exact
+fixed basename and staging convention. An invalid or different path uses
+`reason: "path"`.
+
+### Nested receipt rows
+
+Every `checked_candidates` value is now checked as a non-null plain object before
+the runtime reads `kind`. Null, strings, arrays, bad fields, invalid relative
+paths, and invalid identities return `REPORT_ARTIFACT_MALFORMED` with
+`reason: "content"`; they do not cause `RUNTIME_FAILURE`.
+
+### Receipt I/O boundary
+
+Receipt removal now runs inside the same owned failure boundary as receipt
+writing and runs before the first publication dispatch. A remove or directory
+error returns:
+
+```text
+result: failed/incomplete
+data.code: PUBLICATION_RECEIPT_WRITE_FAILED
+finding: PUBLICATION_RECEIPT_WRITE_FAILED
+```
+
+No publication write is attempted and no `data.publication_receipt` is returned.
+
+### Authenticity concern: BLOCKED
+
+There is no legitimate caller-inaccessible authenticity seam in the current
+architecture:
+
+- every wrapper and delegated wrapper runs with the same workspace permissions
+  available to the caller;
+- the Task 6 receipt, staging files, bundle files, and request artifacts are all
+  in that writable workspace;
+- `okf-delegation/1` receipts are plain JSON and have no opaque harness token;
+- the runtime has no privileged process, signer, protected key, external store,
+  or other authority unavailable to a caller with full workspace write access;
+- the project requires a stateless zero-dependency request/response runtime.
+
+A caller with full workspace write access can rewrite both the receipt file and
+the matching request JSON. No local hash can distinguish that coherent rewrite.
+Adding a machine-local secret, keychain, remote service, caller-stored hash, or
+new signing infrastructure would be a new trust architecture and is explicitly
+out of scope.
+
+The retained receipt is therefore a consistency and accidental-tamper check,
+not an authenticity proof. The original Task 7 brief required exact prior
+response artifacts and strict mismatch refusal. It did not require adversarial
+authenticity against a caller who controls all workspace bytes. That stronger
+property is BLOCKED until the system supplies a genuinely privileged evidence
+authority.
+
+### Changed files
+
+- `scripts/lib/publication.js`: existing-path lstat and realpath safety reuse.
+- `scripts/lib/setup.js`: normalized nested receipt paths, symlink refusal,
+  null-safe nested validation, and receipt removal failure handling.
+- `skills/okf-setup/SKILL.md`: exact path, symlink, consistency, and authenticity
+  limits.
+- `test/issue-201-split-report.test.js`: receipt/ancestor symlinks, nested bundle,
+  and null/nonobject receipt rows.
+- `test/issue-201-publish-precheck.test.js`: injected receipt removal failure.
+- `.superpowers/sdd/issue-201/task-7-report.md`: this round-2 report.
+
+The unrelated `.claude/worktrees/issue-153-parent-dir` path was not modified or
+staged.
+
+### Red evidence
+
+```text
+node --test "test/issue-201-split-report.test.js" "test/issue-201-publish-precheck.test.js"
+tests 37, pass 33, fail 4
+```
+
+The failures were the unhandled remove exception, accepted receipt symlink,
+rejected valid nested bundle fixture, and null receipt-row runtime failure.
+
+### Green evidence
+
+```text
+node --test "test/issue-201-split-report.test.js" "test/issue-201-publish-precheck.test.js"
+tests 37, pass 37, fail 0
+```
+
+Final focused, full-suite, and self-review evidence follows after verification.
+
+Requested focused report run:
+
+```text
+node --test "test/issue-201-split-report.test.js" "test/issue-136.test.js"
+tests 33, pass 33, fail 0
+```
+
+Requested Task 6 run:
+
+```text
+node --test "test/issue-201-publish-precheck.test.js" "test/issue-149.test.js" "test/issue-189.test.js"
+tests 34, pass 34, fail 0
+```
+
+Documentation request seam:
+
+```text
+node --test "test/issue-120-doc-executability.test.js"
+tests 18, pass 18, fail 0
+```
+
+Final complete suite:
+
+```text
+node --test "test/*.test.js"
+tests 642, pass 642, fail 0, skipped 0, todo 0
+duration_ms 54441.204083
+```
+
+Repository whitespace check:
+
+```text
+git diff --check -- . ':!.claude/worktrees/issue-153-parent-dir'
+exit 0
+```
+
+### Self-review
+
+Self-review confirmed:
+
+- expected receipt paths come from the same normalized bundle value and staging
+  convention that Task 6 uses, including nested bundle paths;
+- the existing-path check rejects a symlink at the receipt, bundle staging root,
+  or `.okf-staging` ancestor and also proves realpath containment in the Git root;
+- nested receipt row validation tests object shape before reading `kind`;
+- receipt removal happens before dispatch and inside the receipt I/O failure
+  boundary, so a removal failure cannot publish or return a receipt;
+- all receipt language describes consistency and accidental-tamper detection,
+  not authenticity.
+
+No open concrete round-2 finding remains. Adversarial authenticity remains the
+explicit BLOCKED architectural concern above.

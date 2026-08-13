@@ -766,3 +766,28 @@ test('symlinked staging ancestors and files refuse with zero writes', (t) => {
     assert.deepEqual(snapshot(path.join(value.root, 'okf')), before);
   }
 });
+
+test('a receipt removal failure is reported without a runtime failure or reportable receipt', (t) => {
+  const value = fixture(t);
+  const receiptFile = path.join(value.root, '.okf-staging', 'okf', '.okf-publication-receipt.json');
+  const response = runtime.run('okf-setup', {
+    protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'publish',
+    payload: {
+      cwd: value.root, task_kind: 'feature work', staged: value.staged,
+      plan: value.plan.plan, mapping: value.plan.mapping,
+      split_review: value.plan.split_review, semantic_review: value.semantic_review,
+    },
+  }, {
+    ...defaultServices,
+    remove(file) {
+      if (path.resolve(file) === receiptFile) throw Object.assign(new Error('receipt directory unavailable'), { code: 'EACCES' });
+      return defaultServices.remove(file);
+    },
+  });
+
+  assert.equal(response.result, 'failed/incomplete');
+  assert.equal(response.data.code, 'PUBLICATION_RECEIPT_WRITE_FAILED');
+  assert.equal(response.data.publication_receipt, undefined);
+  assert.equal(response.findings[0].code, 'PUBLICATION_RECEIPT_WRITE_FAILED');
+  assert.equal(fs.existsSync(path.join(value.root, 'okf/install.md')), false);
+});

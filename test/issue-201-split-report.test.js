@@ -15,13 +15,13 @@ function run(operation, root, payload) {
   });
 }
 
-function repo(t, headings, withUnreviewed = false) {
+function repo(t, headings, withUnreviewed = false, bundle = 'okf') {
   const root = temporaryRoot(t, 'okf-201-split-report-');
   fs.mkdirSync(path.join(root, '.git'));
-  writeManifest(root, 'okf');
-  fs.mkdirSync(path.join(root, 'okf'));
-  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
-  fs.mkdirSync(path.join(root, 'docs'));
+  writeManifest(root, bundle);
+  fs.mkdirSync(path.join(root, bundle), { recursive: true });
+  fs.writeFileSync(path.join(root, bundle, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
+  fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
   fs.writeFileSync(path.join(root, SOURCE), [
     '---', 'type: Playbook', '---',
     ...headings.flatMap((heading) => [`# ${heading}`, '', `${heading} instructions.`]),
@@ -53,9 +53,9 @@ function output(name, title, group = null) {
   };
 }
 
-function plan(root, outputs, result, keepReason = null, withUnreviewed = false) {
+function plan(root, outputs, result, keepReason = null, withUnreviewed = false, bundle = 'okf') {
   const acceptedPaths = withUnreviewed ? [SOURCE, UNSPLIT_SOURCE] : [SOURCE];
-  const sources = run('discover', root, {}).data.sources.filter((item) => acceptedPaths.includes(item.path));
+  const sources = run('discover', root, { bundle }).data.sources.filter((item) => acceptedPaths.includes(item.path));
   const sections = [{ line_start: 1, line_end: 3, disposition: 'residue' }];
   for (let index = 0; index < outputs.length; index++) {
     const lineStart = 4 + (index * 3);
@@ -67,6 +67,7 @@ function plan(root, outputs, result, keepReason = null, withUnreviewed = false) 
     });
   }
   const response = run('migration-plan', root, {
+    bundle,
     sources,
     split_requested: [SOURCE],
     split_sections: [{ path: SOURCE, sections }],
@@ -85,8 +86,9 @@ function plan(root, outputs, result, keepReason = null, withUnreviewed = false) 
   return response.data;
 }
 
-function assemble(root, accepted) {
+function assemble(root, accepted, bundle = 'okf') {
   const partitioned = run('partition', root, {
+    bundle,
     plan: accepted.plan,
     mapping: accepted.mapping,
     references: accepted.references,
@@ -115,6 +117,7 @@ function assemble(root, accepted) {
   fs.mkdirSync(path.dirname(path.join(root, shardFile)), { recursive: true });
   fs.writeFileSync(path.join(root, shardFile), JSON.stringify(shard));
   const response = run('assemble', root, {
+    bundle,
     partition: { shards: partitioned.data.shards, cross_shard_links: partitioned.data.cross_shard_links },
     shards: [{ shard: shard.shard, path: shardFile }],
   });
@@ -126,9 +129,9 @@ function identity(bytes) {
   return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
 }
 
-function semanticInput(root, accepted) {
+function semanticInput(root, accepted, bundle = 'okf') {
   const review = accepted.split_review.find((item) => item.path === SOURCE);
-  const stagingRoot = path.join(root, '.okf-staging', 'okf');
+  const stagingRoot = path.join(root, '.okf-staging', bundle);
   const candidates = fs.readdirSync(stagingRoot, { recursive: true, withFileTypes: true })
     .filter((item) => item.isFile() && item.name.endsWith('.md'))
     .map((item) => {
@@ -150,22 +153,24 @@ function semanticInput(root, accepted) {
   };
 }
 
-function fixture(t, outputs, result = 'split', keepReason = null, withUnreviewed = false) {
-  const root = repo(t, outputs.map((item) => item.title), withUnreviewed);
-  const accepted = plan(root, outputs, result, keepReason, withUnreviewed);
-  const staged = assemble(root, accepted);
+function fixture(t, outputs, result = 'split', keepReason = null, withUnreviewed = false, bundle = 'okf') {
+  const root = repo(t, outputs.map((item) => item.title), withUnreviewed, bundle);
+  const accepted = plan(root, outputs, result, keepReason, withUnreviewed, bundle);
+  const staged = assemble(root, accepted, bundle);
   const validated = run('migration-validate', root, {
+    bundle,
     selected: [SOURCE],
     plan: accepted.plan,
     split_review: accepted.split_review,
-    semantic_review: semanticInput(root, accepted),
+    semantic_review: semanticInput(root, accepted, bundle),
   });
   assert.equal(validated.data.publishable, true, JSON.stringify(validated));
-  return { root, accepted, staged, validated: validated.data };
+  return { root, bundle, accepted, staged, validated: validated.data };
 }
 
 function publish(value) {
   return run('publish', value.root, {
+    bundle: value.bundle,
     task_kind: 'feature work',
     staged: value.staged,
     plan: value.accepted.plan,
@@ -177,6 +182,7 @@ function publish(value) {
 
 function report(value, publication) {
   return run('report', value.root, {
+    bundle: value.bundle,
     migration: {
       settings: value.accepted.settings,
       plan: value.accepted.plan,
@@ -419,5 +425,64 @@ test('null or string unreviewed section and output arrays block without a runtim
     assert.equal(response.result, 'blocked', `${field}:${bad}`);
     assert.notEqual(response.result, 'failed/incomplete', `${field}:${bad}`);
     assert.equal(response.findings[0].code, 'REPORT_ARTIFACT_MALFORMED', `${field}:${bad}`);
+  }
+});
+
+test('report refuses a symlinked receipt file or receipt ancestor', (t) => {
+  for (const kind of ['receipt', 'staging', 'bundle']) {
+    const value = fixture(t, [output('guide', 'Guide')], 'keep_as_one', 'One purpose.');
+    const publication = publish(value);
+    const receipt = path.join(value.root, publication.data.publication_receipt.path);
+    if (kind === 'receipt') {
+      const target = `${receipt}.real`;
+      fs.renameSync(receipt, target);
+      fs.symlinkSync(target, receipt);
+    } else if (kind === 'staging') {
+      const ancestor = path.join(value.root, '.okf-staging');
+      const target = path.join(value.root, '.okf-staging-real');
+      fs.renameSync(ancestor, target);
+      fs.symlinkSync(target, ancestor);
+    } else {
+      const ancestor = path.join(value.root, '.okf-staging', value.bundle);
+      const target = path.join(value.root, '.okf-staging', 'real-bundle');
+      fs.renameSync(ancestor, target);
+      fs.symlinkSync(target, ancestor);
+    }
+
+    const response = report(value, publication);
+
+    assert.equal(response.result, 'blocked', kind);
+    assert.equal(response.findings[0].code, 'REPORT_ARTIFACT_MALFORMED', kind);
+    assert.deepEqual(response.findings[0].detail, { artifact: 'publication_receipt', reason: 'symlink' }, kind);
+  }
+});
+
+test('a normalized nested bundle uses its exact nested staging receipt path', (t) => {
+  const value = fixture(t, [output('guide', 'Guide')], 'keep_as_one', 'One purpose.', false, 'docs/bundle');
+  const publication = publish(value);
+  const response = report(value, publication);
+
+  assert.equal(publication.data.publication_receipt.path, '.okf-staging/docs/bundle/.okf-publication-receipt.json');
+  assert.equal(response.result, 'ok', JSON.stringify(response));
+  assert.equal(response.data.summary.concepts_created, 1);
+});
+
+test('null and nonobject checked candidate receipt rows block without a runtime failure', (t) => {
+  const value = fixture(t, [output('guide', 'Guide')], 'keep_as_one', 'One purpose.');
+  const publication = publish(value);
+  const receiptFile = path.join(value.root, publication.data.publication_receipt.path);
+  const original = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
+  for (const bad of [null, 'bad']) {
+    const receipt = structuredClone(original);
+    receipt.checked_candidates = [bad];
+    fs.writeFileSync(receiptFile, `${JSON.stringify(receipt)}\n`);
+    publication.data.publication_receipt.identity = identity(fs.readFileSync(receiptFile));
+
+    const response = report(value, publication);
+
+    assert.equal(response.result, 'blocked', String(bad));
+    assert.notEqual(response.result, 'failed/incomplete', String(bad));
+    assert.equal(response.findings[0].code, 'REPORT_ARTIFACT_MALFORMED', String(bad));
+    assert.deepEqual(response.findings[0].detail, { artifact: 'publication_receipt', reason: 'content' }, String(bad));
   }
 });

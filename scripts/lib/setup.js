@@ -624,11 +624,16 @@ function validateReportPublication(value) {
 
 function publicationReceipt(request, migrationReport, publicationResult, gitRoot, services) {
   const receiptPath = migrationReport.publication.publication_receipt.path;
-  const parts = receiptPath.split('/');
+  const bundleName = request.payload.bundle === undefined ? 'okf' : request.payload.bundle;
+  const normalizedBundle = monorepo.normalizeRelative(bundleName);
+  const expectedPath = normalizedBundle === null
+    ? null : path.posix.join('.okf-staging', normalizedBundle, publication.RECEIPT_FILE);
   const receiptFile = path.resolve(gitRoot, receiptPath);
-  if (parts.length !== 3 || parts[0] !== '.okf-staging' || parts[2] !== publication.RECEIPT_FILE
-    || !inside(gitRoot, receiptFile)) {
+  if (expectedPath === null || receiptPath !== expectedPath || !inside(gitRoot, receiptFile)) {
     return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'publication_receipt', 'path') };
+  }
+  if (!publication.safeExistingPath(gitRoot, receiptFile, services)) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'publication_receipt', 'symlink') };
   }
   let bytes;
   try { bytes = services.readBuffer(receiptFile); } catch {
@@ -647,6 +652,7 @@ function publicationReceipt(request, migrationReport, publicationResult, gitRoot
     || Object.values(receipt.artifacts).some((item) => !/^sha256:[0-9a-f]{64}$/.test(item))
     || !Array.isArray(receipt.checked_candidates)
     || receipt.checked_candidates.some((item) => {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) return true;
       if (item.kind === 'concept') {
         return !exactFields(item, ['kind', 'source', 'concept', 'path', 'type', 'identity'])
           || monorepo.normalizeRelative(item.source) !== item.source
@@ -2041,7 +2047,11 @@ function executePublish(request, services) {
 
   const results = [];
   const receiptFile = path.join(stagingRoot, publication.RECEIPT_FILE);
-  services.remove(receiptFile);
+  try { services.remove(receiptFile); } catch (error) {
+    return respond(request, 'failed/incomplete', { code: 'PUBLICATION_RECEIPT_WRITE_FAILED' }, [
+      suiteFinding('PUBLICATION_RECEIPT_WRITE_FAILED', { reason: writeFailureReason(error) }),
+    ]);
+  }
   for (const item of checked.checked) {
     const target = path.join(bundleRoot, item.target);
     if (!publication.safePath(bundleRoot, target, services)) {

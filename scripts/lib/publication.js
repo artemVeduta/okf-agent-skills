@@ -199,6 +199,17 @@ function safePath(root, file, services) {
   return !services.isLink(absoluteRoot);
 }
 
+function safeExistingPath(root, file, services) {
+  if (!safePath(root, file, services)) return false;
+  try {
+    const realRoot = services.realpath(path.resolve(root));
+    const realFile = services.realpath(path.resolve(file));
+    return realFile === realRoot || realFile.startsWith(`${realRoot}${path.sep}`);
+  } catch {
+    return false;
+  }
+}
+
 function checkedFile(expected, staged, stagingRoot, gitRoot, bundleRoot, services) {
   const relative = monorepo.normalizeRelative(staged.file);
   const file = relative ? path.resolve(gitRoot, relative) : null;
@@ -406,6 +417,6 @@ function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview
 }
 
 module.exports = {
-  RECEIPT_FILE, artifactIdentity, buildReceipt, evaluate, planMappingCoverage, safePath,
+  RECEIPT_FILE, artifactIdentity, buildReceipt, evaluate, planMappingCoverage, safeExistingPath, safePath,
   validCanonicalReview, validMapping, validPlan, validStaged,
 };
