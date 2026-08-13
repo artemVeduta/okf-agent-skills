@@ -682,6 +682,108 @@ function validSplitSections(value) {
   return new Set(value.map((item) => item.path)).size === value.length;
 }
 
+/*
+ * #201 task 1 (#200): "a source above the effective file-word target must
+ * receive split review... a smaller source can receive split review when setup
+ * finds clear semantic boundaries or when the user requests it -- never
+ * automatically". Decided per `migrate` source only: `skip`/`residue`/
+ * `blocked_pending_decision` never produce a concept, so the target does not
+ * apply to them. `review_required` is `true` only for `above_target` (the one
+ * mandatory case); `user_requested` is a *permitted* review, never forced.
+ * `semantic_boundaries` is named for tasks 2-7 to carry forward verbatim, but
+ * nothing detects it yet, so it is never produced here. Word count is the raw
+ * file exactly as `readFile` returns it -- frontmatter and code included, per
+ * `words.js`'s own rule -- not `data.mapping[].body`, which is the parsed body
+ * with frontmatter stripped and links rewritten. An unreadable source (already
+ * impossible for a `migrate` entry, which only exists once this same file was
+ * read successfully during classification) counts as empty rather than
+ * throwing, the same defensive shape `publish` already uses for a re-read.
+ *
+ * #201 task 2 (#200's "Source accounting" and "Validation and publication")
+ * extends each entry with the source side of a split: the source content
+ * identity the proposal binds, the derived sections of a source that is under
+ * review, and -- once the caller supplies its own accounting in
+ * `payload.split_sections` -- whether those ranges cover the complete source
+ * once, with one disposition each and one accepted output order. Deriving and
+ * validating both live in `scripts/lib/sections.js`; nothing here repairs,
+ * moves, or drops a range, and `accounting_status` says exactly which of the
+ * four states a source is in.
+ *
+ * Returns `{ reviews, findings }`: `data.split_review`'s own array, and the
+ * blocking findings a broken accounting produced (none of which ever touches
+ * the plan itself).
+ */
+function accountSplits(entries, payload, maxWords, gitRoot, services) {
+  const requested = new Set(payload.split_requested || []);
+  const supplied = new Map((payload.split_sections || []).map((item) => [item.path, item]));
+  const findings = [];
+  const refuse = (source, code, detail = {}) => findings.push(suiteFinding(code, { path: source, ...detail }));
+
+  const reviews = entries.filter((item) => item.disposition === 'migrate').map((item) => {
+    let raw;
+    try {
+      raw = services.readFile(path.join(gitRoot, item.path));
+    } catch {
+      raw = '';
+    }
+    const wordCount = words.countWords(raw);
+    const aboveTarget = wordCount > maxWords;
+    const accounting = supplied.get(item.path);
+    const review = {
+      path: item.path,
+      word_count: wordCount,
+      review_required: aboveTarget,
+      review_reason: aboveTarget ? 'above_target' : (requested.has(item.path) ? 'user_requested' : null),
+      source_identity: sections.identify(raw),
+      line_count: 0,
+      sections: [],
+      outputs: [],
+      accounting_status: 'not_required',
+    };
+
+    // #200 opens a split only through review. A source no trigger ever opened
+    // stays one concept, so nothing is sectioned for it -- and an accounting
+    // supplied for it is refused rather than blessing a split #200 never
+    // allowed (symmetrical with `SPLIT_SOURCE_UNKNOWN` below).
+    if (review.review_reason === null) {
+      if (accounting !== undefined) {
+        refuse(item.path, 'SPLIT_SOURCE_NOT_UNDER_REVIEW');
+        review.accounting_status = 'refused';
+      }
+      return review;
+    }
+
+    // #200: "A source change invalidates the proposal before transformation or
+    // publication" -- reported alone, with the accounting dropped rather than
+    // measured, because ranges built against the old bytes say nothing at all
+    // about the new ones.
+    const stale = accounting !== undefined && accounting.source_identity !== undefined
+      && accounting.source_identity !== review.source_identity;
+    if (stale) {
+      refuse(item.path, 'SPLIT_SOURCE_CHANGED', { expected: accounting.source_identity, actual: review.source_identity });
+    }
+
+    const accounted = sections.account(raw, accounting === undefined || stale ? null : accounting.sections);
+    review.line_count = accounted.line_count;
+    review.sections = accounted.sections;
+    review.outputs = accounted.outputs;
+    for (const { code, detail } of accounted.findings) refuse(item.path, code, detail);
+    review.accounting_status = accounting === undefined
+      ? 'derived'
+      : (stale || accounted.findings.length > 0 ? 'refused' : 'complete');
+    return review;
+  });
+
+  // An accounting for a path this plan has no `migrate` entry for is refused,
+  // not quietly discarded: silently dropping it would let a caller believe a
+  // split it proposed was validated.
+  const accounted = new Set(reviews.map((item) => item.path));
+  for (const unknown of supplied.keys()) {
+    if (!accounted.has(unknown)) refuse(unknown, 'SPLIT_SOURCE_UNKNOWN');
+  }
+  return { reviews, findings };
+}
+
 function validPlanSource(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
   if (typeof item.path !== 'string' || item.path === '') return false;
@@ -759,90 +861,7 @@ function executeMigrationPlan(request, services) {
   // used, not a hardcoded `<gitRoot>/.okf-workspace.json` (fix round 2, Important 3).
   const settingsReport = manifest.inspect(resolveManifestFile(payload, gitRoot, services), gitRoot, services);
 
-  // #201 task 1 (#200): "a source above the effective file-word target must
-  // receive split review... a smaller source can receive split review when
-  // setup finds clear semantic boundaries or when the user requests it --
-  // never automatically". This decides that per `migrate` source only --
-  // `skip`/`residue`/`blocked_pending_decision` never produce a concept, so
-  // the target does not apply to them. `review_required` is `true` only for
-  // `above_target` (the one mandatory case); `user_requested` is a *permitted*
-  // review, never forced. `semantic_boundaries` is named here for tasks 2-7 to
-  // carry forward verbatim, but nothing in this runtime detects it yet, so it
-  // is never produced by this operation. Word count is the raw file exactly as
-  // `readFile` returns it -- frontmatter and code included, per `words.js`'s
-  // own rule -- not `data.mapping[].body`, which is the parsed body with
-  // frontmatter already stripped and links rewritten. An unreadable source
-  // (already impossible for a `migrate` entry, which only exists once this
-  // same file was read successfully during classification) counts as empty
-  // rather than throwing, the same defensive shape `publish` already uses for
-  // a re-read.
-  //
-  // #201 task 2 (#200's "Source accounting" and "Validation and publication")
-  // extends each of those entries with the source side of a split: the source
-  // content identity the proposal binds, the derived sections of a source that
-  // is under review, and -- once the caller supplies its own accounting in
-  // `payload.split_sections` -- whether those ranges cover the complete source
-  // once, with one disposition each and one accepted output order. Deriving
-  // and validating both live in `scripts/lib/sections.js`; nothing here
-  // repairs, moves, or drops a range, and `accounting_status` says exactly
-  // which of the four states a source is in.
-  const splitRequested = new Set(payload.split_requested || []);
-  const splitAccounting = new Map((payload.split_sections || []).map((item) => [item.path, item]));
-  const splitFindings = [];
-  const splitReview = outcome.entries
-    .filter((item) => item.disposition === 'migrate')
-    .map((item) => {
-      let raw;
-      try {
-        raw = services.readFile(path.join(gitRoot, item.path));
-      } catch {
-        raw = '';
-      }
-      const wordCount = words.countWords(raw);
-      const aboveTarget = wordCount > settingsReport.settings.max_words_per_file;
-      const reviewReason = aboveTarget ? 'above_target' : (splitRequested.has(item.path) ? 'user_requested' : null);
-
-      const supplied = splitAccounting.get(item.path);
-      splitAccounting.delete(item.path);
-      const underReview = reviewReason !== null;
-      const identity = sections.identify(raw);
-      const review = {
-        path: item.path,
-        word_count: wordCount,
-        review_required: aboveTarget,
-        review_reason: reviewReason,
-        source_identity: identity,
-        line_count: 0,
-        sections: [],
-        outputs: [],
-        accounting_status: 'not_required',
-      };
-      if (supplied === undefined && !underReview) return review;
-
-      const accounted = sections.account(raw, supplied === undefined ? null : supplied.sections);
-      review.line_count = accounted.line_count;
-      review.sections = accounted.sections;
-      review.outputs = accounted.outputs;
-      // #200: "A source change invalidates the proposal before transformation
-      // or publication" -- checked here, against the bytes just read, before
-      // the ranges the caller built against the old bytes are given any weight.
-      const stale = supplied !== undefined && supplied.source_identity !== undefined
-        && supplied.source_identity !== identity;
-      if (stale) {
-        splitFindings.push(suiteFinding('SPLIT_SOURCE_CHANGED', {
-          path: item.path, expected: supplied.source_identity, actual: identity,
-        }));
-      }
-      splitFindings.push(...accounted.findings.map(({ code, detail }) => suiteFinding(code, { path: item.path, ...detail })));
-      review.accounting_status = supplied === undefined
-        ? 'derived'
-        : (stale || accounted.findings.length > 0 ? 'refused' : 'complete');
-      return review;
-    });
-  // An accounting for a path this plan has no `migrate` entry for is refused,
-  // not quietly discarded: silently dropping it would let a caller believe a
-  // split it proposed was validated.
-  for (const unknown of splitAccounting.keys()) splitFindings.push(suiteFinding('SPLIT_SOURCE_UNKNOWN', { path: unknown }));
+  const split = accountSplits(outcome.entries, payload, settingsReport.settings.max_words_per_file, gitRoot, services);
 
   const findings = [
     ...outcome.questions.map((q) => ({
@@ -878,7 +897,7 @@ function executeMigrationPlan(request, services) {
     // (#200), and neither does a blocked accounting rewrite the plan: the
     // entry keeps its own `migrate` disposition and `data.plan.executable`
     // keeps its own meaning (every source has a disposition).
-    ...splitFindings,
+    ...split.findings,
   ];
   return respond(request, 'ok', {
     plan: { entries: outcome.entries, executable: outcome.executable, duplicates: outcome.duplicates },
@@ -887,7 +906,7 @@ function executeMigrationPlan(request, services) {
     references: outcome.references,
     settings: settingsReport.settings,
     settings_findings: settingsReport.settings_findings,
-    split_review: splitReview,
+    split_review: split.reviews,
   }, findings);
 }
 

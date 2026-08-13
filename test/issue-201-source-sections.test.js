@@ -175,6 +175,40 @@ test('a source with no heading at all is one preamble section covering everythin
   ]);
 });
 
+test('a CRLF source is sectioned exactly like its LF twin, and a CRLF accounting validates', (t) => {
+  const root = fixtureRepo(t, FIXTURE.split('\n').join('\r\n'));
+  const derived = reviewFor(plan(root), SOURCE);
+
+  assert.equal(derived.line_count, 26);
+  assert.deepEqual(derived.sections.map((item) => [item.kind, item.line_start, item.line_end]), [
+    ['frontmatter', 1, 3], ['preamble', 4, 5], ['heading', 6, 11], ['heading', 12, 23], ['heading', 24, 26],
+  ]);
+  assert.deepEqual(derived.sections.map((item) => item.heading_path), [
+    [], [], ['Title'], ['Title', 'Details'], ['Title', 'Notes'],
+  ]);
+  assert.equal(reviewFor(withAccounting(root, completeAccounting()), SOURCE).accounting_status, 'complete');
+});
+
+test('a frontmatter block closed on the final line, with no trailing newline, is its own section', (t) => {
+  const root = fixtureRepo(t, '---\ntype: Note\n---');
+  const review = reviewFor(plan(root), SOURCE);
+
+  assert.deepEqual(review.sections.map((item) => [item.kind, item.line_start, item.line_end]), [['frontmatter', 1, 3]]);
+});
+
+// #200's "a Markdown heading and its content form the normal source section"
+// is implemented for ATX headings only, and SKILL.md declares that limit: a
+// setext-headed source is one preamble, divisible only by the block-boundary
+// fallback, rather than silently mis-sectioned.
+test('a setext heading is not a section boundary, exactly as documented', (t) => {
+  const root = fixtureRepo(t, '---\ntype: Note\n---\nTitle\n=====\n\nbody\n');
+  const review = reviewFor(plan(root), SOURCE);
+
+  assert.deepEqual(review.sections.map((item) => [item.kind, item.line_start, item.line_end]), [
+    ['frontmatter', 1, 3], ['preamble', 4, 7],
+  ]);
+});
+
 test('a heading inside a fenced code block never starts a section', (t) => {
   const root = fixtureRepo(t, ['---', 'type: Note', '---', '# Real', '', '```', '# Not a heading', '```', '', 'tail', ''].join('\n'));
   const review = reviewFor(plan(root), SOURCE);
@@ -202,19 +236,76 @@ test('an accounting that binds the current source identity is accepted', (t) => 
   assert.equal(review.accounting_status, 'complete');
 });
 
-test('a changed source invalidates an accounting bound to the old identity', (t) => {
+test('a changed source invalidates an accounting bound to the old identity, and is the only finding reported', (t) => {
   const root = fixtureRepo(t);
   const identity = reviewFor(plan(root), SOURCE).source_identity;
-  write(root, SOURCE, `${FIXTURE}\nAn added line.\n`);
-  const response = withAccounting(root, [...completeAccounting().slice(0, 5), residue(24, 28)], identity);
+  // The source shrinks under the accounting: every range past line 11 now
+  // names lines the file no longer has. None of that is measured -- ranges
+  // built against the old bytes say nothing about the new ones.
+  write(root, SOURCE, FIXTURE.split('\n').slice(0, 11).join('\n'));
+  const response = withAccounting(root, completeAccounting(), identity);
+  const review = reviewFor(response, SOURCE);
 
   const finding = codes(response, 'SPLIT_SOURCE_CHANGED');
   assert.equal(finding.length, 1);
   assert.equal(finding[0].blocks, true);
   assert.equal(finding[0].detail.path, SOURCE);
   assert.equal(finding[0].detail.expected, identity);
-  assert.equal(finding[0].detail.actual, reviewFor(response, SOURCE).source_identity);
-  assert.equal(reviewFor(response, SOURCE).accounting_status, 'refused');
+  assert.equal(finding[0].detail.actual, review.source_identity);
+  assert.equal(review.accounting_status, 'refused');
+  assert.deepEqual(response.findings.filter((item) => item.code.startsWith('SPLIT_')).map((item) => item.code), ['SPLIT_SOURCE_CHANGED']);
+  // The current source's own sections are still reported, so the caller can
+  // build the new accounting the refusal asks for.
+  assert.deepEqual(review.sections.map((item) => item.disposition), [null, null, null]);
+});
+
+// ------------------------------------------------- review the target itself opened
+
+// #200's one mandatory trigger, reached with no user request at all: the
+// source is over the effective `max_words_per_file`, so it is under review and
+// carries sections on that basis alone.
+const OVER_TARGET = [
+  '---', 'type: Note', '---',
+  '# Title', '',
+  Array.from({ length: 600 }, (_, i) => `alpha${i}`).join(' '), '',
+  '## Second', '',
+  Array.from({ length: 600 }, (_, i) => `beta${i}`).join(' '),
+  '',
+].join('\n');
+
+test('a source the word target itself put under review carries its sections, with no user request involved', (t) => {
+  const root = fixtureRepo(t, OVER_TARGET);
+  const review = reviewFor(plan(root, { split_requested: [] }), SOURCE);
+
+  assert.equal(review.review_required, true);
+  assert.equal(review.review_reason, 'above_target');
+  assert.equal(review.accounting_status, 'derived');
+  assert.deepEqual(review.sections.map((item) => [item.kind, item.line_start, item.line_end]), [
+    ['frontmatter', 1, 3], ['heading', 4, 7], ['heading', 8, 10],
+  ]);
+});
+
+test('an accounting for a source the word target put under review is validated on that basis alone', (t) => {
+  const root = fixtureRepo(t, OVER_TARGET);
+  const response = plan(root, {
+    split_requested: [],
+    split_sections: [{ path: SOURCE, sections: [residue(1, 3), assigned(4, 7, 'concept-a'), assigned(8, 10, 'concept-b')] }],
+  });
+
+  assert.equal(reviewFor(response, SOURCE).accounting_status, 'complete');
+  assert.deepEqual(response.findings.filter((item) => item.code.startsWith('SPLIT_')), []);
+});
+
+test('an accounting for a source under no split review is refused, and nothing is sectioned for it', (t) => {
+  const root = fixtureRepo(t);
+  const response = plan(root, { split_requested: [], split_sections: [{ path: SOURCE, sections: completeAccounting() }] });
+  const review = reviewFor(response, SOURCE);
+
+  assert.equal(review.review_reason, null);
+  assert.deepEqual(codes(response, 'SPLIT_SOURCE_NOT_UNDER_REVIEW')[0].detail, { path: SOURCE });
+  assert.equal(review.accounting_status, 'refused');
+  assert.equal(review.line_count, 0);
+  assert.deepEqual(review.sections, []);
 });
 
 // -------------------------------------------------------------- one disposition

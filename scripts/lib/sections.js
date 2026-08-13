@@ -38,6 +38,13 @@ const crypto = require('node:crypto');
 const validation = require('./validation');
 const { countWords } = require('./words');
 
+// ATX headings (`# Title`) only, deliberately and declared as a boundary in
+// `skills/okf-setup/SKILL.md`: a setext heading (`Title` over `=====`) is not
+// recognised, so a setext-headed source is one preamble section and can be
+// divided only by the block-boundary fallback. Recognising setext needs the
+// thematic-break-versus-underline decision a real CommonMark parser makes, and
+// this module is not one -- guessing it would be worse than declaring the
+// limit.
 const HEADING = /^[ \t]{0,3}#{1,6}(?:[ \t]|$)/;
 const HEADING_TEXT = /^[ \t]{0,3}(#{1,6})[ \t]*(.*)$/;
 const LIST_ITEM = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/;
@@ -50,25 +57,29 @@ function identify(raw) {
 }
 
 // A file's final newline terminates its last line, it does not open an empty
-// one, so `line_count` is the number of lines a reader actually sees.
+// one, so `line_count` is the number of lines a reader actually sees. A CRLF
+// source is ordinary input here, exactly as it is for `extractFrontmatter` and
+// `fencedLines`: the carriage return is a line terminator, not content, and
+// every rule below reads a line that no longer carries one.
 function splitLines(raw) {
   if (raw === '') return [];
-  const lines = raw.split('\n');
+  const lines = raw.split('\n').map((line) => line.replace(/\r$/, ''));
   if (lines[lines.length - 1] === '') lines.pop();
   return lines;
 }
 
 // The 1-based line of the closing `---`, or 0 when there is no frontmatter
-// block this repo's own reader accepts. Derived from the reader's own body
-// rather than re-scanned here.
-function frontmatterEnd(raw) {
-  let extracted;
+// block this repo's own reader accepts. The reader stays the authority on
+// whether the block is one; only the closing line is located here, because
+// neither the extracted frontmatter nor the extracted body can tell an empty
+// line apart from no line at all.
+function frontmatterEnd(raw, lines) {
   try {
-    extracted = validation.parseFrontmatter(raw);
+    validation.parseFrontmatter(raw);
   } catch {
     return 0;
   }
-  return raw.split('\n').length - extracted.body.split('\n').length;
+  return lines.findIndex((line, index) => index > 0 && line === '---') + 1;
 }
 
 function headingText(line) {
@@ -97,7 +108,7 @@ function deriveSections(raw, lines) {
     sections.push(sectionRow(sections.length, kind, headingPath, start, end, lines));
   };
 
-  const frontmatter = frontmatterEnd(raw);
+  const frontmatter = frontmatterEnd(raw, lines);
   if (frontmatter > 0) push('frontmatter', [], 1, frontmatter);
 
   const stack = [];
