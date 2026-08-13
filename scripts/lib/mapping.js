@@ -40,7 +40,6 @@ function dirSegments(sourcePath) {
 
 const ADR_FILENAME = /^adr[-_]?\d+/i;
 const RELEASE_FILENAME = /^v?\d+\.\d+\.\d+\.md$/i;
-const GLOSSARY_TERM_LINE = /^\*\*[^*\n]+\*\*:[ \t]*\S/;
 
 // Michael Nygard's ADR template's own four headings, exactly as documented in
 // #130's research (`docs/spec` migration mapping). All four, as their own heading
@@ -56,24 +55,26 @@ function isAdrTemplate(strippedBody) {
   return ADR_HEADINGS.every((heading) => hasHeading(strippedBody, heading));
 }
 
-// #130's documented Glossary authoring format: `**Term**: definition.` lines.
-// Two or more is a structural signature; one bold-colon line alone is too weak
-// (ordinary prose uses that construct too) to count as evidence on its own.
-function isGlossaryTemplate(strippedBody) {
-  const matches = strippedBody.match(new RegExp(GLOSSARY_TERM_LINE.source, 'gm'));
-  return Boolean(matches) && matches.length >= 2;
-}
-
 function hasRuntimeField(tree) {
   return Boolean(tree) && tree.runtime !== undefined && tree.runtime !== null && tree.runtime !== '';
 }
 
 // Ordered, evidence-only rules. First match wins; the evidence classes below do
 // not overlap in practice, and none of them reads or judges prose meaning -- a
-// conventional directory name, a conventional filename, or one of #130's own
-// documented structural templates, nothing else. A source matching none of these
-// returns `null`: #144's own question round is the only legitimate path from
-// there to a type (never a guess here, never a generic `Note` fallback).
+// conventional directory name, a conventional filename, or Nygard's ADR heading
+// template, nothing else. A source matching none of these returns `null`: #144's
+// own question round is the only legitimate path from there to a type (never a
+// guess here, never a generic `Note` fallback).
+//
+// #179 (#158): `Glossary` no longer has a content rule. Inferring it from two or
+// more `**Label**: value` lines read ordinary emphasis-labelled prose as a term
+// list -- `**Source**:`, `**Implication**:`, `**Prerequisites**:` in a research
+// report all matched -- and a `migrate` entry carries no question, so
+// `payload.answers` could not correct it. `Glossary` is now exact structural
+// evidence only: a `glossary` path segment, `glossary.md`, or `CONTEXT.md`. A
+// term-definition document outside those falls through to the batched `type`
+// question. Nothing replaced the rule: no semantic test, no dominance ratio, no
+// percentage threshold.
 function inferType(sourcePath, tree, body) {
   const dirs = dirSegments(sourcePath);
   const base = path.posix.basename(sourcePath);
@@ -82,7 +83,7 @@ function inferType(sourcePath, tree, body) {
   if (dirs.includes('adr') || dirs.includes('decisions') || ADR_FILENAME.test(base) || isAdrTemplate(stripped)) {
     return 'Decision';
   }
-  if (dirs.includes('glossary') || base.toLowerCase() === 'glossary.md' || base === 'CONTEXT.md' || isGlossaryTemplate(stripped)) {
+  if (dirs.includes('glossary') || base.toLowerCase() === 'glossary.md' || base === 'CONTEXT.md') {
     return 'Glossary';
   }
   if (dirs.includes('constraints') || dirs.includes('constraint')) return 'Constraint';

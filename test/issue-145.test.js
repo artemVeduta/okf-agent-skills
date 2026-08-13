@@ -138,18 +138,6 @@ test('Glossary: the domain-modeling CONTEXT.md filename convention is determinis
   });
 });
 
-test('Glossary: two or more "**Term**: definition" lines is a structural-template match', (t) => {
-  const root = repo(t);
-  write(root, 'docs/terms.md', '# Terms\n\n**Widget**: a thing we sell.\n\n**Gadget**: another thing we sell.\n');
-  const sources = discoverSources(root);
-  const response = planGrouped(root, sources, { 'docs/terms.md': 'docs' });
-
-  assert.deepEqual(entryFor(response, 'docs/terms.md'), {
-    path: 'docs/terms.md', disposition: 'migrate', reason: 'type_inferred',
-    concept: 'docs/glossary', type: 'Glossary',
-  });
-});
-
 test('Constraint: a conventional directory name is deterministic evidence', (t) => {
   const root = repo(t);
   write(root, 'docs/constraints/rate-limit.md', '# Rate limit\n\nNo more than 10 requests/second.\n');
