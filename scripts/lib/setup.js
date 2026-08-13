@@ -19,6 +19,7 @@ const partition = require('./partition');
 const assembly = require('./assembly');
 const publication = require('./publication');
 const canonicalReview = require('./semantic-review');
+const acceptedGroups = require('./accepted-groups');
 const lifecycle = require('./lifecycle');
 const { inside } = require('./paths');
 const {
@@ -824,6 +825,14 @@ function applySplitProposals(reviews, payload, mapped, entries, gitRoot, bundleR
     const record = records.find((item) => item.path === collision.path);
     record.proposal = splitProposal.refuse(record.proposal);
     record.review.proposal = record.proposal;
+  }
+  const groups = acceptedGroups.collect(records.map((item) => item.review));
+  if (!groups.ok) {
+    findings.push(suiteFinding('SPLIT_PROPOSAL_GROUP_CONFLICT', groups.detail));
+    for (const record of records.filter((item) => item.proposal !== null)) {
+      record.proposal = splitProposal.refuse(record.proposal);
+      record.review.proposal = record.proposal;
+    }
   }
   return { reviews: records.map((item) => item.review), findings };
 }

@@ -53,6 +53,7 @@
 
 const validation = require('./validation');
 const partition = require('./partition');
+const acceptedGroups = require('./accepted-groups');
 
 // A concept file's own frontmatter is exactly its approved `type` and the
 // provenance its own source's frontmatter already declared (verbatim, or
@@ -152,26 +153,9 @@ function computeAssembly(partitionShards, shardContents) {
     };
   });
 
-  const groups = new Map();
-  for (const shard of partitionShards) {
-    for (const review of shard.brief.split_review.filter((item) => item.proposal !== null)) {
-      for (const output of review.proposal.outputs) {
-        const accepted = output.reader_purpose_group;
-        if (accepted === null || groups.has(accepted.key)) continue;
-        const childEntries = partitionShards.flatMap((candidateShard) => candidateShard.brief.split_review)
-          .filter((candidateReview) => candidateReview.proposal !== null)
-          .flatMap((candidateReview) => candidateReview.proposal.outputs)
-          .filter((candidateOutput) => candidateOutput.reader_purpose_group?.key === accepted.key)
-          .map((candidateOutput) => candidateOutput.reader_purpose_group.child_entry)
-          .sort((a, b) => a.order - b.order);
-        groups.set(accepted.key, {
-          key: accepted.key, purpose: accepted.purpose,
-          index_entry: accepted.index_entry, child_entries: childEntries,
-        });
-      }
-    }
-  }
-  const indexes = [...groups.values()].sort((a, b) => a.index_entry.path.localeCompare(b.index_entry.path))
+  const accepted = acceptedGroups.collect(partitionShards.flatMap((shard) => shard.brief.split_review));
+  if (!accepted.ok) return { ok: false, code: 'ASSEMBLY_GROUP_CONFLICT', detail: accepted.detail };
+  const indexes = accepted.groups
     .map((group) => ({ kind: 'index', path: group.index_entry.path, group, rendered: renderIndex(group) }));
 
   return { ok: true, concepts: rendered, indexes, references, blockers, duplicates };

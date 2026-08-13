@@ -2,6 +2,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const discovery = require('./discovery');
+const acceptedGroups = require('./accepted-groups');
 const mappingRules = require('./mapping');
 const monorepo = require('./monorepo');
 const sections = require('./sections');
@@ -104,10 +105,7 @@ function headingAnchor(value) {
 }
 
 function normalizedLink(candidatePath, resource) {
-  const target = validation.bodyLinkPath(resource);
-  if (!target) return null;
-  const suffix = resource.slice(target.length);
-  return mappingRules.resolveLinkTarget(candidatePath, target) + suffix;
+  return mappingRules.normalizedLinkTarget(candidatePath, resource);
 }
 
 function bodyFacts(body, candidatePath) {
@@ -127,27 +125,7 @@ function bodyFacts(body, candidatePath) {
   };
 }
 
-function acceptedGroups(splitReview) {
-  const groups = new Map();
-  for (const review of splitReview.filter((item) => item.proposal !== null)) {
-    for (const output of review.proposal.outputs) {
-      const group = output.reader_purpose_group;
-      if (group !== null && !groups.has(group.key)) {
-        groups.set(group.key, {
-          key: group.key,
-          purpose: group.purpose,
-          index_entry: group.index_entry,
-          child_entries: review.proposal.outputs
-            .filter((candidate) => candidate.reader_purpose_group?.key === group.key)
-            .map((candidate) => candidate.reader_purpose_group.child_entry).sort((a, b) => a.order - b.order),
-        });
-      }
-    }
-  }
-  return groups;
-}
-
-function expectedCandidates(mapping, splitReview) {
+function expectedCandidates(mapping, splitReview, groups, bundlePath) {
   const reviews = new Map(splitReview.map((item) => [item.path, item]));
   const concepts = mapping.flatMap((item) => {
     const review = reviews.get(item.path);
@@ -155,6 +133,7 @@ function expectedCandidates(mapping, splitReview) {
       return [{
         kind: 'concept', source: item.path, source_identity: item.source_identity,
         concept: item.concept, path: `${item.concept}.md`, type: item.type, sources: item.sources || [],
+        expected_links: bodyFacts(item.body, path.posix.join(bundlePath, `${item.concept}.md`)).links,
       }];
     }
     return review.proposal.outputs.map((output) => ({
@@ -165,9 +144,10 @@ function expectedCandidates(mapping, splitReview) {
         .map(({ line_start, line_end }) => ({ line_start, line_end })),
       title: output.title, heading_outline: output.heading_outline,
       sources: output.provenance_assignments.map((assignment) => assignment.source),
+      expected_links: output.link_routes.map((route) => route.target),
     }));
   });
-  const indexes = [...acceptedGroups(splitReview).values()].map((group) => ({
+  const indexes = groups.map((group) => ({
     kind: 'index', path: group.index_entry.path, group,
   }));
   return [...concepts, ...indexes];
@@ -285,13 +265,15 @@ function routeTargets(splitReview, bundlePath) {
   for (const review of splitReview.filter((item) => item.proposal !== null)) {
     const outputs = new Map(review.proposal.outputs.map((item) => [item.output, item]));
     for (const output of review.proposal.outputs) {
-      targets.push(...output.link_routes.map((route) => route.target));
-      targets.push(...output.anchor_routes.map((route) => `${path.posix.join(bundlePath, output.path)}#${route.target_anchor}`));
+      targets.push(...output.link_routes.map((route) => `${output.path}\0${route.target}`));
+      targets.push(...output.anchor_routes.map((route) => (
+        `${output.path}\0${path.posix.join(bundlePath, output.path)}#${route.target_anchor}`
+      )));
     }
     for (const route of review.proposal.whole_source_link_routes) {
       const targetPath = route.target.kind === 'output'
         ? outputs.get(route.target.output).path : `${route.target.group}/index.md`;
-      targets.push(path.posix.join(bundlePath, targetPath));
+      targets.push(`${targetPath}\0${path.posix.join(bundlePath, targetPath)}`);
     }
   }
   return targets.sort();
@@ -316,7 +298,12 @@ function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview
   }
   const currentPaths = listing.files.filter(discovery.isMarkdownFile)
     .map((file) => path.relative(stagingRoot, file).split(path.sep).join('/')).sort();
-  const expected = expectedCandidates(mapping, splitReview);
+  const accepted = acceptedGroups.collect(splitReview);
+  if (!accepted.ok) {
+    return { ok: false, finding: proposalFinding('PUBLISH_INDEX_CHANGED', accepted.detail) };
+  }
+  const bundlePath = path.relative(gitRoot, bundleRoot).split(path.sep).join('/');
+  const expected = expectedCandidates(mapping, splitReview, accepted.groups, bundlePath);
   const expectedPaths = expected.map((item) => item.path).sort();
   const stagedPaths = staged.map((item) => path.relative(stagingRoot, path.resolve(gitRoot, item.file)).split(path.sep).join('/'));
   const files = semanticReview.exactSet(expectedPaths, currentPaths);
@@ -368,10 +355,13 @@ function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview
     }
   }
 
-  const bundlePath = path.relative(gitRoot, bundleRoot).split(path.sep).join('/');
-  const expectedRoutes = routeTargets(splitReview, bundlePath);
+  const expectedRoutes = [
+    ...routeTargets(splitReview, bundlePath),
+    ...expected.filter((item) => item.kind === 'concept' && item.output === undefined)
+      .flatMap((item) => item.expected_links.map((target) => `${item.path}\0${target}`)),
+  ].sort();
   const actualRoutes = checked.filter((item) => item.kind === 'concept')
-    .flatMap((item) => item.facts.links).sort();
+    .flatMap((item) => item.facts.links.map((target) => `${item.path}\0${target}`)).sort();
   const routes = semanticReview.exactSet(expectedRoutes, actualRoutes);
   if (semanticReview.differs(routes)) {
     return { ok: false, finding: proposalFinding('PUBLISH_ROUTE_MISMATCH', { routes }) };

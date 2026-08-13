@@ -57,7 +57,7 @@ function proposalOutput(output, title) {
   };
 }
 
-function acceptedPlan(root) {
+function acceptedPlan(root, installRoute = null) {
   const sources = run('discover', root, {}).data.sources
     .filter((item) => [SPLIT_SOURCE, UNSPLIT_SOURCE].includes(item.path));
   const response = run('migration-plan', root, {
@@ -76,7 +76,10 @@ function acceptedPlan(root) {
       result: 'split',
       keep_as_one_reason: null,
       accepted: true,
-      outputs: [proposalOutput('install', 'Install'), proposalOutput('operate', 'Operate')],
+      outputs: [
+        { ...proposalOutput('install', 'Install'), link_routes: installRoute === null ? [] : [installRoute] },
+        proposalOutput('operate', 'Operate'),
+      ],
       provenance_exclusions: [],
       heading_changes: [],
       whole_source_link_routes: [],
@@ -86,7 +89,7 @@ function acceptedPlan(root) {
   return response.data;
 }
 
-function assemble(root, plan) {
+function assemble(root, plan, bodies = {}) {
   const partitioned = run('partition', root, {
     plan: plan.plan,
     mapping: plan.mapping,
@@ -105,7 +108,7 @@ function assemble(root, plan) {
         concept: output.concept_id,
         type: output.type,
         sections: review.outputs.find((candidate) => candidate.output === output.output).sections.map((section) => ({ ...section })),
-        body: `# ${output.title}\n`,
+        body: bodies[`${review.path}:${output.output}`] || `# ${output.title}\n`,
       }));
     });
     const shard = { shard: item.shard, concepts, references: [], warnings: [], blockers: [] };
@@ -127,7 +130,7 @@ function identity(bytes) {
 }
 
 function semanticInput(root, plan) {
-  const review = plan.split_review.find((item) => item.path === SPLIT_SOURCE);
+  const reviews = plan.split_review.filter((item) => item.proposal !== null);
   const stagingRoot = path.join(root, '.okf-staging', 'okf');
   const candidates = fs.readdirSync(stagingRoot, { recursive: true, withFileTypes: true })
     .filter((item) => item.isFile() && item.name.endsWith('.md'))
@@ -139,21 +142,22 @@ function semanticInput(root, plan) {
   return {
     performed: false,
     candidates,
-    sources: [{
+    sources: reviews.map((review) => ({
       path: review.path,
       source_identity: review.source_identity,
       accepted: structuredClone({ sections: review.sections, outputs: review.outputs, proposal: review.proposal }),
       sections: review.sections.map((section) => ({
         line_start: section.line_start, line_end: section.line_end, verdict: 'preserved',
       })),
-    }],
+    })),
   };
 }
 
-function fixture(t) {
+function fixture(t, options = {}) {
   const root = repo(t);
-  const plan = acceptedPlan(root);
-  const staged = assemble(root, plan);
+  if (options.prepare) options.prepare(root);
+  const plan = acceptedPlan(root, options.installRoute || null);
+  const staged = assemble(root, plan, options.bodies);
   const validated = run('migration-validate', root, {
     selected: [SPLIT_SOURCE, UNSPLIT_SOURCE],
     plan: plan.plan,
@@ -202,11 +206,68 @@ function acceptedSource(value) {
 }
 
 function bindAcceptedReview(value) {
-  value.semantic_review.sources[0].accepted = structuredClone({
-    sections: acceptedSource(value).sections,
-    outputs: acceptedSource(value).outputs,
-    proposal: acceptedSource(value).proposal,
+  for (const row of value.semantic_review.sources) {
+    const review = value.plan.split_review.find((item) => item.path === row.path);
+    row.accepted = structuredClone({
+      sections: review.sections,
+      outputs: review.outputs,
+      proposal: review.proposal,
+    });
+  }
+}
+
+function refreshCandidate(value, candidatePath) {
+  const file = path.join(value.root, '.okf-staging/okf', candidatePath);
+  value.semantic_review.candidates.find((item) => item.path === candidatePath).identity = identity(fs.readFileSync(file));
+}
+
+function sharedGroupFixture(t) {
+  const root = repo(t);
+  const reviewed = [
+    { path: 'docs/alpha.md', output: 'alpha', title: 'Alpha', order: 1 },
+    { path: 'docs/beta.md', output: 'beta', title: 'Beta', order: 2 },
+  ];
+  for (const item of reviewed) fs.writeFileSync(path.join(root, item.path), `---\ntype: Playbook\n---\n# ${item.title}\n\n${item.title}.\n`);
+  const sources = run('discover', root, {}).data.sources.filter((item) => reviewed.some((source) => source.path === item.path));
+  const plan = run('migration-plan', root, {
+    sources,
+    split_requested: reviewed.map((item) => item.path),
+    split_sections: reviewed.map((item) => ({
+      path: item.path,
+      sections: [
+        { line_start: 1, line_end: 3, disposition: 'residue' },
+        { line_start: 4, line_end: 6, disposition: 'assigned', output: item.output },
+      ],
+    })),
+    split_proposals: reviewed.map((item) => ({
+      path: item.path,
+      result: 'keep_as_one',
+      keep_as_one_reason: 'This source is one coherent concept.',
+      accepted: true,
+      outputs: [{
+        ...proposalOutput(item.output, item.title),
+        concept_id: `shared/${item.output}`,
+        path: `shared/${item.output}.md`,
+        reader_purpose_group: {
+          key: 'shared', purpose: 'Use the shared concepts.',
+          index_entry: { path: 'shared/index.md', title: 'Shared' },
+          child_entry: {
+            concept_id: `shared/${item.output}`, path: `shared/${item.output}.md`,
+            title: item.title, order: item.order,
+          },
+        },
+      }],
+      provenance_exclusions: [], heading_changes: [], whole_source_link_routes: [],
+    })),
+  }).data;
+  assert.equal(plan.split_review.every((item) => item.proposal?.status === 'accepted'), true, JSON.stringify(plan));
+  const staged = assemble(root, plan);
+  const validated = run('migration-validate', root, {
+    selected: reviewed.map((item) => item.path), plan: plan.plan,
+    split_review: plan.split_review, semantic_review: semanticInput(root, plan),
   });
+  assert.equal(validated.data.publishable, true, JSON.stringify(validated));
+  return { root, plan, staged, semantic_review: validated.data.semantic_review };
 }
 
 function grouped(value) {
@@ -524,6 +585,111 @@ test('multiple group indexes and a concept route to an indexed child publish', (
   assert.equal(response.data.status, 'complete', JSON.stringify(response));
   assert.equal(fs.existsSync(path.join(value.root, 'okf/operators/index.md')), true);
   assert.equal(fs.existsSync(path.join(value.root, 'okf/runbooks/index.md')), true);
+});
+
+test('a route cannot move to another accepted output with the same global target count', (t) => {
+  const value = fixture(t, {
+    prepare(root) {
+      fs.writeFileSync(path.join(root, 'docs/other.md'), '# Other\n');
+      fs.writeFileSync(path.join(root, SPLIT_SOURCE), SPLIT_CONTENT.replace('Install the tool.', 'Install [other](other.md).'));
+    },
+    installRoute: {
+      from: SPLIT_SOURCE, line: 6, occurrence: 1,
+      resource: 'other.md', target: 'docs/other.md',
+    },
+    bodies: { [`${SPLIT_SOURCE}:install`]: '# Install\n\n[Other](../docs/other.md)\n' },
+  });
+  const installFile = path.join(value.root, '.okf-staging/okf/install.md');
+  const operateFile = path.join(value.root, '.okf-staging/okf/operate.md');
+  fs.writeFileSync(installFile, fs.readFileSync(installFile, 'utf8').replace('\n[Other](../docs/other.md)\n', '\n'));
+  fs.appendFileSync(operateFile, '\n[Other](../docs/other.md)\n');
+  refreshCandidate(value, 'install.md');
+  refreshCandidate(value, 'operate.md');
+
+  assertZeroWriteRefusal(value, () => {}, 'PUBLISH_ROUTE_MISMATCH');
+});
+
+test('an ordinary split route retains its accepted query and fragment', (t) => {
+  const resource = 'other.md?view=full#section';
+  const value = fixture(t, {
+    prepare(root) {
+      fs.writeFileSync(path.join(root, 'docs/other.md'), '# Other\n\n## Section\n');
+      fs.writeFileSync(path.join(root, SPLIT_SOURCE), SPLIT_CONTENT.replace('Install the tool.', `Install [other](${resource}).`));
+    },
+    installRoute: {
+      from: SPLIT_SOURCE, line: 6, occurrence: 1, resource,
+      target: 'docs/other.md?view=full#section',
+    },
+    bodies: { [`${SPLIT_SOURCE}:install`]: '# Install\n\n[Other](../docs/other.md?view=full#section)\n' },
+  });
+
+  assert.equal(publish(value).data.status, 'complete');
+
+  const wrong = fixture(t, {
+    prepare(root) {
+      fs.writeFileSync(path.join(root, 'docs/other.md'), '# Other\n\n## Section\n');
+      fs.writeFileSync(path.join(root, SPLIT_SOURCE), SPLIT_CONTENT.replace('Install the tool.', `Install [other](${resource}).`));
+    },
+    installRoute: {
+      from: SPLIT_SOURCE, line: 6, occurrence: 1, resource,
+      target: 'docs/other.md?view=full#section',
+    },
+    bodies: { [`${SPLIT_SOURCE}:install`]: '# Install\n\n[Other](../docs/other.md?view=full#section)\n' },
+  });
+  assertZeroWriteRefusal(wrong, (current) => {
+    const file = path.join(current.root, '.okf-staging/okf/install.md');
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('#section', '#wrong'));
+    refreshCandidate(current, 'install.md');
+  }, 'PUBLISH_ROUTE_MISMATCH');
+});
+
+test('an unsplit candidate proves its rewritten links from the accepted mapping body', (t) => {
+  const options = {
+    prepare(root) {
+      fs.writeFileSync(path.join(root, 'docs/other.md'), '# Other\n\n## Section\n');
+      fs.writeFileSync(path.join(root, UNSPLIT_SOURCE), UNSPLIT_CONTENT.replace(
+        'Keep this decision.', 'Keep [this decision](other.md?view=full#section).',
+      ));
+    },
+  };
+  const value = fixture(t, options);
+  assert.equal(publish(value).data.status, 'complete');
+
+  const wrong = fixture(t, options);
+  assertZeroWriteRefusal(wrong, (current) => {
+    const candidatePath = 'decisions/decision.md';
+    const file = path.join(current.root, '.okf-staging/okf', candidatePath);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('#section', '#wrong'));
+    refreshCandidate(current, candidatePath);
+  }, 'PUBLISH_ROUTE_MISMATCH');
+});
+
+test('two reviewed sources can contribute ordered children to one accepted group index', (t) => {
+  const value = sharedGroupFixture(t);
+
+  const response = publish(value);
+
+  assert.equal(response.data.status, 'complete', JSON.stringify(response));
+  assert.equal(fs.readFileSync(path.join(value.root, 'okf/shared/index.md'), 'utf8'), [
+    '# Shared', '', 'Use the shared concepts.', '', '- [Alpha](alpha.md)', '- [Beta](beta.md)', '',
+  ].join('\n'));
+});
+
+test('a cross-source group child conflict or index tamper blocks every write', (t) => {
+  const conflict = sharedGroupFixture(t);
+  assertZeroWriteRefusal(conflict, (value) => {
+    const beta = value.plan.split_review.find((item) => item.path === 'docs/beta.md').proposal.outputs[0];
+    beta.reader_purpose_group.child_entry.order = 1;
+    value.staged.find((item) => item.output === 'beta').accepted_output = structuredClone(beta);
+    bindAcceptedReview(value);
+  }, 'PUBLISH_INDEX_CHANGED');
+
+  const tamper = sharedGroupFixture(t);
+  assertZeroWriteRefusal(tamper, (value) => {
+    const file = path.join(value.root, '.okf-staging/okf/shared/index.md');
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('[Beta](beta.md)', '[Beta](wrong.md)'));
+    refreshCandidate(value, 'shared/index.md');
+  }, 'PUBLISH_INDEX_CHANGED');
 });
 
 test('writer dispatch uses the exact candidate bytes checked by the precheck', (t) => {

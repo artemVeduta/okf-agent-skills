@@ -169,6 +169,11 @@ function resolveLinkTarget(sourcePath, targetPath) {
     : path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), targetPath));
 }
 
+function normalizedLinkTarget(sourcePath, resource) {
+  const targetPath = validation.bodyLinkPath(resource);
+  return targetPath ? resolveLinkTarget(sourcePath, targetPath) + resource.slice(targetPath.length) : null;
+}
+
 // Rewrites every link this migration can parse unambiguously: a parsed,
 // non-fenced, non-inline-code, non-image standard Markdown inline link (reusing
 // `validation.js`'s own `withoutFencedCode`/`bodyLinkPath` rather than a second
@@ -239,4 +244,7 @@ function rewriteLinks(sourcePath, body, conceptOf, bundleDir) {
   }).join('\n');
 }
 
-module.exports = { inferType, conceptPathFor, extractProvenance, referencePathFor, rewriteLinks, resolveLinkTarget };
+module.exports = {
+  inferType, conceptPathFor, extractProvenance, referencePathFor,
+  rewriteLinks, resolveLinkTarget, normalizedLinkTarget,
+};

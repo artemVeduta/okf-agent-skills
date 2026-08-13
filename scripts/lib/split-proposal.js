@@ -237,7 +237,7 @@ function buildInventory(sourcePath, raw, review, gitRoot, bundleRoot, services) 
         if (from !== sourcePath || !targetPath) continue;
         const section = review.sections.find((candidate) => candidate.line_start <= item.line && item.line <= candidate.line_end);
         if (section && section.output !== null) {
-          ordinary.push({ ...item, target: mapping.resolveLinkTarget(from, targetPath), output: section.output });
+          ordinary.push({ ...item, target: mapping.normalizedLinkTarget(from, item.resource), output: section.output });
         }
         continue;
       }
@@ -692,7 +692,9 @@ function callTargetFindings(records, normalTargets, existingTargets) {
   const findings = [];
   for (const [target_path, owners] of reserved) {
     const proposed = owners.filter((item) => item.kind === 'proposal');
-    if (proposed.length === 0 || owners.length === 1) continue;
+    const sharedGroup = owners.length === proposed.length && proposed.every((item) => item.group)
+      && new Set(proposed.map((item) => item.group)).size === 1;
+    if (proposed.length === 0 || owners.length === 1 || sharedGroup) continue;
     for (const item of proposed) {
       findings.push({
         path: item.source,

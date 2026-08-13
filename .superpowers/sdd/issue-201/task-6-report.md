@@ -389,3 +389,134 @@ Precheck refusal still writes zero bundle files. A later write failure still
 reports earlier successful writes, the failed write, and later not-attempted
 writes. No atomicity, rollback, checkpoint, resume, or recovery behavior or
 claim was added. Task 7 reporting aggregation remains unimplemented.
+
+---
+
+## Fix report: round 2 of 5
+
+### Result
+
+This round closes all four Important Task 6 review findings. It adds no Task 7
+reporting behavior.
+
+### Important 1: per-candidate route ownership
+
+Publication now compares counted route identities that contain both the owning
+candidate path and the normalized target. Split ordinary routes use their
+accepted output path as owner. Heading-anchor routes use the output that owns the
+accepted source section. Whole-source routes use the accepted output or group
+index target as owner. Moving an accepted route from one staged output to another
+therefore changes both per-candidate multisets and returns
+`PUBLISH_ROUTE_MISMATCH` before write 1.
+
+The process fixture removes one accepted link from `install.md`, adds the same
+target once to `operate.md`, preserves the global target count, and proves zero
+bundle writes.
+
+### Important 2: full ordinary-link suffixes
+
+`mapping.normalizedLinkTarget` is the shared path, query, and fragment
+normalization seam. Split route inventory now stores the complete normalized
+ordinary target instead of only its path. Proposal validation compares that full
+target, and publication compares it with the checked staged bytes.
+
+A process fixture accepts and publishes `other.md?view=full#section`. Changing
+only `#section` to `#wrong` returns `PUBLISH_ROUTE_MISMATCH` and writes zero
+bundle files. Heading-anchor route validation is unchanged.
+
+### Important 3: unsplit route authority
+
+Every unsplit expected candidate now derives its expected route multiset from
+the accepted `mapping.body`. This body is the migration-plan rewrite result, so
+it is the existing accepted authority for migrated and retained project targets.
+Publication parses it with the same shared link scanner and normalizer used for
+checked candidate bytes. It compares the two counted multisets under the unsplit
+candidate path and retains query and fragment suffixes.
+
+A linked unsplit concept publishes when it matches the accepted mapping body.
+Changing only its staged fragment returns `PUBLISH_ROUTE_MISMATCH` and writes
+zero bundle files.
+
+### Important 4: canonical cross-source groups
+
+`scripts/lib/accepted-groups.js` is now the one accepted group collector used by
+proposal acceptance, assembly, and publication. It reads every accepted reviewed
+source, merges only identical purpose and index definitions, collects every
+child, rejects duplicate order, path, title, or Concept ID, and sorts children by
+accepted order. Cross-source proposals may share the same group index claim only
+when this canonical collector accepts the complete definition.
+
+Assembly renders the canonical group. Publication rebuilds the same canonical
+group and compares the staged metadata and full deterministic index bytes. Two
+reviewed sources contributing ordered `Alpha` and `Beta` children publish. A
+duplicate child order or changed index link blocks before all writes.
+
+### Changed files
+
+- `scripts/lib/accepted-groups.js`: canonical accepted group definitions.
+- `scripts/lib/mapping.js`: shared full link-target normalization.
+- `scripts/lib/split-proposal.js`: retains suffixes and permits canonical shared
+  group-index claims.
+- `scripts/lib/assembly.js`: renders only canonical cross-source groups.
+- `scripts/lib/publication.js`: per-candidate route proof and unsplit mapping-body
+  route authority.
+- `scripts/lib/setup.js`: refuses cross-source group conflicts during proposal
+  acceptance.
+- `skills/okf-setup/SKILL.md`: documents per-candidate and unsplit route proof.
+- `test/issue-201-publish-precheck.test.js`: deterministic process fixtures for
+  all four Important findings.
+- `.superpowers/sdd/issue-201/task-6-report.md`: this round-2 report.
+
+### Red evidence
+
+```text
+node --test "test/issue-201-publish-precheck.test.js"
+tests 23, pass 18, fail 5
+```
+
+The five failures were the route-move bypass, suffix rejection, unsplit-link
+rejection, shared-group rejection, and shared-group conflict/tamper fixture.
+
+### Green evidence
+
+```text
+node --test "test/issue-201-publish-precheck.test.js"
+tests 23, pass 23, fail 0
+```
+
+```text
+node --test "test/issue-201-split-proposal.test.js"
+tests 21, pass 21, fail 0
+```
+
+```text
+node --test "test/issue-147.test.js" "test/issue-201-worker-split-mapping.test.js"
+tests 19, pass 19, fail 0
+```
+
+Final focused migration, proposal, assembly, semantic review, publication, and
+documentation regressions:
+
+```text
+node --test "test/issue-120-doc-executability.test.js" "test/issue-145.test.js" "test/issue-146.test.js" "test/issue-147.test.js" "test/issue-148.test.js" "test/issue-149.test.js" "test/issue-189.test.js" "test/issue-201-split-proposal.test.js" "test/issue-201-worker-split-mapping.test.js" "test/issue-201-semantic-review.test.js" "test/issue-201-publish-precheck.test.js"
+tests 152, pass 152, fail 0
+```
+
+Final complete suite:
+
+```text
+node --test "test/*.test.js"
+tests 627, pass 627, fail 0
+```
+
+Repository whitespace check:
+
+```text
+git diff --check
+exit 0
+```
+
+### Scope
+
+No Task 7 aggregation, operation, dependency, rollback, recovery, checkpoint, or
+resume behavior was added.
