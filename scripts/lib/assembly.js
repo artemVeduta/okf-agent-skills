@@ -66,6 +66,14 @@ function renderConcept(type, sources, body) {
   return validation.serializeFrontmatter(tree) + body;
 }
 
+function renderIndex(group) {
+  const children = group.child_entries.map((child) => {
+    const target = require('node:path').posix.relative(require('node:path').posix.dirname(group.index_entry.path), child.path);
+    return `- [${child.title}](${target})`;
+  });
+  return `# ${group.index_entry.title}\n\n${group.purpose}\n\n${children.join('\n')}\n`;
+}
+
 // Combines every shard's own already-validated content. `shardContents` is a
 // `Map<shardId, shardObject>`; `partitionShards` is `partition`'s own
 // `data.shards` array (`{shard, sources, brief}`), unmodified. Returns either
@@ -144,7 +152,29 @@ function computeAssembly(partitionShards, shardContents) {
     };
   });
 
-  return { ok: true, concepts: rendered, references, blockers, duplicates };
+  const groups = new Map();
+  for (const shard of partitionShards) {
+    for (const review of shard.brief.split_review.filter((item) => item.proposal !== null)) {
+      for (const output of review.proposal.outputs) {
+        const accepted = output.reader_purpose_group;
+        if (accepted === null || groups.has(accepted.key)) continue;
+        const childEntries = partitionShards.flatMap((candidateShard) => candidateShard.brief.split_review)
+          .filter((candidateReview) => candidateReview.proposal !== null)
+          .flatMap((candidateReview) => candidateReview.proposal.outputs)
+          .filter((candidateOutput) => candidateOutput.reader_purpose_group?.key === accepted.key)
+          .map((candidateOutput) => candidateOutput.reader_purpose_group.child_entry)
+          .sort((a, b) => a.order - b.order);
+        groups.set(accepted.key, {
+          key: accepted.key, purpose: accepted.purpose,
+          index_entry: accepted.index_entry, child_entries: childEntries,
+        });
+      }
+    }
+  }
+  const indexes = [...groups.values()].sort((a, b) => a.index_entry.path.localeCompare(b.index_entry.path))
+    .map((group) => ({ kind: 'index', path: group.index_entry.path, group, rendered: renderIndex(group) }));
+
+  return { ok: true, concepts: rendered, indexes, references, blockers, duplicates };
 }
 
 // #146's own `cross_shard_links` re-checked against the concepts assembly
@@ -164,4 +194,4 @@ function resolveCrossShardLinks(crossShardLinks, concepts) {
   return { resolved, lost };
 }
 
-module.exports = { renderConcept, computeAssembly, resolveCrossShardLinks };
+module.exports = { renderConcept, renderIndex, computeAssembly, resolveCrossShardLinks };

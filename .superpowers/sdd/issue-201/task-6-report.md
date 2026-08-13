@@ -228,3 +228,164 @@ The first self-review found and fixed:
   Task 6 now requires their exact current fields and normalized paths.
 
 No Task 7 reporting aggregation was added.
+
+---
+
+## Fix report: round 1 of 5
+
+### Result
+
+This round closes all six Critical Task 6 review findings. It adds no operation,
+dependency, or Task 7 reporting behavior.
+
+### Critical 1: exact plan, mapping, and candidate coverage
+
+`publication.planMappingCoverage` compares migrate plan source paths and Concept
+IDs with mapping rows by exact counted multisets. It rejects duplicate expected
+or actual values, missing or extra rows, changed source ownership, changed
+Concept ID, and changed type with `PUBLISH_PLAN_MAPPING_MISMATCH`.
+
+Candidate comparison uses counted multisets for accepted candidates, staged
+metadata, staged Markdown files, and review candidates. It compares duplicate
+values and total counts as well as missing and extra values. Every plan migrate
+entry contributes either its exact unsplit candidate or every accepted split
+output. The A/B plan with A/A mapping fixture refuses before writer dispatch and
+changes zero bundle files.
+
+### Critical 2: canonical review coverage
+
+`scripts/lib/semantic-review.js` is now the shared Task 5 and Task 6 canonical
+coverage seam. It checks exact accepted reviewed-source coverage, exact accepted
+`{ sections, outputs, proposal }`, exact section ranges including residue,
+duplicate, missing, and extra ranges, and every verdict. Only `preserved` passes.
+
+Missing and duplicate semantic section fixtures return
+`PUBLISH_SEMANTIC_REVIEW_STALE` and write zero bundle files.
+
+### Critical 3: unsplit source identity
+
+Every migration mapping row now carries `source_identity`, the SHA-256 identity
+of the complete current source bytes when migration-plan read them. Assembly
+continues to carry the source observation binding, and Task 6 requires exactly
+one binding for every one-source concept, including unsplit candidates. The
+binding must name the accepted mapping source and digest.
+
+Immediately before write 1, publication rereads every split and unsplit source
+and compares it with the accepted identity. Changed, missing, or unreadable
+unsplit sources return `PUBLISH_SOURCE_CHANGED` and write zero bundle files.
+
+### Critical 4: complete route equality
+
+Task 6 now compares counted normalized target multisets, not only caller route
+metadata. Normalization retains query and fragment suffixes. Expected targets
+include:
+
+- every accepted ordinary route target;
+- each heading-anchor route's accepted output path and target anchor;
+- each whole-source route's accepted output or generated group-index path.
+
+Actual targets come from parsed Markdown link occurrences in the checked
+candidate and generated index bytes. Missing, extra, duplicate, wrong target,
+and wrong anchor values return `PUBLISH_ROUTE_MISMATCH`. Actual heading outlines
+are still checked separately; heading existence does not satisfy route equality.
+
+### Critical 5: actual group, index, and provenance proof
+
+Assembly stages one navigation-only index for every accepted reader-purpose
+group. The staged index row carries the accepted group purpose, index entry, and
+ordered child entries. Its bytes encode the accepted title, purpose, and ordered
+child links. Task 6 requires every index candidate, proves group placement from
+the actual output path, and compares the full deterministic index bytes. Missing
+or wrong indexes return `PUBLISH_INDEX_MISSING` or
+`PUBLISH_INDEX_CHANGED`.
+
+Actual concept frontmatter `sources` must exactly equal the accepted authored
+provenance assignment values. Caller metadata cannot replace this proof. A
+mismatch returns `PUBLISH_PROVENANCE_MISMATCH`. The accepted complete output row
+still binds display-only support explanations through the canonical semantic
+review, while actual frontmatter proves the authored values.
+
+### Critical 6: checked bytes and symlink refusal
+
+The precheck reads each staged candidate once through `readBuffer` and returns
+its canonical checked bytes, identity, parsed tree, and body. Writer briefs are
+built from those checked values; `publish` does not reread staged files before
+dispatch. A service-injection fixture changes `readFile` after the check and
+proves the checked body is written.
+
+Before collection, Task 6 refuses a symlinked staging root, ancestor, or file
+with `PUBLISH_STAGING_SYMLINK`. Before each write, it checks target containment
+and symlink ancestry again. Staging ancestor and file fixtures prove zero bundle
+writes.
+
+### Changed files
+
+- `scripts/lib/semantic-review.js`: shared exact canonical review coverage.
+- `scripts/lib/publication.js`: counted coverage, source identity, route/index/
+  provenance proof, checked bytes, and symlink checks.
+- `scripts/lib/migration.js`: adds accepted `source_identity` to mapping rows.
+- `scripts/lib/assembly.js`: stages accepted navigation index candidates.
+- `scripts/lib/setup.js`: reuses shared review coverage and writes only checked
+  candidate bytes.
+- `skills/okf-setup/SKILL.md`: documents the fixed Task 6 authority.
+- `test/issue-201-publish-precheck.test.js`: deterministic fixtures for all six
+  bypass groups.
+- `test/issue-145.test.js`, `test/issue-149.test.js`, and
+  `test/issue-189.test.js`: update affected contract fixtures.
+- `.superpowers/sdd/issue-201/task-6-report.md`: this fix report.
+
+### Test evidence
+
+Red Task 6 run before production changes:
+
+```text
+node --test "test/issue-201-publish-precheck.test.js"
+tests 16, pass 7, fail 9
+```
+
+Green Task 6 run after the first implementation pass:
+
+```text
+node --test "test/issue-201-publish-precheck.test.js"
+tests 16, pass 16, fail 0
+```
+
+Focused migration-plan through publication, Task 5, worker mapping, and docs
+regressions:
+
+```text
+node --test "test/issue-145.test.js" "test/issue-146.test.js" "test/issue-147.test.js" "test/issue-148.test.js" "test/issue-149.test.js" "test/issue-189.test.js" "test/issue-201-worker-split-mapping.test.js" "test/issue-201-semantic-review.test.js" "test/issue-201-publish-precheck.test.js" "test/issue-120-doc-executability.test.js"
+tests 124, pass 124, fail 0
+```
+
+Final self-review added exact purpose-byte proof, raw-byte source rereads, support
+for multiple accepted group indexes, and a route check where an ordinary concept
+link targets an indexed child. The final verification evidence follows below.
+
+Final Task 6 run:
+
+```text
+node --test "test/issue-201-publish-precheck.test.js"
+tests 18, pass 18, fail 0
+```
+
+Final complete suite:
+
+```text
+node --test "test/*.test.js"
+tests 622, pass 622, fail 0
+```
+
+Repository whitespace check:
+
+```text
+git diff --check
+exit 0
+```
+
+### Scope
+
+Precheck refusal still writes zero bundle files. A later write failure still
+reports earlier successful writes, the failed write, and later not-attempted
+writes. No atomicity, rollback, checkpoint, resume, or recovery behavior or
+claim was added. Task 7 reporting aggregation remains unimplemented.

@@ -5,6 +5,7 @@ const discovery = require('./discovery');
 const mappingRules = require('./mapping');
 const monorepo = require('./monorepo');
 const sections = require('./sections');
+const semanticReview = require('./semantic-review');
 const validation = require('./validation');
 
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -23,7 +24,12 @@ function validSourceBinding(value) {
 
 function validStaged(value) {
   if (!object(value)) return false;
-  const split = value.output !== undefined || value.sections !== undefined;
+  if (value.kind === 'index') {
+    return exactFields(value, ['kind', 'path', 'file', 'group'])
+      && monorepo.normalizeRelative(value.path) === value.path
+      && monorepo.normalizeRelative(value.file) === value.file && object(value.group);
+  }
+  const split = value.output !== undefined || value.sections !== undefined || value.accepted_output !== undefined;
   const fields = ['path', 'concept', 'type', 'shard', 'file', 'sources', ...(split ? ['output', 'sections', 'accepted_output'] : [])];
   return exactFields(value, fields) && fields.slice(0, 5).every((field) => text(value[field]))
     && monorepo.normalizeRelative(value.path) === value.path
@@ -61,30 +67,47 @@ function validPlan(value) {
 }
 
 function validMapping(value) {
-  return Array.isArray(value) && value.every((item) => exactFields(item, ['path', 'concept', 'type', 'sources', 'body'])
-    && monorepo.normalizeRelative(item.path) === item.path
+  return Array.isArray(value) && value.every((item) => exactFields(item, [
+    'path', 'concept', 'type', 'sources', 'source_identity', 'body',
+  ]) && monorepo.normalizeRelative(item.path) === item.path
     && monorepo.normalizeRelative(item.concept) === item.concept
-    && text(item.type) && (item.sources === null || Array.isArray(item.sources)) && typeof item.body === 'string');
+    && text(item.type) && (item.sources === null || Array.isArray(item.sources))
+    && SHA256.test(item.source_identity) && typeof item.body === 'string');
 }
 
-function exactSet(expected, actual) {
-  const counts = new Map();
-  for (const item of actual) counts.set(item, (counts.get(item) || 0) + 1);
-  const expectedSet = new Set(expected);
-  const actualSet = new Set(actual);
-  return {
-    missing: expected.filter((item) => !actualSet.has(item)).sort(),
-    extra: [...actualSet].filter((item) => !expectedSet.has(item)).sort(),
-    duplicate: [...counts].filter(([, count]) => count > 1).map(([item]) => item).sort(),
-  };
+function finding(code, detail = {}) {
+  return { code, detail };
 }
 
-function differs(value) {
-  return value.missing.length > 0 || value.extra.length > 0 || value.duplicate.length > 0;
+function proposalFinding(code, detail = {}) {
+  return finding(code, { ...detail, new_proposal_required: true });
+}
+
+function planMappingCoverage(plan, mapping) {
+  const migrating = plan.entries.filter((item) => item.disposition === 'migrate');
+  const paths = semanticReview.exactSet(migrating.map((item) => item.path), mapping.map((item) => item.path));
+  const planConcepts = migrating.map((item) => item.concept);
+  const mappingConcepts = mapping.map((item) => item.concept);
+  const concepts = semanticReview.exactSet(planConcepts, mappingConcepts);
+  const changed = mapping.filter((item) => {
+    const entry = migrating.find((candidate) => candidate.path === item.path);
+    return !entry || entry.concept !== item.concept || entry.type !== item.type;
+  }).map((item) => item.path).sort();
+  if (semanticReview.differs(paths) || semanticReview.differs(concepts) || changed.length > 0) {
+    return { ok: false, finding: proposalFinding('PUBLISH_PLAN_MAPPING_MISMATCH', { paths, concepts, changed }) };
+  }
+  return { ok: true };
 }
 
 function headingAnchor(value) {
   return value.toLowerCase().trim().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/[ _]+/g, '-');
+}
+
+function normalizedLink(candidatePath, resource) {
+  const target = validation.bodyLinkPath(resource);
+  if (!target) return null;
+  const suffix = resource.slice(target.length);
+  return mappingRules.resolveLinkTarget(candidatePath, target) + suffix;
 }
 
 function bodyFacts(body, candidatePath) {
@@ -99,171 +122,266 @@ function bodyFacts(body, candidatePath) {
   return {
     title: heading_outline.find((item) => item.level === 1)?.text || null,
     heading_outline,
-    links: validation.markdownLinkOccurrences(body).map((item) => {
-      const target = validation.bodyLinkPath(item.resource);
-      return target ? mappingRules.resolveLinkTarget(candidatePath, target) : item.resource;
-    }),
+    links: validation.markdownLinkOccurrences(body).map((item) => normalizedLink(candidatePath, item.resource)).filter(Boolean),
     anchors: heading_outline.map((item) => headingAnchor(item.text)),
   };
 }
 
+function acceptedGroups(splitReview) {
+  const groups = new Map();
+  for (const review of splitReview.filter((item) => item.proposal !== null)) {
+    for (const output of review.proposal.outputs) {
+      const group = output.reader_purpose_group;
+      if (group !== null && !groups.has(group.key)) {
+        groups.set(group.key, {
+          key: group.key,
+          purpose: group.purpose,
+          index_entry: group.index_entry,
+          child_entries: review.proposal.outputs
+            .filter((candidate) => candidate.reader_purpose_group?.key === group.key)
+            .map((candidate) => candidate.reader_purpose_group.child_entry).sort((a, b) => a.order - b.order),
+        });
+      }
+    }
+  }
+  return groups;
+}
+
 function expectedCandidates(mapping, splitReview) {
   const reviews = new Map(splitReview.map((item) => [item.path, item]));
-  return mapping.flatMap((item) => {
+  const concepts = mapping.flatMap((item) => {
     const review = reviews.get(item.path);
     if (!review || review.proposal === null) {
-      return [{ source: item.path, concept: item.concept, path: `${item.concept}.md`, type: item.type, sources: item.sources || [] }];
+      return [{
+        kind: 'concept', source: item.path, source_identity: item.source_identity,
+        concept: item.concept, path: `${item.concept}.md`, type: item.type, sources: item.sources || [],
+      }];
     }
     return review.proposal.outputs.map((output) => ({
-      source: item.path,
-      concept: output.concept_id,
-      path: output.path,
-      type: output.type,
-      output: output.output,
-      accepted_output: output,
+      kind: 'concept', source: item.path, source_identity: review.source_identity,
+      concept: output.concept_id, path: output.path, type: output.type,
+      output: output.output, accepted_output: output,
       sections: review.outputs.find((row) => row.output === output.output).sections
         .map(({ line_start, line_end }) => ({ line_start, line_end })),
-      title: output.title,
-      heading_outline: output.heading_outline,
-      group: output.reader_purpose_group,
+      title: output.title, heading_outline: output.heading_outline,
       sources: output.provenance_assignments.map((assignment) => assignment.source),
-      links: output.link_routes.map((route) => route.target),
-      anchors: output.anchor_routes.map((route) => route.target_anchor),
     }));
   });
+  const indexes = [...acceptedGroups(splitReview).values()].map((group) => ({
+    kind: 'index', path: group.index_entry.path, group,
+  }));
+  return [...concepts, ...indexes];
 }
 
-function finding(code, detail = {}) {
-  return { code, detail };
+function safePath(root, file, services) {
+  const absoluteRoot = path.resolve(root);
+  const absolute = path.resolve(file);
+  if (absolute !== absoluteRoot && !absolute.startsWith(`${absoluteRoot}${path.sep}`)) return false;
+  let current = absolute;
+  while (current !== absoluteRoot) {
+    if (services.isLink(current)) return false;
+    current = path.dirname(current);
+  }
+  return !services.isLink(absoluteRoot);
 }
 
-function proposalFinding(code, detail = {}) {
-  return finding(code, { ...detail, new_proposal_required: true });
-}
-
-function changed(candidate, field, expected, actual) {
-  return { ok: false, finding: proposalFinding('PUBLISH_CANDIDATE_CHANGED', {
-    path: candidate.path, field, expected, actual,
-  }) };
-}
-
-function evaluateCandidate(expected, staged, stagingRoot, gitRoot, bundleRoot, services) {
+function checkedFile(expected, staged, stagingRoot, gitRoot, bundleRoot, services) {
   const relative = monorepo.normalizeRelative(staged.file);
   const file = relative ? path.resolve(gitRoot, relative) : null;
   const candidatePath = file ? path.relative(stagingRoot, file).split(path.sep).join('/') : null;
-  if (!file || candidatePath !== expected.path) return changed(expected, 'path', expected.path, candidatePath);
-  if (staged.path !== expected.source) return changed(expected, 'source', expected.source, staged.path);
-  if (staged.concept !== expected.concept) return changed(expected, 'concept_id', expected.concept, staged.concept);
-  if (staged.type !== expected.type) return changed(expected, 'type', expected.type, staged.type);
+  if (!file || candidatePath !== expected.path || !safePath(stagingRoot, file, services)) {
+    return { ok: false, finding: proposalFinding('PUBLISH_STAGING_SYMLINK', { path: expected.path }) };
+  }
+  let bytes;
+  try { bytes = services.readBuffer(file); } catch {
+    return { ok: false, finding: proposalFinding('PUBLISH_CANDIDATE_READ_FAILED', { path: expected.path }) };
+  }
+  const identity = `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+  const reviewBinding = staged.semantic_identity;
+  return { ok: true, bytes, identity, text: bytes.toString('utf8'), file, candidatePath, reviewBinding };
+}
+
+function changed(expected, field, wanted, actual) {
+  return { ok: false, finding: proposalFinding('PUBLISH_CANDIDATE_CHANGED', {
+    path: expected.path, field, expected: wanted, actual,
+  }) };
+}
+
+function checkIndex(expected, staged, checked, gitRoot, bundleRoot) {
+  if (staged.kind !== 'index' || !isDeepStrictEqual(staged.group, expected.group)) {
+    return changed(expected, 'group_index', expected.group, staged.group);
+  }
+  const expectedText = `# ${expected.group.index_entry.title}\n\n${expected.group.purpose}\n\n${expected.group.child_entries.map((child) => {
+    const target = path.posix.relative(path.posix.dirname(expected.group.index_entry.path), child.path);
+    return `- [${child.title}](${target})`;
+  }).join('\n')}\n`;
+  if (checked.text !== expectedText) {
+    return { ok: false, finding: proposalFinding('PUBLISH_INDEX_CHANGED', {
+      path: expected.path, field: 'content', expected: expectedText, actual: checked.text,
+    }) };
+  }
+  const bundlePath = path.relative(gitRoot, bundleRoot).split(path.sep).join('/');
+  const facts = bodyFacts(checked.text, path.posix.join(bundlePath, expected.path));
+  if (facts.title !== expected.group.index_entry.title) {
+    return { ok: false, finding: proposalFinding('PUBLISH_INDEX_CHANGED', {
+      path: expected.path, field: 'title', expected: expected.group.index_entry.title, actual: facts.title,
+    }) };
+  }
+  const expectedLinks = expected.group.child_entries.map((child) => path.posix.join(bundlePath, child.path));
+  if (!isDeepStrictEqual(facts.links, expectedLinks)) {
+    return { ok: false, finding: proposalFinding('PUBLISH_INDEX_CHANGED', {
+      path: expected.path, field: 'children', expected: expectedLinks, actual: facts.links,
+    }) };
+  }
+  return { ok: true, checked: { ...checked, kind: 'index', path: expected.path, target: expected.path } };
+}
+
+function checkConcept(expected, staged, checked, gitRoot, bundleRoot) {
+  if (staged.kind === 'index' || staged.path !== expected.source || staged.concept !== expected.concept
+    || staged.type !== expected.type) return changed(expected, 'identity', expected, staged);
+  const wantedBinding = [{ path: expected.source, sha256: expected.source_identity.slice('sha256:'.length) }];
+  if (!isDeepStrictEqual(staged.sources, wantedBinding)) {
+    return { ok: false, finding: proposalFinding('PUBLISH_SOURCE_CHANGED', {
+      path: expected.source, expected: wantedBinding, actual: staged.sources,
+    }) };
+  }
   if (expected.output === undefined && (staged.output !== undefined || staged.sections !== undefined)) {
     return changed(expected, 'source_section_assignments', null, { output: staged.output, sections: staged.sections });
   }
-  if (expected.output !== undefined && (staged.output !== expected.output || !isDeepStrictEqual(staged.sections, expected.sections))) {
-    return changed(expected, 'source_section_assignments', { output: expected.output, sections: expected.sections }, {
-      output: staged.output, sections: staged.sections,
-    });
-  }
-  if (expected.output !== undefined && !isDeepStrictEqual(staged.accepted_output, expected.accepted_output)) {
+  if (expected.output !== undefined && (staged.output !== expected.output || !isDeepStrictEqual(staged.sections, expected.sections)
+    || !isDeepStrictEqual(staged.accepted_output, expected.accepted_output))) {
     return changed(expected, 'accepted_output', expected.accepted_output, staged.accepted_output);
   }
-
   let parsed;
   try {
-    const textValue = services.readFile(file);
-    const extracted = validation.parseFrontmatter(textValue);
+    const extracted = validation.parseFrontmatter(checked.text);
     parsed = { tree: validation.parseYAML(extracted.frontmatter), body: extracted.body };
   } catch {
     return { ok: false, finding: proposalFinding('PUBLISH_CANDIDATE_READ_FAILED', { path: expected.path }) };
   }
-  if (parsed.tree.type !== expected.type) return changed(expected, 'type', expected.type, parsed.tree.type);
-  if (parsed.tree.status !== 'draft') return changed(expected, 'status', 'draft', parsed.tree.status);
-  const actualSources = parsed.tree.sources === undefined ? [] : parsed.tree.sources;
-  if (!isDeepStrictEqual(actualSources, expected.sources)) return changed(expected, 'provenance', expected.sources, actualSources);
-
-  if (expected.output !== undefined) {
-    const bundlePath = path.relative(gitRoot, bundleRoot).split(path.sep).join('/');
-    const facts = bodyFacts(parsed.body, path.posix.join(bundlePath, expected.path));
-    if (facts.title !== expected.title) return changed(expected, 'title', expected.title, facts.title);
-    if (!isDeepStrictEqual(facts.heading_outline, expected.heading_outline)) {
-      return changed(expected, 'heading_outline', expected.heading_outline, facts.heading_outline);
-    }
-    if (!isDeepStrictEqual(facts.links, expected.links)) return changed(expected, 'links', expected.links, facts.links);
-    const missingAnchors = expected.anchors.filter((anchor) => !facts.anchors.includes(anchor));
-    if (missingAnchors.length > 0) return changed(expected, 'anchors', expected.anchors, facts.anchors);
+  if (parsed.tree.type !== expected.type || parsed.tree.status !== 'draft') {
+    return changed(expected, 'frontmatter', { type: expected.type, status: 'draft' }, parsed.tree);
   }
-  return { ok: true };
+  const actualSources = parsed.tree.sources === undefined ? [] : parsed.tree.sources;
+  if (!isDeepStrictEqual(actualSources, expected.sources)) {
+    return { ok: false, finding: proposalFinding('PUBLISH_PROVENANCE_MISMATCH', {
+      path: expected.path, expected: expected.sources, actual: actualSources,
+    }) };
+  }
+  const bundlePath = path.relative(gitRoot, bundleRoot).split(path.sep).join('/');
+  const facts = bodyFacts(parsed.body, path.posix.join(bundlePath, expected.path));
+  if (expected.output !== undefined && (facts.title !== expected.title
+    || !isDeepStrictEqual(facts.heading_outline, expected.heading_outline))) {
+    return changed(expected, 'headings', { title: expected.title, outline: expected.heading_outline }, facts);
+  }
+  return { ok: true, checked: {
+    ...checked, kind: 'concept', path: expected.path, target: expected.path,
+    concept: expected.concept, sources: staged.sources, tree: parsed.tree, body: parsed.body, facts,
+  } };
 }
 
-function evaluate({ gitRoot, bundleRoot, stagingRoot, mapping, splitReview, staged, semanticReview, services }) {
+function routeTargets(splitReview, bundlePath) {
+  const targets = [];
+  for (const review of splitReview.filter((item) => item.proposal !== null)) {
+    const outputs = new Map(review.proposal.outputs.map((item) => [item.output, item]));
+    for (const output of review.proposal.outputs) {
+      targets.push(...output.link_routes.map((route) => route.target));
+      targets.push(...output.anchor_routes.map((route) => `${path.posix.join(bundlePath, output.path)}#${route.target_anchor}`));
+    }
+    for (const route of review.proposal.whole_source_link_routes) {
+      const targetPath = route.target.kind === 'output'
+        ? outputs.get(route.target.output).path : `${route.target.group}/index.md`;
+      targets.push(path.posix.join(bundlePath, targetPath));
+    }
+  }
+  return targets.sort();
+}
+
+function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview, staged, semanticReview: review, services }) {
+  const coverage = planMappingCoverage(plan, mapping);
+  if (!coverage.ok) return coverage;
+  if (!safePath(gitRoot, stagingRoot, services)) {
+    return { ok: false, finding: proposalFinding('PUBLISH_STAGING_SYMLINK', { path: path.relative(gitRoot, stagingRoot) }) };
+  }
+  for (const item of staged) {
+    const file = path.resolve(gitRoot, item.file);
+    if (!safePath(stagingRoot, file, services)) {
+      return { ok: false, finding: proposalFinding('PUBLISH_STAGING_SYMLINK', { path: item.file }) };
+    }
+  }
   let listing;
   try { listing = services.listFiles(stagingRoot); } catch { listing = { files: [], complete: false }; }
-  if (!listing.complete) return { ok: false, finding: proposalFinding('PUBLISH_CANDIDATE_SCAN_INCOMPLETE') };
+  if (!listing.complete) {
+    return { ok: false, finding: proposalFinding('PUBLISH_CANDIDATE_SCAN_INCOMPLETE') };
+  }
   const currentPaths = listing.files.filter(discovery.isMarkdownFile)
     .map((file) => path.relative(stagingRoot, file).split(path.sep).join('/')).sort();
   const expected = expectedCandidates(mapping, splitReview);
   const expectedPaths = expected.map((item) => item.path).sort();
-  const stagedPaths = staged.map((item) => {
-    const relative = monorepo.normalizeRelative(item.file);
-    return relative ? path.relative(stagingRoot, path.resolve(gitRoot, relative)).split(path.sep).join('/') : item.file;
-  });
-  const pathSet = exactSet(expectedPaths, currentPaths);
-  const stagedSet = exactSet(expectedPaths, stagedPaths);
-  if (differs(pathSet) || differs(stagedSet)) {
-    return { ok: false, finding: proposalFinding('PUBLISH_CANDIDATE_SET_MISMATCH', {
-      files: pathSet, staged: stagedSet, expected_total: expected.length, actual_total: currentPaths.length,
+  const stagedPaths = staged.map((item) => path.relative(stagingRoot, path.resolve(gitRoot, item.file)).split(path.sep).join('/'));
+  const files = semanticReview.exactSet(expectedPaths, currentPaths);
+  const metadata = semanticReview.exactSet(expectedPaths, stagedPaths);
+  if (semanticReview.differs(files) || semanticReview.differs(metadata)) {
+    const missingIndex = files.missing.find((item) => item.endsWith('/index.md'));
+    return { ok: false, finding: proposalFinding(missingIndex ? 'PUBLISH_INDEX_MISSING' : 'PUBLISH_CANDIDATE_SET_MISMATCH', {
+      files, staged: metadata,
     }) };
   }
 
-  const stagedByPath = new Map(staged.map((item) => {
-    const relative = monorepo.normalizeRelative(item.file);
-    return [path.relative(stagingRoot, path.resolve(gitRoot, relative)).split(path.sep).join('/'), item];
-  }));
+  const stagedByPath = new Map(staged.map((item) => [
+    path.relative(stagingRoot, path.resolve(gitRoot, item.file)).split(path.sep).join('/'), item,
+  ]));
+  const checked = [];
   for (const candidate of expected) {
-    const result = evaluateCandidate(candidate, stagedByPath.get(candidate.path), stagingRoot, gitRoot, bundleRoot, services);
+    const stagedRow = stagedByPath.get(candidate.path);
+    const read = checkedFile(candidate, stagedRow, stagingRoot, gitRoot, bundleRoot, services);
+    if (!read.ok) return read;
+    const result = candidate.kind === 'index'
+      ? checkIndex(candidate, stagedRow, read, gitRoot, bundleRoot)
+      : checkConcept(candidate, stagedRow, read, gitRoot, bundleRoot);
     if (!result.ok) return result;
+    checked.push(result.checked);
   }
 
-  const reviewed = splitReview.filter((item) => item.proposal !== null).sort((a, b) => a.path.localeCompare(b.path));
-  const sourceSet = exactSet(reviewed.map((item) => item.path), semanticReview.sources.map((item) => item.path));
-  if (differs(sourceSet)) return { ok: false, finding: finding('PUBLISH_SEMANTIC_REVIEW_STALE', { sources: sourceSet }) };
-  for (const review of reviewed) {
-    const submitted = semanticReview.sources.find((item) => item.path === review.path);
-    const accepted = { sections: review.sections, outputs: review.outputs, proposal: review.proposal };
-    let actual = null;
-    try { actual = sections.identify(services.readFile(path.join(gitRoot, review.path))); } catch {}
-    if (actual !== review.source_identity || submitted.source_identity !== review.source_identity) {
-      return { ok: false, finding: proposalFinding('PUBLISH_SOURCE_CHANGED', {
-        path: review.path, expected: review.source_identity, reviewed: submitted.source_identity, actual,
-      }) };
-    }
-    if (!isDeepStrictEqual(submitted.accepted, accepted) || submitted.sections.some((item) => item.verdict !== 'preserved')) {
-      return { ok: false, finding: finding('PUBLISH_SEMANTIC_REVIEW_STALE', { path: review.path }) };
-    }
+  const canonical = semanticReview.canonicalCoverage(review, splitReview);
+  if (!canonical.ok) return { ok: false, finding: finding('PUBLISH_SEMANTIC_REVIEW_STALE', canonical.detail) };
+  const reviewedCandidates = canonical.reviewed.length === 0 ? [] : currentPaths;
+  const candidates = semanticReview.exactSet(reviewedCandidates, review.candidates.map((item) => item.path));
+  if (semanticReview.differs(candidates)) {
+    return { ok: false, finding: finding('PUBLISH_SEMANTIC_REVIEW_STALE', { candidates }) };
   }
-
-  const expectedReviewCandidates = reviewed.length === 0 ? [] : currentPaths;
-  const reviewSet = exactSet(expectedReviewCandidates, semanticReview.candidates.map((item) => item.path));
-  if (differs(reviewSet)) return { ok: false, finding: finding('PUBLISH_SEMANTIC_REVIEW_STALE', { candidates: reviewSet }) };
-  for (const submitted of semanticReview.candidates) {
-    let actual = null;
-    try { actual = `sha256:${crypto.createHash('sha256').update(services.readBuffer(path.join(stagingRoot, submitted.path))).digest('hex')}`; } catch {}
-    if (actual !== submitted.identity) {
+  for (const candidate of checked.filter((item) => reviewedCandidates.includes(item.path))) {
+    const submitted = review.candidates.find((item) => item.path === candidate.path);
+    if (!submitted || submitted.identity !== candidate.identity) {
       return { ok: false, finding: finding('PUBLISH_SEMANTIC_REVIEW_STALE', {
-        path: submitted.path, expected: submitted.identity, actual,
+        path: candidate.path, expected: submitted?.identity, actual: candidate.identity,
+      }) };
+    }
+  }
+  for (const candidate of expected.filter((item) => item.kind === 'concept')) {
+    let actual = null;
+    try { actual = sections.identify(services.readBuffer(path.join(gitRoot, candidate.source))); } catch {}
+    if (actual !== candidate.source_identity) {
+      return { ok: false, finding: proposalFinding('PUBLISH_SOURCE_CHANGED', {
+        path: candidate.source, expected: candidate.source_identity, actual,
       }) };
     }
   }
 
-  for (const binding of staged.flatMap((item) => item.sources)) {
-    let actual = null;
-    try { actual = crypto.createHash('sha256').update(services.readBuffer(path.join(gitRoot, binding.path))).digest('hex'); } catch {}
-    if (actual !== binding.sha256) {
-      return { ok: false, finding: proposalFinding('PUBLISH_SOURCE_CHANGED', {
-        path: binding.path, expected: binding.sha256, actual,
-      }) };
-    }
+  const bundlePath = path.relative(gitRoot, bundleRoot).split(path.sep).join('/');
+  const expectedRoutes = routeTargets(splitReview, bundlePath);
+  const actualRoutes = checked.filter((item) => item.kind === 'concept')
+    .flatMap((item) => item.facts.links).sort();
+  const routes = semanticReview.exactSet(expectedRoutes, actualRoutes);
+  if (semanticReview.differs(routes)) {
+    return { ok: false, finding: proposalFinding('PUBLISH_ROUTE_MISMATCH', { routes }) };
   }
-  return { ok: true };
+
+  const checkedByPath = new Map(checked.map((item) => [item.path, item]));
+  return { ok: true, checked: stagedPaths.map((item) => checkedByPath.get(item)) };
 }
 
-module.exports = { evaluate, validCanonicalReview, validMapping, validPlan, validStaged };
+module.exports = {
+  evaluate, planMappingCoverage, safePath,
+  validCanonicalReview, validMapping, validPlan, validStaged,
+};

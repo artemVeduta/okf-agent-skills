@@ -87,6 +87,9 @@ test('publish survives a pre-publish precheck whose delegated validate answer ex
   );
 
   const file = stage(root, 'decisions/a.md', '---\ntype: Decision\nstatus: draft\n---\n# A\n\nBody text.\n');
+  fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'docs/a.md'), '# Source A\n');
+  const sourceDigest = require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root, 'docs/a.md'))).digest('hex');
   const response = runWrapper(setupWrapper, {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
@@ -94,13 +97,13 @@ test('publish survives a pre-publish precheck whose delegated validate answer ex
     payload: {
       cwd: root,
       task_kind: 'feature work',
-      staged: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', shard: 'x', file, sources: [] }],
+      staged: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', shard: 'x', file, sources: [{ path: 'docs/a.md', sha256: sourceDigest }] }],
       plan: {
         entries: [{ path: 'docs/a.md', disposition: 'migrate', reason: 'type_preserved', concept: 'decisions/a', type: 'Decision' }],
         executable: true,
         duplicates: [],
       },
-      mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, body: '# A\n\nBody text.\n' }],
+      mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, source_identity: `sha256:${sourceDigest}`, body: '# A\n\nBody text.\n' }],
       split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', proposal: null }],
       semantic_review: { human_assessed: false, candidates: [], sources: [] },
     },

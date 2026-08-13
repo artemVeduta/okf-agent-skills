@@ -54,6 +54,15 @@ function stagedRef(root, sourcePath, concept, type, content) {
 }
 
 function authority(root, staged) {
+  for (const item of staged) {
+    const source = path.join(root, item.path);
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    if (!fs.existsSync(source)) fs.writeFileSync(source, `# ${item.concept}\n`);
+    item.sources = [{
+      path: item.path,
+      sha256: require('node:crypto').createHash('sha256').update(fs.readFileSync(source)).digest('hex'),
+    }];
+  }
   return {
     plan: {
       entries: staged.map((item) => ({
@@ -64,6 +73,7 @@ function authority(root, staged) {
     },
     mapping: staged.map((item) => ({
       path: item.path, concept: item.concept, type: item.type, sources: null,
+      source_identity: `sha256:${item.sources[0].sha256}`,
       body: validationBody(root, item),
     })),
     split_review: staged.map((item) => ({ path: item.path, accounting_status: 'not_required', proposal: null })),

@@ -277,7 +277,7 @@ test('absent provenance stays absent: no fabricated sources, generated, verified
 
   const mapped = mappingFor(response, 'docs/decisions/no-provenance.md');
   assert.equal(mapped.sources, null);
-  assert.deepEqual(Object.keys(mapped).sort(), ['body', 'concept', 'path', 'sources', 'type'].sort());
+  assert.deepEqual(Object.keys(mapped).sort(), ['body', 'concept', 'path', 'source_identity', 'sources', 'type'].sort());
   for (const forbidden of ['generated', 'verified', 'author', 'confirmed']) {
     assert.equal(Object.hasOwn(mapped, forbidden), false, forbidden);
   }

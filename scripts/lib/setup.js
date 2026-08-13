@@ -18,6 +18,7 @@ const splitProposal = require('./split-proposal');
 const partition = require('./partition');
 const assembly = require('./assembly');
 const publication = require('./publication');
+const canonicalReview = require('./semantic-review');
 const lifecycle = require('./lifecycle');
 const { inside } = require('./paths');
 const {
@@ -993,6 +994,8 @@ function validPartitionMappingItem(item) {
   if (typeof item.concept !== 'string' || item.concept === '') return false;
   if (typeof item.type !== 'string' || item.type === '') return false;
   if (item.sources !== null && !Array.isArray(item.sources)) return false;
+  if (item.source_identity !== undefined && item.source_identity !== null
+    && (typeof item.source_identity !== 'string' || !SHA256_IDENTITY.test(item.source_identity))) return false;
   return typeof item.body === 'string';
 }
 
@@ -1261,6 +1264,14 @@ function executeAssemble(request, services) {
       }),
     };
   });
+  for (const item of outcome.indexes) {
+    const file = path.join(stagingRoot, item.path);
+    services.mkdir(path.dirname(file));
+    services.writeFile(file, item.rendered);
+    staged.push({
+      kind: 'index', path: item.path, file: path.relative(gitRoot, file), group: item.group,
+    });
+  }
 
   return respond(request, 'ok', {
     status: outcome.blockers.length > 0 ? 'partial' : 'complete',
@@ -1345,26 +1356,6 @@ function semanticRefusal(code, detail) {
   return { ok: false, finding: suiteFinding(code, detail) };
 }
 
-function exactSet(expected, actual) {
-  const counts = new Map();
-  for (const item of actual) counts.set(item, (counts.get(item) || 0) + 1);
-  const expectedSet = new Set(expected);
-  const actualSet = new Set(actual);
-  return {
-    missing: expected.filter((item) => !actualSet.has(item)).sort(),
-    extra: [...actualSet].filter((item) => !expectedSet.has(item)).sort(),
-    duplicate: [...counts].filter(([, count]) => count > 1).map(([item]) => item).sort(),
-  };
-}
-
-function setDiffers(diff) {
-  return diff.missing.length > 0 || diff.extra.length > 0 || diff.duplicate.length > 0;
-}
-
-function acceptedReview(review) {
-  return structuredClone({ sections: review.sections, outputs: review.outputs, proposal: review.proposal });
-}
-
 function contentIdentity(bytes) {
   return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
 }
@@ -1398,8 +1389,8 @@ function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoo
   }
 
   const expectedSources = reviewed.map((item) => item.path);
-  const sourceSet = exactSet(expectedSources, sourceRows.map((item) => item.path));
-  if (setDiffers(sourceSet)) return semanticRefusal('SEMANTIC_REVIEW_SOURCE_SET_MISMATCH', sourceSet);
+  const sourceSet = canonicalReview.exactSet(expectedSources, sourceRows.map((item) => item.path));
+  if (canonicalReview.differs(sourceSet)) return semanticRefusal('SEMANTIC_REVIEW_SOURCE_SET_MISMATCH', sourceSet);
 
   let listing;
   try { listing = services.listFiles(stagingRoot); } catch { listing = { files: [], complete: false }; }
@@ -1408,8 +1399,8 @@ function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoo
     .filter(discovery.isMarkdownFile)
     .map((file) => path.relative(stagingRoot, file).split(path.sep).join('/'))
     .sort();
-  const candidateSet = exactSet(currentCandidates, candidateRows.map((item) => item.path));
-  if (setDiffers(candidateSet)) return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_MISMATCH', candidateSet);
+  const candidateSet = canonicalReview.exactSet(currentCandidates, candidateRows.map((item) => item.path));
+  if (canonicalReview.differs(candidateSet)) return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_MISMATCH', candidateSet);
 
   for (const review of reviewed) {
     const submitted = sourceRows.find((item) => item.path === review.path);
@@ -1420,7 +1411,7 @@ function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoo
         path: review.path, expected: review.source_identity, submitted: submitted.source_identity, actual: currentSourceIdentity,
       });
     }
-    if (!isDeepStrictEqual(submitted.accepted, acceptedReview(review))) {
+    if (!isDeepStrictEqual(submitted.accepted, canonicalReview.acceptedReview(review))) {
       return semanticRefusal('SEMANTIC_REVIEW_ACCEPTED_MISMATCH', { path: review.path });
     }
 
@@ -1429,8 +1420,8 @@ function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoo
       && SEMANTIC_VERDICTS.has(item.verdict));
     if (!sectionShape) return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'section_shape', path: review.path });
     const rangeKey = (item) => `${item.line_start}:${item.line_end}`;
-    const sectionSet = exactSet(review.sections.map(rangeKey), submitted.sections.map(rangeKey));
-    if (setDiffers(sectionSet)) {
+    const sectionSet = canonicalReview.exactSet(review.sections.map(rangeKey), submitted.sections.map(rangeKey));
+    if (canonicalReview.differs(sectionSet)) {
       return semanticRefusal('SEMANTIC_REVIEW_SECTION_SET_MISMATCH', { path: review.path, ...sectionSet });
     }
   }
@@ -1456,7 +1447,7 @@ function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoo
     return {
       path: review.path,
       source_identity: review.source_identity,
-      accepted: acceptedReview(review),
+      accepted: canonicalReview.acceptedReview(review),
       sections: review.sections.map((section) => ({
         line_start: section.line_start,
         line_end: section.line_end,
@@ -1686,18 +1677,16 @@ function executePublish(request, services) {
   if (!Array.isArray(payload.staged) || payload.staged.length === 0 || !payload.staged.every(validPublishStagedRef)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (new Set(payload.staged.map((item) => item.concept)).size !== payload.staged.length) {
-    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
-  }
-  const migrating = payload.plan && Array.isArray(payload.plan.entries)
-    ? payload.plan.entries.filter((item) => item.disposition === 'migrate') : [];
   if (!publication.validPlan(payload.plan) || !publication.validMapping(payload.mapping)
-    || payload.mapping.length !== migrating.length
-    || payload.mapping.some((item) => !migrating.some((entry) => entry.path === item.path
-      && entry.concept === item.concept && entry.type === item.type))
     || !Array.isArray(payload.split_review)
     || !publication.validCanonicalReview(payload.semantic_review)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const planMapping = publication.planMappingCoverage(payload.plan, payload.mapping);
+  if (!planMapping.ok) {
+    return respond(request, 'blocked', { code: 'PUBLISH_PRECHECK_FAILED' }, [
+      suiteFinding(planMapping.finding.code, planMapping.finding.detail),
+    ]);
   }
   const splitReview = partition.validateSplitReviews(payload.mapping, payload.split_review);
   if (!splitReview.ok) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [
@@ -1714,7 +1703,7 @@ function executePublish(request, services) {
   }
 
   const checked = publication.evaluate({
-    gitRoot, bundleRoot, stagingRoot, mapping: payload.mapping, splitReview: payload.split_review,
+    gitRoot, bundleRoot, stagingRoot, plan: payload.plan, mapping: payload.mapping, splitReview: payload.split_review,
     staged: payload.staged, semanticReview: payload.semantic_review, services,
   });
   if (!checked.ok) {
@@ -1722,36 +1711,35 @@ function executePublish(request, services) {
   }
 
   const results = [];
-  for (const item of payload.staged) {
-    const rel = monorepo.normalizeRelative(item.file);
-    const resolved = rel ? path.resolve(gitRoot, rel) : null;
-    if (!resolved || !inside(stagingRoot, resolved)) {
-      results.push({ concept: item.concept, status: 'blocked: staged-file-outside-staging', findings: [] });
+  for (const item of checked.checked) {
+    const target = path.join(bundleRoot, item.target);
+    if (!publication.safePath(bundleRoot, target, services)) {
+      results.push({ concept: item.concept || item.path, status: 'blocked: target-symlink', findings: [suiteFinding('PUBLISH_TARGET_SYMLINK', { path: item.target })] });
       break;
     }
-    let text;
-    try {
-      text = services.readFile(resolved);
-    } catch {
-      results.push({ concept: item.concept, status: 'blocked: staged-file-unreadable', findings: [] });
-      break;
+    if (item.kind === 'index') {
+      try {
+        services.publishFile(target, item.text, null);
+        results.push({ concept: item.path, status: 'clean', findings: [] });
+      } catch (error) {
+        results.push({ concept: item.path, status: 'failed', findings: [suiteFinding('PUBLISH_INDEX_WRITE_FAILED', {
+          path: item.path, reason: writeFailureReason(error),
+        })] });
+        break;
+      }
+      continue;
     }
-    let parsed;
-    try {
-      parsed = stagedConceptContent(text);
-    } catch {
-      results.push({ concept: item.concept, status: 'blocked: staged-file-unparseable', findings: [] });
-      break;
-    }
-    const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, parsed.tree, parsed.body, item.sources || []);
+    const tree = { ...item.tree };
+    delete tree.status;
+    const brief = publishWriteBrief(cwd, bundleName, payload.task_kind, item.concept, tree, item.body, item.sources);
     const writeDispatch = dispatchBrief(brief);
     const outcome = writeDispatch.ok ? writeDispatch.response : dispatchFailure('okf-writer', writeDispatch);
     results.push({ concept: item.concept, status: outcome.status, findings: outcome.findings || [] });
     if (outcome.status !== 'clean') break;
   }
   const attempted = new Set(results.map((item) => item.concept));
-  const skipped = payload.staged.filter((item) => !attempted.has(item.concept))
-    .map((item) => ({ concept: item.concept, status: 'not-attempted' }));
+  const skipped = checked.checked.filter((item) => !attempted.has(item.concept || item.path))
+    .map((item) => ({ concept: item.concept || item.path, status: 'not-attempted' }));
 
   const published = results.filter((item) => item.status === 'clean').map((item) => item.concept);
   const failed = results.filter((item) => item.status !== 'clean');

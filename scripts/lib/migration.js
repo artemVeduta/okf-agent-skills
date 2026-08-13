@@ -57,6 +57,7 @@
 const path = require('node:path');
 const validation = require('./validation');
 const mapping = require('./mapping');
+const sections = require('./sections');
 
 // Reads a markdown source's own frontmatter tree and body exactly once, through
 // the same reader the write path and `discover` both use (no second parser). A
@@ -197,12 +198,13 @@ function deriveMapping(entries, bundleDir, read) {
   const mapped = [];
   for (const item of entries) {
     if (item.disposition !== 'migrate') continue;
-    const { tree, body } = read(item.path);
+    const { tree, body, raw } = read(item.path);
     mapped.push({
       path: item.path,
       concept: item.concept,
       type: item.type,
       sources: mapping.extractProvenance(tree),
+      source_identity: raw === null ? null : sections.identify(raw),
       body: mapping.rewriteLinks(item.path, body, conceptOf, bundleDir),
     });
   }
