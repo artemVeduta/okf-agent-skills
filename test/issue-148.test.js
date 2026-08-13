@@ -77,7 +77,7 @@ test('a clean staged bundle validates: complete, publishable, no findings', (t) 
   assert.equal(response.data.status, 'complete');
   assert.equal(response.data.publishable, true);
   assert.deepEqual(response.data.missing_disposition, []);
-  assert.deepEqual(response.data.conformance, { checked: true, findings: 0 });
+  assert.deepEqual(response.data.conformance, { findings: 0 });
   assert.deepEqual(response.data.semantic_fidelity, { assessed: true });
   assert.deepEqual(response.findings, []);
 });

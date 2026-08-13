@@ -1295,7 +1295,7 @@ function executeMigrationValidate(request, services) {
     concepts_checked: structural.data.concepts.map((item) => item.path),
     // Not a receipt and not an approval: a count of what this run found, in a
     // response `publish` never reads. `publish` runs the gate itself.
-    conformance: { checked: true, findings: conformanceResult.length },
+    conformance: { findings: conformanceResult.length },
     semantic_fidelity: { assessed },
   }, findings);
 }

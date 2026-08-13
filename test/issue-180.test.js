@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  acceptedMigration, binding, runWrapper, temporaryRoot,
+  acceptedMigration, binding, passingReview, runWrapper, temporaryRoot,
 } = require('../test-support/snapshot');
 // The staged bytes a fixture writes are the bytes `assemble` itself writes, from the
 // one renderer it uses -- never a second copy of that frontmatter shape. That is what
@@ -111,7 +111,7 @@ function assertBlocked(response, expected) {
   assert.deepEqual(codes(response), expected, JSON.stringify(response.findings));
   assert.equal(response.data.publishable, false);
   assert.equal(response.data.status, 'partial');
-  assert.deepEqual(response.data.conformance, { checked: true, findings: expected.length });
+  assert.deepEqual(response.data.conformance, { findings: expected.length });
 }
 
 // ------------------------------------------------------------------ conforming
@@ -131,7 +131,7 @@ test('a staged bundle that matches the accepted proposal answers with no conform
   assert.equal(response.result, 'ok');
   assert.equal(response.data.publishable, true);
   assert.deepEqual(response.findings, []);
-  assert.deepEqual(response.data.conformance, { checked: true, findings: 0 });
+  assert.deepEqual(response.data.conformance, { findings: 0 });
   assert.equal(fs.readFileSync(path.join(root, '.okf-staging', 'okf', 'terms.md'), 'utf8'), '---\ntype: Glossary\n---\n# terms\n');
 });
 
@@ -209,7 +209,7 @@ test('a proposal row disagreeing with its own staged concept blocks on the exact
     const migrated = migration(root, [decision('docs/a.md', 'decisions/a')]);
     mutate(migrated.proposal);
     const response = validate(root, migrated);
-    assert.deepEqual(codes(response), [code], label);
+    assertBlocked(response, [code]);
     assert.deepEqual(detailFor(response, code), detail, label);
   }
 });
@@ -298,6 +298,58 @@ test('a staged concept that re-attributed itself blocks', (t) => {
   });
 });
 
+/*
+ * The one provenance shape this comparison could otherwise never agree on, driven
+ * through the real operations rather than a hand-written proposal: a source whose own
+ * frontmatter declares `sources: []` declares no attribution at all, so the accepted
+ * row and the staged bytes must both say so. `assemble`'s renderer writes a `sources`
+ * key only for a non-empty list, so an accepted row carrying `[]` would block a
+ * correct migration on a mismatch no user could resolve without editing the source.
+ */
+test('a source declaring an empty provenance list migrates and publishes with no provenance finding', (t) => {
+  const root = repo(t);
+  write(root, 'docs/a.md', '---\ntype: Decision\nsources: []\n---\n# A\n');
+
+  const sources = run({ protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'discover', payload: { cwd: root } }).data.sources;
+  const plan = run({ protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'migration-plan', payload: { cwd: root, sources } }).data.plan;
+  const accepted = run({
+    protocol: 'okf-wrapper/1',
+    skill: 'okf-setup',
+    operation: 'propose',
+    payload: { cwd: root, plan: { entries: plan.entries, executable: plan.executable }, selected: sources, decision: 'accept' },
+  }).data;
+
+  assert.equal(accepted.proposal.outputs[0].provenance, null);
+  assert.equal(accepted.proposal.outputs[0].provenance_assignment, 'none');
+
+  // Staged through the same renderer and the same approved mapping `assemble` uses,
+  // so the two sides of the comparison are the two the migration really produces.
+  const mapped = accepted.mapping[0];
+  write(root, '.okf-staging/okf/a.md', renderConcept(mapped.type, mapped.sources, mapped.body));
+  const staged = [{
+    path: mapped.path,
+    concept: mapped.concept,
+    type: mapped.type,
+    shard: 'x',
+    file: path.join('.okf-staging', 'okf', 'a.md'),
+    sources: [binding(root, 'docs/a.md')],
+  }];
+  const migrated = {
+    proposal: accepted.proposal,
+    navigation: accepted.navigation,
+    staged,
+    review: passingReview(root, accepted.proposal, staged),
+  };
+
+  const validated = validate(root, migrated);
+  assert.equal(validated.data.publishable, true, JSON.stringify(validated.findings));
+
+  const published = publish(root, migrated);
+  assert.equal(published.result, 'ok', JSON.stringify(published.findings));
+  assert.deepEqual(published.data.published, ['a']);
+  assert.equal(fs.readFileSync(path.join(root, 'okf', 'a.md'), 'utf8'), '---\nstatus: draft\ntype: Decision\n---\n# A\n');
+});
+
 test('an accepted link rewrite the staged body lost, and a link at a target nobody bound, both block', (t) => {
   const root = repo(t);
   const rewritten = [{ target_source: 'docs/b.md', target_concept: 'decisions/b', decision: 'rewritten' }];
@@ -347,7 +399,7 @@ test('a verdict formed against something else no longer holds, on whichever bind
     const migrated = migration(root, [decision('docs/a.md', 'decisions/a')]);
     mutate(migrated);
     const response = validate(root, migrated);
-    assert.deepEqual(codes(response), ['REVIEW_VERDICT_STALE'], label);
+    assertBlocked(response, ['REVIEW_VERDICT_STALE']);
     assert.deepEqual(detailFor(response, 'REVIEW_VERDICT_STALE'), detail, label);
   }
 });

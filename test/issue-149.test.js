@@ -293,7 +293,7 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
   });
   assert.equal(migrationValidateResponse.result, 'ok', JSON.stringify(migrationValidateResponse.findings));
   assert.equal(migrationValidateResponse.data.publishable, true, JSON.stringify(migrationValidateResponse.findings));
-  assert.deepEqual(migrationValidateResponse.data.conformance, { checked: true, findings: 0 });
+  assert.deepEqual(migrationValidateResponse.data.conformance, { findings: 0 });
 
   // The real bundle still does not exist: neither operation ever created it.
   assert.equal(fs.existsSync(path.join(root, 'okf')), false);

@@ -105,8 +105,15 @@ function conceptBasename(sourcePath, type) {
 // unmodified, or `null`. Never a default, never a repaired shape, never an
 // invented entry -- a non-array value is not "structured provenance" per #131 and
 // is treated as absent rather than coerced into one.
+//
+// An empty list is absent for the same reason: `sources: []` attributes a document
+// to nothing, which is what declaring no provenance at all means. It is also the
+// only reading that agrees with what a concept file can actually say -- #147's
+// `assembly.renderConcept` writes a `sources` key only for a non-empty list, so a
+// `[]` recorded here would make the accepted proposal and the staged bytes disagree
+// by construction and block a correct migration on #180's `PROVENANCE_MISMATCH`.
 function extractProvenance(tree) {
-  return tree && Array.isArray(tree.sources) ? tree.sources : null;
+  return tree && Array.isArray(tree.sources) && tree.sources.length > 0 ? tree.sources : null;
 }
 
 // ------------------------------------------------------------------------ link rewriting
