@@ -11,6 +11,7 @@ const manifest = require('./manifest');
 const monorepo = require('./monorepo');
 const discovery = require('./discovery');
 const migration = require('./migration');
+const words = require('./words');
 const partition = require('./partition');
 const assembly = require('./assembly');
 const lifecycle = require('./lifecycle');
@@ -695,6 +696,16 @@ function executeMigrationPlan(request, services) {
   if (payload.answers !== undefined && (!payload.answers || typeof payload.answers !== 'object' || Array.isArray(payload.answers))) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  // #201 task 1: the caller's own explicit split-review request, one of #200's
+  // two ways a source at or below the target can still receive review (the
+  // other, `semantic_boundaries`, has no detector yet -- a later task's job).
+  // Validated the same strict way `payload.answers` already is: garbage input
+  // is refused before anything is computed, never silently ignored.
+  if (payload.split_requested !== undefined) {
+    const requestedOk = Array.isArray(payload.split_requested)
+      && payload.split_requested.every((item) => typeof item === 'string' && item !== '');
+    if (!requestedOk) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
 
   const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers);
   if (outcome.invalid) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
@@ -708,6 +719,39 @@ function executeMigrationPlan(request, services) {
   // through the same upward-walking `manifest.select()` the activation gate itself
   // used, not a hardcoded `<gitRoot>/.okf-workspace.json` (fix round 2, Important 3).
   const settingsReport = manifest.inspect(resolveManifestFile(payload, gitRoot, services), gitRoot, services);
+
+  // #201 task 1 (#200): "a source above the effective file-word target must
+  // receive split review... a smaller source can receive split review when
+  // setup finds clear semantic boundaries or when the user requests it --
+  // never automatically". This decides that per `migrate` source only --
+  // `skip`/`residue`/`blocked_pending_decision` never produce a concept, so
+  // the target does not apply to them. `review_required` is `true` only for
+  // `above_target` (the one mandatory case); `user_requested` is a *permitted*
+  // review, never forced. `semantic_boundaries` is named here for tasks 2-7 to
+  // carry forward verbatim, but nothing in this runtime detects it yet, so it
+  // is never produced by this operation. Word count is the raw file exactly as
+  // `readFile` returns it -- frontmatter and code included, per `words.js`'s
+  // own rule -- not `data.mapping[].body`, which is the parsed body with
+  // frontmatter already stripped and links rewritten. An unreadable source
+  // (already impossible for a `migrate` entry, which only exists once this
+  // same file was read successfully during classification) counts as empty
+  // rather than throwing, the same defensive shape `publish` already uses for
+  // a re-read.
+  const splitRequested = new Set(payload.split_requested || []);
+  const splitReview = outcome.entries
+    .filter((item) => item.disposition === 'migrate')
+    .map((item) => {
+      let raw;
+      try {
+        raw = services.readFile(path.join(gitRoot, item.path));
+      } catch {
+        raw = '';
+      }
+      const wordCount = words.countWords(raw);
+      const aboveTarget = wordCount > settingsReport.settings.max_words_per_file;
+      const reviewReason = aboveTarget ? 'above_target' : (splitRequested.has(item.path) ? 'user_requested' : null);
+      return { path: item.path, word_count: wordCount, review_required: aboveTarget, review_reason: reviewReason };
+    });
 
   const findings = [
     ...outcome.questions.map((q) => ({
@@ -746,6 +790,7 @@ function executeMigrationPlan(request, services) {
     references: outcome.references,
     settings: settingsReport.settings,
     settings_findings: settingsReport.settings_findings,
+    split_review: splitReview,
   }, findings);
 }
 

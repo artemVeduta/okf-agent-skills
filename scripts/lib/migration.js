@@ -25,8 +25,12 @@
  * duplicating them.
  *
  * Binding rules carried from #131 this module enforces:
- *   - one selected source -> one output concept, never split, exploded, or
- *     restructured;
+ *   - one selected source -> one output concept by default (#200 supersedes
+ *     #131's absolute "never split" for a source that receives split review
+ *     and an accepted split proposal; this module still emits exactly one
+ *     `migrate` entry per source unchanged -- the split itself is a later
+ *     stage's job, #201 tasks 2 onward, built on top of this module's plan
+ *     rather than inside it);
  *   - an explicit, non-empty `type` on the source is preserved verbatim rather
  *     than re-guessed (`type_preserved`); otherwise a deterministic type-mapping
  *     rule may apply (`type_inferred`, #145's job); a source with no explicit
