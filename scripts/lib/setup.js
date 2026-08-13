@@ -828,8 +828,11 @@ function applySplitProposals(reviews, payload, mapped, entries, gitRoot, bundleR
   }
   const groups = acceptedGroups.collect(records.map((item) => item.review));
   if (!groups.ok) {
-    findings.push(suiteFinding('SPLIT_PROPOSAL_GROUP_CONFLICT', groups.detail));
-    for (const record of records.filter((item) => item.proposal !== null)) {
+    const participants = records.filter((item) => item.proposal?.outputs.some(
+      (output) => output.reader_purpose_group?.key === groups.detail.group,
+    ));
+    for (const record of participants) {
+      findings.push(suiteFinding('SPLIT_PROPOSAL_GROUP_CONFLICT', { path: record.path, ...groups.detail }));
       record.proposal = splitProposal.refuse(record.proposal);
       record.review.proposal = record.proposal;
     }

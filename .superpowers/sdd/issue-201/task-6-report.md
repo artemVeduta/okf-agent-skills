@@ -520,3 +520,75 @@ exit 0
 
 No Task 7 aggregation, operation, dependency, rollback, recovery, checkpoint, or
 resume behavior was added.
+
+---
+
+## Fix report: round 3 of 5
+
+### Result
+
+This round fixes the Important response-local group conflict breakage. It adds no
+Task 7 behavior.
+
+### Participant-only conflict handling
+
+`accepted-groups.collect` already returns the exact conflicting group key.
+`applySplitProposals` now selects only reviewed proposal records with an output
+whose `reader_purpose_group.key` equals that key. It emits one exact
+`SPLIT_PROPOSAL_GROUP_CONFLICT` finding for each participant, including that
+participant's source path, and refuses only those proposals.
+
+An unrelated accepted proposal, including a root output with no group, keeps its
+accepted status. Both participant findings keep `blocks: true`; only
+response-local proposal status is narrowed.
+
+### Process fixture
+
+The focused migration-plan fixture submits three accepted proposals. Two claim
+`shared` with conflicting definitions. The third is an unrelated root output. It
+asserts exactly two path-specific conflict findings, two refused participants,
+and one still-accepted unrelated proposal.
+
+### Red evidence
+
+```text
+node --test "test/issue-201-split-proposal.test.js"
+tests 22, pass 21, fail 1
+```
+
+The new test received one unscoped conflict finding instead of the two exact
+participant findings.
+
+### Green evidence
+
+```text
+node --test "test/issue-201-split-proposal.test.js"
+tests 22, pass 22, fail 0
+```
+
+Final Task 6 focused verification:
+
+```text
+node --test "test/issue-201-split-proposal.test.js" "test/issue-201-publish-precheck.test.js"
+tests 45, pass 45, fail 0
+```
+
+Final complete suite:
+
+```text
+node --test "test/*.test.js"
+tests 628, pass 628, fail 0
+```
+
+Repository whitespace check:
+
+```text
+git diff --check
+exit 0
+```
+
+### Scope
+
+Changed files are `scripts/lib/setup.js`,
+`test/issue-201-split-proposal.test.js`, and this report. No publication
+atomicity, recovery, operation, dependency, or Task 7 behavior was added.

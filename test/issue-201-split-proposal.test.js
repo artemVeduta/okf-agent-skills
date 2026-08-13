@@ -516,6 +516,50 @@ test('two source proposals cannot claim the same target in one call', (t) => {
   assert.equal(response.data.split_review.every((item) => item.proposal.accepted === false), true);
 });
 
+test('a shared group conflict refuses only proposals that claim that group', (t) => {
+  const root = repo(t);
+  const paths = [SOURCE, 'docs/second.md', 'docs/third.md'];
+  fs.writeFileSync(path.join(root, paths[1]), CONTENT.replace('guide', 'second'));
+  fs.writeFileSync(path.join(root, paths[2]), CONTENT.replace('guide', 'third'));
+
+  const first = output('first', 'shared/first', 'First', navigation(
+    'shared', 'First purpose.', 'shared/first', 'First', 1,
+  ), [{ source_index: 0, support: 'supported' }]);
+  const second = output('second', 'shared/second', 'Second', navigation(
+    'shared', 'Conflicting purpose.', 'shared/second', 'Second', 2,
+  ), [{ source_index: 0, support: 'supported' }]);
+  const third = output('third', 'unrelated', 'Third', null, [{ source_index: 0, support: 'supported' }]);
+  const proposals = proposal('keep_as_one', [first]);
+  for (const [sourcePath, item] of [[paths[1], second], [paths[2], third]]) {
+    item.link_routes[0].from = sourcePath;
+    item.anchor_routes = [];
+    const row = proposal('keep_as_one', [item])[0];
+    row.path = sourcePath;
+    row.whole_source_link_routes = [];
+    proposals.push(row);
+  }
+  const response = run(requestFor(root, paths, {
+    split_requested: paths,
+    split_sections: paths.map((sourcePath, index) => ({
+      ...accounting([[first, second, third][index].output])[0], path: sourcePath,
+    })),
+    split_proposals: proposals,
+  }));
+
+  assert.equal(splitFindings(response).every((item) => item.blocks === true), true);
+  assert.deepEqual(splitFindings(response).map((item) => [item.code, item.detail]), [
+    ['SPLIT_PROPOSAL_GROUP_CONFLICT', { path: SOURCE, group: 'shared', reason: 'definition' }],
+    ['SPLIT_PROPOSAL_GROUP_CONFLICT', { path: paths[1], group: 'shared', reason: 'definition' }],
+  ]);
+  assert.deepEqual(response.data.split_review.map((item) => [
+    item.path, item.proposal.status, item.proposal.accepted,
+  ]), [
+    [SOURCE, 'refused', false],
+    [paths[1], 'refused', false],
+    [paths[2], 'accepted', true],
+  ]);
+});
+
 test('a proposal cannot claim an unsplit migration target or an existing bundle file', (t) => {
   const root = repo(t);
   fs.mkdirSync(path.join(root, 'okf'), { recursive: true });
