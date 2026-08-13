@@ -255,3 +255,184 @@ No open Critical, Important, or Minor Task 5 finding remains. There is no Task
 6 publication precheck or candidate-conformance implementation and no Task 7
 report aggregation. There is no atomicity, rollback, checkpoint, resume, or
 recovery claim.
+
+---
+
+## Fix report: round 1 of 5
+
+### Important 1: canonical checked response binding
+
+Every valid `migration-validate` response now returns
+`data.semantic_review`. This is a canonical result rebuilt only after complete
+validation, not an echo of caller input:
+
+```json
+{
+  "human_assessed": false,
+  "candidates": [
+    { "path": "install.md", "identity": "sha256:<current complete file bytes>" }
+  ],
+  "sources": [
+    {
+      "path": "docs/guide.md",
+      "source_identity": "sha256:<checked current source text>",
+      "accepted": {
+        "sections": "<validated accepted sections>",
+        "outputs": "<validated accepted output ownership and order>",
+        "proposal": "<validated accepted proposal>"
+      },
+      "sections": [
+        { "line_start": 1, "line_end": 3, "verdict": "preserved" }
+      ]
+    }
+  ]
+}
+```
+
+Candidates are sorted by path. Sources are sorted by path. Semantic section
+rows use accepted source-section order. Candidate identities are recomputed
+from current complete bytes. Source identities and accepted values come from
+the strictly validated accepted review and are checked against current source
+text and submitted review evidence. `human_assessed` is the checked human flag.
+
+A valid migration with no accepted split review returns the same stable field
+with empty `candidates` and `sources` arrays.
+
+The three separate result flags remain unchanged:
+
+- `data.structural_coverage.passed`
+- `data.agent_semantic_review.passed`
+- `data.semantic_fidelity.assessed`
+
+### Important 2: strict accepted review validation
+
+`migration-validate` now calls Task 4's shared
+`partition.validateSplitReviews` before semantic evidence comparison. That
+validator now strictly checks the complete accepted shape Task 5 binds:
+
+- every source row is an object with a valid SHA-256 `source_identity`;
+- accepted parent ranges are positive integers with
+  `line_start <= line_end`;
+- each parent section has complete section metadata and exact assigned or
+  residue ownership fields;
+- output rows have exact output, order, and non-empty section fields;
+- output ranges are positive integers with `line_start <= line_end`;
+- accepted proposal status, boolean, result cardinality, outputs, headings,
+  provenance, links, anchors, known routes, known headings, and tree rows are
+  well formed.
+
+Malformed accepted input uses the existing Task 4 findings:
+
+- `SPLIT_WORKER_REVIEW_SET_MISMATCH`
+- `SPLIT_WORKER_REVIEW_INVALID`
+- `SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH`
+
+No second accepted-review validator was added to `setup.js`.
+
+### Important 3: one-to-one accepted coverage
+
+The shared validator refuses literal null source rows, duplicate accepted
+source paths, and duplicate accepted ranges before submitted semantic evidence
+is compared. Range uniqueness covers every accepted parent section, including
+residue, not only assigned sections. Exact submitted semantic row coverage is
+still checked independently after the accepted input passes.
+
+### Important 4: complete candidate observation
+
+Task 5 now reads the complete `services.listFiles(stagingRoot)` result. A
+`complete: false` result is refused with the new exact blocking finding:
+
+- `SEMANTIC_REVIEW_CANDIDATE_SCAN_INCOMPLETE`, with empty detail.
+
+Its blocked response also reports
+`data.structural_coverage: { "passed": false }`; an incomplete candidate scan
+cannot produce a structural coverage pass.
+
+A staged Markdown file that cannot be read is refused with the new exact
+blocking finding:
+
+- `SEMANTIC_REVIEW_CANDIDATE_READ_FAILED`, with `detail.path`.
+
+No empty fallback is hashed, and no unreadable candidate is omitted.
+
+### Important 5: Task 5 stops before publication
+
+The procedure now stops explicitly after fresh semantic review validation.
+Step 11 sends no `publish` request. Single-project, monorepo, rerun, and report
+text all state that Task 6 complete candidate conformance and pre-write
+freshness checks are required before publication. The existing `publish`
+operation reference remains documentation of that operation, not Task 5
+procedure authority.
+
+No Task 6 check or Task 7 aggregation was added.
+
+### Changed files
+
+- `scripts/lib/setup.js`: returns the canonical checked binding, reuses the
+  Task 4 accepted-review validator, handles incomplete candidate scans and read
+  failures, and keeps the three flags separate.
+- `scripts/lib/partition.js`: strengthens the shared accepted source, section,
+  ownership, order, and range validator.
+- `scripts/lib/split-proposal.js`: exports and applies strict validation for an
+  accepted response proposal and its nested rows.
+- `skills/okf-setup/SKILL.md`: documents the exact response binding, findings,
+  shared validation, and unambiguous Task 5 stop.
+- `test/issue-201-semantic-review.test.js`: adds deterministic process-seam
+  coverage for all five findings, including injected filesystem scan and read
+  failures.
+- `test/issue-148.test.js`: checks the stable empty canonical binding for a
+  migration with no accepted split review.
+- `.superpowers/sdd/issue-201/task-5-report.md`: appends this fix report.
+
+The unrelated `.claude/worktrees/issue-153-parent-dir` path was not modified or
+staged.
+
+### Test evidence
+
+Red run before production fixes:
+
+```text
+node --test "test/issue-201-semantic-review.test.js"
+tests 12, pass 8, fail 4
+```
+
+The failures were the absent canonical binding, accepted null rows passing,
+incomplete candidate scans passing, and read failures collapsing into a generic
+candidate mismatch.
+
+Focused Task 5, Task 3, Task 4, structural, publish-regression, and
+documentation run:
+
+```text
+node --test "test/issue-201-semantic-review.test.js" "test/issue-201-worker-split-mapping.test.js" "test/issue-201-split-proposal.test.js" "test/issue-148.test.js" "test/issue-149.test.js" "test/issue-120-doc-executability.test.js"
+tests 80, pass 80, fail 0
+duration_ms 17841.653
+```
+
+Required full suite:
+
+```text
+node --test "test/*.test.js"
+tests 603, pass 603, fail 0, skipped 0, todo 0
+duration_ms 25163.498417
+```
+
+`git diff --check -- . ':!.claude/worktrees/issue-153-parent-dir'` completed
+with no output.
+
+### Self-review
+
+Self-review found and fixed these follow-up issues before the final suite:
+
+- the first strict proposal call changed the existing empty-proposal finding
+  precedence; `accepted_output_count` is again reported before proposal shape;
+- procedure text outside step 11 still said step 11 published or reran publish;
+  single-project, monorepo, rerun, and reporting text now all stop;
+- accepted section and output rows first rejected unknown fields but did not
+  require all expected fields; they now require the complete exact shape;
+- canonical findings first used submitted source order; they now use canonical
+  source and accepted section order.
+
+No open finding remains from fix round 1. No publication check, publication
+call, Task 7 report aggregation, atomicity, rollback, checkpoint, resume, or
+recovery behavior was added.

@@ -1358,7 +1358,7 @@ function setDiffers(diff) {
 }
 
 function acceptedReview(review) {
-  return { sections: review.sections, outputs: review.outputs, proposal: review.proposal };
+  return structuredClone({ sections: review.sections, outputs: review.outputs, proposal: review.proposal });
 }
 
 function contentIdentity(bytes) {
@@ -1368,9 +1368,14 @@ function contentIdentity(bytes) {
 // Task 5 extends the existing semantic-review seam. It validates submitted
 // read-only review evidence; it does not perform a model call or prompt.
 function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoot, services) {
-  const reviewed = splitReview.filter((item) => item && item.proposal !== null);
+  const reviewed = splitReview.filter((item) => item.proposal !== null).sort((a, b) => a.path.localeCompare(b.path));
   const rich = semanticReview.sources !== undefined || semanticReview.candidates !== undefined;
-  if (reviewed.length === 0 && !rich) return { ok: true, passed: true, findings: [] };
+  if (reviewed.length === 0 && !rich) return {
+    ok: true,
+    passed: true,
+    findings: [],
+    result: { human_assessed: semanticReview.performed, candidates: [], sources: [] },
+  };
   if (!rich) return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'review_missing' });
 
   const sourceRows = semanticReview.sources;
@@ -1388,20 +1393,17 @@ function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoo
     return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'row_shape' });
   }
 
-  const acceptedShape = reviewed.every((item) => typeof item.path === 'string' && item.path !== ''
-    && typeof item.source_identity === 'string' && SHA256_IDENTITY.test(item.source_identity)
-    && Array.isArray(item.sections) && Array.isArray(item.outputs)
-    && item.proposal && typeof item.proposal === 'object' && !Array.isArray(item.proposal)
-    && item.proposal.status === 'accepted' && item.proposal.accepted === true && Array.isArray(item.proposal.outputs));
-  if (!acceptedShape) return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'accepted_review_shape' });
-
   const expectedSources = reviewed.map((item) => item.path);
   const sourceSet = exactSet(expectedSources, sourceRows.map((item) => item.path));
   if (setDiffers(sourceSet)) return semanticRefusal('SEMANTIC_REVIEW_SOURCE_SET_MISMATCH', sourceSet);
 
-  const currentCandidates = services.listFiles(stagingRoot).files
+  let listing;
+  try { listing = services.listFiles(stagingRoot); } catch { listing = { files: [], complete: false }; }
+  if (!listing.complete) return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_SCAN_INCOMPLETE', {});
+  const currentCandidates = listing.files
     .filter(discovery.isMarkdownFile)
-    .map((file) => path.relative(stagingRoot, file).split(path.sep).join('/'));
+    .map((file) => path.relative(stagingRoot, file).split(path.sep).join('/'))
+    .sort();
   const candidateSet = exactSet(currentCandidates, candidateRows.map((item) => item.path));
   if (setDiffers(candidateSet)) return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_MISMATCH', candidateSet);
 
@@ -1429,22 +1431,46 @@ function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoo
     }
   }
 
-  for (const candidate of candidateRows) {
+  const candidates = [];
+  for (const candidatePath of currentCandidates) {
+    const submitted = candidateRows.find((item) => item.path === candidatePath);
     let actual;
-    try { actual = contentIdentity(services.readBuffer(path.join(stagingRoot, candidate.path))); } catch { actual = null; }
-    if (candidate.identity !== actual) {
+    try { actual = contentIdentity(services.readBuffer(path.join(stagingRoot, candidatePath))); } catch {
+      return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_READ_FAILED', { path: candidatePath });
+    }
+    if (submitted.identity !== actual) {
       return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_MISMATCH', {
-        path: candidate.path, expected: candidate.identity, actual,
+        path: candidatePath, expected: submitted.identity, actual,
       });
     }
+    candidates.push({ path: candidatePath, identity: actual });
   }
 
-  const findings = sourceRows.flatMap((source) => source.sections
+  const sourcesResult = reviewed.map((review) => {
+    const submitted = sourceRows.find((item) => item.path === review.path);
+    const verdicts = new Map(submitted.sections.map((item) => [`${item.line_start}:${item.line_end}`, item.verdict]));
+    return {
+      path: review.path,
+      source_identity: review.source_identity,
+      accepted: acceptedReview(review),
+      sections: review.sections.map((section) => ({
+        line_start: section.line_start,
+        line_end: section.line_end,
+        verdict: verdicts.get(`${section.line_start}:${section.line_end}`),
+      })),
+    };
+  });
+  const findings = sourcesResult.flatMap((source) => source.sections
     .filter((section) => section.verdict !== 'preserved')
     .map((section) => suiteFinding(`SEMANTIC_SECTION_${section.verdict.toUpperCase()}`, {
       path: source.path, line_start: section.line_start, line_end: section.line_end,
     })));
-  return { ok: true, passed: findings.length === 0, findings };
+  return {
+    ok: true,
+    passed: findings.length === 0,
+    findings,
+    result: { human_assessed: semanticReview.performed, candidates, sources: sourcesResult },
+  };
 }
 
 function executeMigrationValidate(request, services) {
@@ -1466,6 +1492,17 @@ function executeMigrationValidate(request, services) {
   if (payload.split_review !== undefined && !Array.isArray(payload.split_review)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  if (payload.split_review !== undefined) {
+    const splitReview = partition.validateSplitReviews(
+      payload.plan.entries.filter((item) => item.disposition === 'migrate').map((item) => ({ path: item.path })),
+      payload.split_review,
+    );
+    if (!splitReview.ok) {
+      return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [
+        partitionFinding(splitReview.code, true, splitReview.detail),
+      ]);
+    }
+  }
 
   const disposed = new Set(payload.plan.entries.map((item) => item.path));
   const missingDisposition = [...new Set(selected.filter((item) => !disposed.has(item)))].sort();
@@ -1486,7 +1523,11 @@ function executeMigrationValidate(request, services) {
     payload.semantic_review, payload.split_review || [], gitRoot, stagingRoot, services,
   );
   if (!semantic.ok) {
-    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [semantic.finding]);
+    const scanIncomplete = semantic.finding.code === 'SEMANTIC_REVIEW_CANDIDATE_SCAN_INCOMPLETE';
+    return respond(request, 'blocked', {
+      code: 'UNSUPPORTED_INPUT',
+      ...(scanIncomplete ? { structural_coverage: { passed: false } } : {}),
+    }, [semantic.finding]);
   }
   findings.push(...semantic.findings);
 
@@ -1503,6 +1544,7 @@ function executeMigrationValidate(request, services) {
     structural_coverage: { passed: structuralPassed },
     agent_semantic_review: { passed: semantic.passed },
     semantic_fidelity: { assessed },
+    semantic_review: semantic.result,
   }, findings);
 }
 

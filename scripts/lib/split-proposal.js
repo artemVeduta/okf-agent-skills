@@ -15,6 +15,7 @@ const provenanceSupport = new Set(['supported', 'unclear']);
 const object = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value) => typeof value === 'string' && value !== '';
 const positive = (value) => Number.isInteger(value) && value > 0;
+const only = (value, fields) => Object.keys(value).every((field) => fields.includes(field));
 
 function indexEntry(value) {
   return object(value) && text(value.path) && text(value.title) && value.path.endsWith('/index.md');
@@ -36,7 +37,8 @@ function heading(value) {
 
 function provenance(value) {
   return object(value) && Number.isInteger(value.source_index) && value.source_index >= 0
-    && provenanceSupport.has(value.support);
+    && provenanceSupport.has(value.support)
+    && (value.source === undefined || object(value.source));
 }
 
 function routeIdentity(value) {
@@ -96,6 +98,66 @@ function valid(value) {
 function validPayload(value) {
   return Array.isArray(value) && value.every(valid)
     && new Set(value.map((item) => item.path)).size === value.length;
+}
+
+function validAccepted(value) {
+  const responseOutput = (item) => output(item)
+    && only(item, ['output', 'concept_id', 'path', 'type', 'title', 'heading_outline', 'reader_purpose_group', 'provenance_assignments', 'link_routes', 'anchor_routes'])
+    && item.heading_outline.every((row) => only(row, ['level', 'text']))
+    && item.provenance_assignments.every((row) => only(row, ['source_index', 'support', 'source']))
+    && item.link_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'target']))
+    && item.anchor_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'source_anchor', 'line_start', 'line_end', 'target_anchor']));
+  const knownRoute = (route) => routeIdentity(route) && only(route, [
+    'from', 'line', 'occurrence', 'resource', 'source_anchor', 'line_start', 'line_end', 'candidate_lines',
+  ]) && (route.source_anchor === undefined || text(route.source_anchor))
+    && (route.line_start === undefined || positive(route.line_start))
+    && (route.line_end === undefined || positive(route.line_end))
+    && (route.line_start === undefined || route.line_end === undefined || route.line_start <= route.line_end)
+    && (route.candidate_lines === undefined || Array.isArray(route.candidate_lines) && route.candidate_lines.every(positive));
+  const knownHeading = (item) => object(item) && positive(item.line) && positive(item.level) && item.level <= 6
+    && text(item.text) && text(item.anchor) && positive(item.line_start) && positive(item.line_end)
+    && item.line_start <= item.line_end && text(item.output)
+    && only(item, ['line', 'level', 'text', 'anchor', 'line_start', 'line_end', 'output']);
+  const rootEntry = (item) => object(item) && text(item.concept_id) && item.path === `${item.concept_id}.md`
+    && text(item.title) && only(item, ['concept_id', 'path', 'title']);
+  const groupEntry = (item) => object(item) && text(item.key) && text(item.purpose) && indexEntry(item.index_entry)
+    && only(item.index_entry, ['path', 'title']) && Array.isArray(item.child_entries)
+    && item.child_entries.every((row) => childEntry(row) && only(row, ['concept_id', 'path', 'title', 'order']))
+    && only(item, ['key', 'purpose', 'index_entry', 'child_entries']);
+  const validTree = object(value.tree) && Array.isArray(value.tree.root) && Array.isArray(value.tree.groups)
+    && Array.isArray(value.tree.unresolved) && value.tree.unresolved.every(text)
+    && value.tree.root.every(rootEntry) && value.tree.groups.every(groupEntry)
+    && only(value.tree, ['root', 'groups', 'unresolved']);
+  return object(value) && value.status === 'accepted' && value.accepted === true
+    && valid({
+      path: '_',
+      result: value.result,
+      keep_as_one_reason: value.keep_as_one_reason,
+      accepted: value.accepted,
+      outputs: value.outputs,
+      provenance_exclusions: value.provenance_exclusions,
+      heading_changes: value.heading_changes,
+      whole_source_link_routes: value.whole_source_link_routes,
+    })
+    && ((value.result === 'keep_as_one' && value.outputs.length === 1)
+      || (value.result === 'split' && value.outputs.length >= 2))
+    && value.outputs.every(responseOutput)
+    && value.provenance_exclusions.every((row) => only(row, ['source_index', 'reason', 'source'])
+      && object(row.source))
+    && value.heading_changes.every((row) => only(row, [
+      'line', 'source_heading', 'action', 'output', 'target_heading', 'target_level', 'target_anchor',
+    ]))
+    && value.whole_source_link_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'target']))
+    && object(value.known_routes)
+    && ['whole_source', 'heading_anchor', 'ordinary'].every((key) => Array.isArray(value.known_routes[key])
+      && value.known_routes[key].every(knownRoute))
+    && only(value.known_routes, ['whole_source', 'heading_anchor', 'ordinary'])
+    && Array.isArray(value.known_headings) && value.known_headings.every(knownHeading)
+    && validTree
+    && only(value, [
+      'status', 'result', 'keep_as_one_reason', 'accepted', 'outputs', 'provenance_exclusions',
+      'heading_changes', 'whole_source_link_routes', 'known_routes', 'known_headings', 'tree',
+    ]);
 }
 
 const finding = (code, detail = {}) => ({ code, detail });
@@ -646,5 +708,5 @@ function refuse(proposal) {
 }
 
 module.exports = {
-  validPayload, buildInventory, derive, evaluate, callTargetFindings, refuse,
+  validPayload, validAccepted, buildInventory, derive, evaluate, callTargetFindings, refuse,
 };

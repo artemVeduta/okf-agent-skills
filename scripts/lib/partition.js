@@ -52,6 +52,7 @@
 
 const path = require('node:path');
 const validation = require('./validation');
+const splitProposal = require('./split-proposal');
 
 // ponytail: file-count chunking is the last-resort heuristic split, consulted only
 // once semantic locality can no longer separate a group -- not the primary rule.
@@ -291,6 +292,22 @@ function nonEmptyString(value) {
 
 const rangeKey = (item) => `${item.line_start}:${item.line_end}`;
 
+function validAcceptedSection(section) {
+  const fields = [
+    'index', 'kind', 'heading_path', 'line_start', 'line_end', 'word_count', 'boundary_excerpt',
+    'disposition', 'output', 'output_order',
+  ];
+  return isPlainObject(section) && Object.keys(section).length === fields.length
+    && Object.keys(section).every((field) => fields.includes(field))
+    && Number.isInteger(section.index) && section.index >= 0
+    && ['frontmatter', 'preamble', 'heading'].includes(section.kind)
+    && Array.isArray(section.heading_path) && section.heading_path.every((item) => typeof item === 'string')
+    && Number.isInteger(section.word_count) && section.word_count >= 0
+    && isPlainObject(section.boundary_excerpt)
+    && Object.keys(section.boundary_excerpt).length === 2
+    && typeof section.boundary_excerpt.first === 'string' && typeof section.boundary_excerpt.last === 'string';
+}
+
 function validateSplitReviews(mapping, splitReview) {
   const expected = mapping.map((item) => item && item.path).filter(nonEmptyString);
   const actual = Array.isArray(splitReview)
@@ -321,7 +338,8 @@ function validateSplitReviews(mapping, splitReview) {
     const proposal = review.proposal;
     if (review.accounting_status !== 'complete' || !isPlainObject(proposal)
       || proposal.status !== 'accepted' || proposal.accepted !== true
-      || !Array.isArray(review.sections) || !Array.isArray(review.outputs) || !Array.isArray(proposal.outputs)) {
+      || !Array.isArray(review.sections) || !Array.isArray(review.outputs) || !Array.isArray(proposal.outputs)
+      || !nonEmptyString(review.source_identity) || !/^sha256:[0-9a-f]{64}$/.test(review.source_identity)) {
       return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'review_status' });
     }
     const outputCount = proposal.outputs.length;
@@ -329,6 +347,9 @@ function validateSplitReviews(mapping, splitReview) {
       || (proposal.result === 'keep_as_one' && outputCount !== 1)
       || (proposal.result === 'split' && outputCount < 2)) {
       return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'accepted_output_count' });
+    }
+    if (!splitProposal.validAccepted(proposal)) {
+      return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'proposal_shape' });
     }
 
     const outputKeys = review.outputs.map((item) => item && item.output);
@@ -343,13 +364,28 @@ function validateSplitReviews(mapping, splitReview) {
       return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'output_identity' });
     }
 
-    const assigned = review.sections.filter((item) => item && item.disposition === 'assigned');
-    const parentRanges = new Set();
-    for (const section of assigned) {
-      if (!Number.isInteger(section.line_start) || !Number.isInteger(section.line_end)
-        || !nonEmptyString(section.output) || !Number.isInteger(section.output_order) || section.output_order < 1) {
+    const allRanges = new Set();
+    for (const section of review.sections) {
+      const assignedSection = validAcceptedSection(section) && section.disposition === 'assigned'
+        && nonEmptyString(section.output) && Number.isInteger(section.output_order) && section.output_order > 0;
+      const residueSection = validAcceptedSection(section) && section.disposition === 'residue'
+        && section.output === null && section.output_order === null;
+      if ((!assignedSection && !residueSection) || !Number.isInteger(section.line_start) || section.line_start < 1
+        || !Number.isInteger(section.line_end) || section.line_end < section.line_start) {
         return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', { path: review.path, reason: 'parent_section_shape' });
       }
+      const key = rangeKey(section);
+      if (allRanges.has(key)) {
+        return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', {
+          path: review.path, reason: 'duplicate_parent_range', line_start: section.line_start, line_end: section.line_end,
+        });
+      }
+      allRanges.add(key);
+    }
+
+    const assigned = review.sections.filter((item) => item.disposition === 'assigned');
+    const parentRanges = new Set();
+    for (const section of assigned) {
       const key = rangeKey(section);
       if (parentRanges.has(key)) {
         return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', {
@@ -363,12 +399,14 @@ function validateSplitReviews(mapping, splitReview) {
     const accounted = [];
     for (const output of review.outputs) {
       if (!isPlainObject(output) || !nonEmptyString(output.output) || typeof output.order_explicit !== 'boolean'
-        || !Array.isArray(output.sections) || output.sections.length === 0) {
+        || Object.keys(output).length !== 3 || !Array.isArray(output.sections) || output.sections.length === 0) {
         return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'output_sections' });
       }
       for (let index = 0; index < output.sections.length; index++) {
         const section = output.sections[index];
-        if (!isPlainObject(section) || !Number.isInteger(section.line_start) || !Number.isInteger(section.line_end)) {
+        if (!isPlainObject(section) || Object.keys(section).length !== 2
+          || !Number.isInteger(section.line_start) || section.line_start < 1
+          || !Number.isInteger(section.line_end) || section.line_end < section.line_start) {
           return invalid('SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH', { path: review.path, reason: 'output_section_shape' });
         }
         const key = rangeKey(section);

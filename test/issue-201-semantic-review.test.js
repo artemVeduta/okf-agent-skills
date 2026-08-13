@@ -4,6 +4,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { runWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
+const runtime = require('../scripts/lib/runtime');
+const defaultServices = require('../scripts/lib/services');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const SOURCE = 'docs/guide.md';
@@ -160,6 +162,21 @@ function validate(root, plan, semantic_review) {
   });
 }
 
+function validateWith(root, plan, semantic_review, split_review, services) {
+  return runtime.run('okf-setup', {
+    protocol: 'okf-wrapper/1',
+    skill: 'okf-setup',
+    operation: 'migration-validate',
+    payload: {
+      cwd: root,
+      selected: [SOURCE],
+      plan: plan.plan,
+      split_review,
+      semantic_review,
+    },
+  }, { ...defaultServices, ...services });
+}
+
 function fixture(t) {
   const root = repo(t);
   const plan = acceptedPlan(root);
@@ -197,6 +214,29 @@ test('structural coverage, agent review, and human fidelity are reported separat
   assert.equal(response.data.publishable, false);
 });
 
+test('the result returns a canonical checked semantic review binding', (t) => {
+  const { root, plan } = fixture(t);
+  const submitted = semanticReview(root, plan, 'preserved', true);
+  submitted.candidates.reverse();
+  const response = validate(root, plan, submitted);
+  const acceptedReview = plan.split_review[0];
+
+  assert.deepEqual(response.data.semantic_review, {
+    human_assessed: true,
+    candidates: candidateBindings(root),
+    sources: [{
+      path: SOURCE,
+      source_identity: acceptedReview.source_identity,
+      accepted: accepted(acceptedReview),
+      sections: acceptedReview.sections.map((section) => ({
+        line_start: section.line_start,
+        line_end: section.line_end,
+        verdict: 'preserved',
+      })),
+    }],
+  });
+});
+
 test('section review coverage refuses malformed, missing, duplicate, extra, and mismatched rows', (t) => {
   const { root, plan } = fixture(t);
   const cases = [
@@ -227,7 +267,60 @@ test('a malformed accepted review is refused instead of causing a runtime failur
 
   assert.equal(response.result, 'blocked');
   assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
-  assert.equal(response.findings[0].code, 'SEMANTIC_REVIEW_MALFORMED');
+  assert.equal(response.findings[0].code, 'SPLIT_WORKER_REVIEW_INVALID');
+});
+
+test('null, malformed, and duplicate accepted review rows and ranges are refused before evidence comparison', (t) => {
+  const cases = [
+    ['null row', (rows) => rows.push(null), 'SPLIT_WORKER_REVIEW_SET_MISMATCH'],
+    ['duplicate path', (rows) => rows.push(structuredClone(rows[0])), 'SPLIT_WORKER_REVIEW_SET_MISMATCH'],
+    ['string range', (rows) => { rows[0].sections[0].line_start = '1'; }, 'SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH'],
+    ['zero range', (rows) => { rows[0].sections[0].line_start = 0; }, 'SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH'],
+    ['reversed range', (rows) => { rows[0].sections[0].line_start = 3; rows[0].sections[0].line_end = 1; }, 'SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH'],
+    ['duplicate residue range', (rows) => { rows[0].sections.push({ ...rows[0].sections[0] }); }, 'SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH'],
+    ['malformed output range', (rows) => { rows[0].outputs[0].sections[0].line_end = '7'; }, 'SPLIT_WORKER_SECTION_ACCOUNTING_MISMATCH'],
+    ['malformed nested proposal output', (rows) => { rows[0].proposal.outputs[0].heading_outline[0].level = '1'; }, 'SPLIT_WORKER_REVIEW_INVALID'],
+  ];
+
+  for (const [name, mutate, code] of cases) {
+    const { root, plan } = fixture(t);
+    const splitReview = structuredClone(plan.split_review);
+    mutate(splitReview);
+    const response = validateWith(root, plan, semanticReview(root, plan), splitReview, {});
+    assert.equal(response.result, 'blocked', name);
+    assert.equal(response.data.code, 'UNSUPPORTED_INPUT', name);
+    assert.equal(response.findings[0].code, code, name);
+  }
+});
+
+test('an incomplete candidate scan is refused and cannot report structural coverage passed', (t) => {
+  const { root, plan } = fixture(t);
+  const stagingRoot = path.join(root, '.okf-staging', 'okf');
+  const response = validateWith(root, plan, semanticReview(root, plan), plan.split_review, {
+    listFiles(scanRoot, skipDir) {
+      const listed = defaultServices.listFiles(scanRoot, skipDir);
+      return path.resolve(scanRoot) === stagingRoot ? { ...listed, complete: false } : listed;
+    },
+  });
+
+  assert.equal(response.result, 'blocked');
+  assert.equal(response.findings[0].code, 'SEMANTIC_REVIEW_CANDIDATE_SCAN_INCOMPLETE');
+  assert.deepEqual(response.data.structural_coverage, { passed: false });
+});
+
+test('a candidate read failure is refused explicitly', (t) => {
+  const { root, plan } = fixture(t);
+  const failed = path.join(root, '.okf-staging', 'okf', 'install.md');
+  const response = validateWith(root, plan, semanticReview(root, plan), plan.split_review, {
+    readBuffer(file) {
+      if (path.resolve(file) === failed) throw new Error('unreadable candidate');
+      return defaultServices.readBuffer(file);
+    },
+  });
+
+  assert.equal(response.result, 'blocked');
+  assert.equal(response.findings[0].code, 'SEMANTIC_REVIEW_CANDIDATE_READ_FAILED');
+  assert.deepEqual(response.findings[0].detail, { path: 'install.md' });
 });
 
 test('freshness refuses changed source, accepted mapping, candidate content, or candidate set bindings', (t) => {
