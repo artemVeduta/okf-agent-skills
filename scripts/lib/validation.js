@@ -901,7 +901,12 @@ function readText(value) {
   return Buffer.isBuffer(value) ? value.toString('utf8') : value;
 }
 
-function withoutFencedCode(body) {
+// The one fenced-code scan, line for line: `true` for a fence marker line and
+// for every line inside a fence, `false` everywhere else. `withoutFencedCode`
+// masks from it, and `sections.js` reads it directly, because masking a fenced
+// line to `''` makes it indistinguishable from a real blank line -- which a
+// block-boundary rule that must never cut inside a code block cannot afford.
+function fencedLines(body) {
   let fence = null;
   return body.split('\n').map((raw) => {
     const line = raw.replace(/\r$/, '');
@@ -916,10 +921,15 @@ function withoutFencedCode(body) {
       ) {
         fence = null;
       }
-      return '';
+      return true;
     }
-    return fence ? '' : line;
-  }).join('\n');
+    return fence !== null;
+  });
+}
+
+function withoutFencedCode(body) {
+  const fenced = fencedLines(body);
+  return body.split('\n').map((raw, index) => (fenced[index] ? '' : raw.replace(/\r$/, ''))).join('\n');
 }
 
 function internalResourcePath(bundleRoot, resource) {
@@ -1207,5 +1217,5 @@ module.exports = {
   inspectIndex,
   parseFrontmatter, parseYAML, serializeFrontmatter,
   postWrite, postWriteInit, projectMode, validateRead,
-  withoutFencedCode, markdownLinks, bodyLinkPath,
+  withoutFencedCode, fencedLines, markdownLinks, bodyLinkPath,
 };

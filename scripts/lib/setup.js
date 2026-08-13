@@ -12,6 +12,7 @@ const monorepo = require('./monorepo');
 const discovery = require('./discovery');
 const migration = require('./migration');
 const words = require('./words');
+const sections = require('./sections');
 const partition = require('./partition');
 const assembly = require('./assembly');
 const lifecycle = require('./lifecycle');
@@ -651,6 +652,36 @@ function executeDiscover(request, services) {
 // re-walks or re-classifies the filesystem, it only consumes this exact shape.
 const DISCOVER_CATEGORIES = new Set(['markdown', 'unsupported', 'other', 'ambiguous']);
 
+// #201 task 2: one accounted source section of a split under review. Line
+// numbers are 1-based and inclusive at both ends; the range's fit against the
+// real file is `sections.js`'s job (this only settles the shape). #200's "each
+// source section has exactly one disposition: assignment to one output
+// concept, or migration residue left at the source path" -- so `output` names
+// the receiving output for `assigned` and must be absent for `residue`, and an
+// explicit output position is meaningful only for an assigned section.
+function validSplitSection(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (!Number.isInteger(item.line_start) || !Number.isInteger(item.line_end)) return false;
+  if (item.disposition === 'assigned') {
+    if (typeof item.output !== 'string' || item.output === '') return false;
+    return item.order === undefined || Number.isInteger(item.order);
+  }
+  if (item.disposition !== 'residue') return false;
+  return item.output === undefined && item.order === undefined;
+}
+
+function validSplitAccounting(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (typeof item.path !== 'string' || item.path === '') return false;
+  if (item.source_identity !== undefined && (typeof item.source_identity !== 'string' || item.source_identity === '')) return false;
+  return Array.isArray(item.sections) && item.sections.length > 0 && item.sections.every(validSplitSection);
+}
+
+function validSplitSections(value) {
+  if (!Array.isArray(value) || !value.every(validSplitAccounting)) return false;
+  return new Set(value.map((item) => item.path)).size === value.length;
+}
+
 function validPlanSource(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
   if (typeof item.path !== 'string' || item.path === '') return false;
@@ -706,6 +737,14 @@ function executeMigrationPlan(request, services) {
       && payload.split_requested.every((item) => typeof item === 'string' && item !== '');
     if (!requestedOk) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  // #201 task 2: the caller's own accounting of a source under split review --
+  // one entry per source, each carrying that source's exact section ranges and
+  // their dispositions, and optionally the source identity the accounting was
+  // built against. Same strict posture: a malformed accounting is refused
+  // before anything is computed, never partially honoured.
+  if (payload.split_sections !== undefined && !validSplitSections(payload.split_sections)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
 
   const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers);
   if (outcome.invalid) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
@@ -737,7 +776,19 @@ function executeMigrationPlan(request, services) {
   // same file was read successfully during classification) counts as empty
   // rather than throwing, the same defensive shape `publish` already uses for
   // a re-read.
+  //
+  // #201 task 2 (#200's "Source accounting" and "Validation and publication")
+  // extends each of those entries with the source side of a split: the source
+  // content identity the proposal binds, the derived sections of a source that
+  // is under review, and -- once the caller supplies its own accounting in
+  // `payload.split_sections` -- whether those ranges cover the complete source
+  // once, with one disposition each and one accepted output order. Deriving
+  // and validating both live in `scripts/lib/sections.js`; nothing here
+  // repairs, moves, or drops a range, and `accounting_status` says exactly
+  // which of the four states a source is in.
   const splitRequested = new Set(payload.split_requested || []);
+  const splitAccounting = new Map((payload.split_sections || []).map((item) => [item.path, item]));
+  const splitFindings = [];
   const splitReview = outcome.entries
     .filter((item) => item.disposition === 'migrate')
     .map((item) => {
@@ -750,8 +801,48 @@ function executeMigrationPlan(request, services) {
       const wordCount = words.countWords(raw);
       const aboveTarget = wordCount > settingsReport.settings.max_words_per_file;
       const reviewReason = aboveTarget ? 'above_target' : (splitRequested.has(item.path) ? 'user_requested' : null);
-      return { path: item.path, word_count: wordCount, review_required: aboveTarget, review_reason: reviewReason };
+
+      const supplied = splitAccounting.get(item.path);
+      splitAccounting.delete(item.path);
+      const underReview = reviewReason !== null;
+      const identity = sections.identify(raw);
+      const review = {
+        path: item.path,
+        word_count: wordCount,
+        review_required: aboveTarget,
+        review_reason: reviewReason,
+        source_identity: identity,
+        line_count: 0,
+        sections: [],
+        outputs: [],
+        accounting_status: 'not_required',
+      };
+      if (supplied === undefined && !underReview) return review;
+
+      const accounted = sections.account(raw, supplied === undefined ? null : supplied.sections);
+      review.line_count = accounted.line_count;
+      review.sections = accounted.sections;
+      review.outputs = accounted.outputs;
+      // #200: "A source change invalidates the proposal before transformation
+      // or publication" -- checked here, against the bytes just read, before
+      // the ranges the caller built against the old bytes are given any weight.
+      const stale = supplied !== undefined && supplied.source_identity !== undefined
+        && supplied.source_identity !== identity;
+      if (stale) {
+        splitFindings.push(suiteFinding('SPLIT_SOURCE_CHANGED', {
+          path: item.path, expected: supplied.source_identity, actual: identity,
+        }));
+      }
+      splitFindings.push(...accounted.findings.map(({ code, detail }) => suiteFinding(code, { path: item.path, ...detail })));
+      review.accounting_status = supplied === undefined
+        ? 'derived'
+        : (stale || accounted.findings.length > 0 ? 'refused' : 'complete');
+      return review;
     });
+  // An accounting for a path this plan has no `migrate` entry for is refused,
+  // not quietly discarded: silently dropping it would let a caller believe a
+  // split it proposed was validated.
+  for (const unknown of splitAccounting.keys()) splitFindings.push(suiteFinding('SPLIT_SOURCE_UNKNOWN', { path: unknown }));
 
   const findings = [
     ...outcome.questions.map((q) => ({
@@ -782,6 +873,12 @@ function executeMigrationPlan(request, services) {
       blocks: false,
       detail: { path: l.path, resource: l.resource, class: l.class },
     })),
+    // #201 task 2: a broken source accounting blocks -- it is the one part of
+    // this operation that refuses. The word target itself still never blocks
+    // (#200), and neither does a blocked accounting rewrite the plan: the
+    // entry keeps its own `migrate` disposition and `data.plan.executable`
+    // keeps its own meaning (every source has a disposition).
+    ...splitFindings,
   ];
   return respond(request, 'ok', {
     plan: { entries: outcome.entries, executable: outcome.executable, duplicates: outcome.duplicates },
