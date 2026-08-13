@@ -540,7 +540,7 @@ function run(skill, request, services) {
     // needs this exception to reach `init` at all -- it stays so an explicit
     // `init` still works standalone on a repository that holds nothing but a
     // Git root, the explicit pre-manifest setup path #196 keeps alongside the
-    // documented order (`test/issue-173.test.js`). It is narrower than the
+    // documented order (`test/bundle/setup-root.test.js`). It is narrower than the
     // bypass set above: an invalid manifest still blocks below, `init` still
     // creates only the bundle root, and the manifest still gets written by a
     // separate explicit `repair`.
