@@ -238,3 +238,200 @@ Self-review found and fixed these issues before the final suite:
   reason, false required flag, and empty section/output values.
 
 No open Task 7 finding remains from self-review.
+
+---
+
+## Fix report: round 1 of 5
+
+### Result
+
+This round makes Task 7 count only from a suite-owned Task 6 receipt. It also
+closes impossible sequence states, binds unreviewed candidates to the accepted
+plan and mapping, strengthens canonical semantic identity checks, and refuses
+malformed unreviewed rows before nested access.
+
+### Trustworthy publication receipt
+
+No signed or opaque harness receipt exists for the `publish` operation. Task 6
+already owns `.okf-staging/<bundle>` as its suite-managed publication seam, so
+it now writes one fixed `.okf-publication-receipt.json` there after the ordered
+write sequence ends.
+
+The receipt has:
+
+- `protocol: "okf-publication-receipt/1"`;
+- SHA-256 identities of the canonical JSON forms of the exact accepted `plan`,
+  `mapping`, `split_review`, and canonical `semantic_review`;
+- every checked substantive candidate's source, Concept ID, path, type, and
+  checked complete-byte identity;
+- every checked navigation index path and complete-byte identity;
+- the single ordered Task 6 result sequence;
+- the exact status, published, failed, and not-attempted classification.
+
+Task 6 returns `data.publication_receipt: { path, identity }`. Task 7 requires
+that path to be the fixed receipt under `.okf-staging/<bundle>`, reads its bytes,
+checks their identity, parses the exact receipt shape, and compares every bound
+artifact and outcome. Caller JSON cannot change a failed row to clean without
+disagreeing with the suite-owned receipt. The hash is an integrity check, not an
+authenticity proof. Independent evidence comes from reading the fixed
+suite-owned file instead of trusting caller result JSON.
+
+A later Task 6 call replaces the fixed receipt with that later call's observed
+result. The receipt is a reporting artifact only.
+
+### Sequential result semantics
+
+Task 7 now requires one exact Task 6 sequence:
+
+- zero or more `clean` attempted rows;
+- at most one first non-clean attempted row;
+- every later row is `not-attempted`;
+- no clean row can follow a failed row;
+- `complete` means every row is clean and failed/skipped are empty;
+- `partial` means the sequence contains a failed or not-attempted row and the
+  classification arrays exactly match the sequence.
+
+Substantive concepts and navigation indexes share this one dispatch order.
+`REPORT_ARTIFACT_MISMATCH` with `artifact: "publication"` and
+`reason: "result_sequence"` refuses impossible states.
+
+### Accepted candidate coverage
+
+Task 7 `payload.migration` now also requires the exact accepted `plan` and
+`mapping`. The existing Task 6 plan/mapping coverage validator runs first. The
+report then derives every expected substantive candidate:
+
+- a reviewed source contributes every accepted proposal output with exact
+  source, Concept ID, path, and type;
+- an unreviewed source contributes its exact mapping source, Concept ID, path,
+  and type.
+
+The complete derived candidate set must equal the receipt-backed Task 6
+candidate set. The candidate source set therefore equals the accepted migrate
+source set, and caller-added or reassigned source/concept rows cannot increase
+report counts.
+
+### Semantic and unreviewed boundaries
+
+The shared canonical semantic coverage seam now compares each semantic source's
+`source_identity` with the matching accepted `split_review.source_identity`
+before it checks accepted values and exact section verdict coverage. A changed
+but valid SHA-256 value blocks as a semantic-review mismatch.
+
+The shared Task 4 split-review validator now requires an unreviewed row's
+`sections` and `outputs` to be exact empty arrays. Null or string values return a
+normal blocking response and do not reach nested access.
+
+### Finding codes
+
+The existing Task 7 codes remain:
+
+- `REPORT_ARTIFACT_MALFORMED`
+- `REPORT_ARTIFACT_MISMATCH`
+
+New receipt reasons are `path`, `unavailable`, `identity`, `content`,
+`accepted_artifacts`, `data_mismatch`, and `checked_candidates`. Impossible
+Task 6 order uses `result_sequence`.
+
+If Task 6 cannot write its suite-owned receipt after the publication sequence,
+it returns `failed/incomplete` with `PUBLICATION_RECEIPT_WRITE_FAILED` and no
+reportable Task 7 publication result.
+
+### Changed files
+
+- `scripts/lib/publication.js`: canonical artifact identities and receipt
+  construction.
+- `scripts/lib/setup.js`: receipt persistence, receipt validation, sequential
+  result validation, exact plan/mapping candidate coverage, and Task 7 counting
+  from verified evidence.
+- `scripts/lib/partition.js`: exact empty arrays for unreviewed rows.
+- `scripts/lib/semantic-review.js`: exact reviewed source identity comparison.
+- `skills/okf-setup/SKILL.md`: receipt, request, sequence, and final procedure
+  contract.
+- `test/issue-201-split-report.test.js`: deterministic Task 7 bypass and boundary
+  fixtures.
+- `test/issue-201-publish-precheck.test.js`: complete and partial receipt content.
+- `test/issue-149.test.js` and `test/issue-189.test.js`: exact unreviewed response
+  fixtures.
+- `.superpowers/sdd/issue-201/task-7-report.md`: this fix report.
+
+The unrelated `.claude/worktrees/issue-153-parent-dir` path was not modified or
+staged.
+
+### Red evidence
+
+```text
+node --test "test/issue-201-split-report.test.js" "test/issue-201-publish-precheck.test.js"
+tests 32, pass 21, fail 11
+```
+
+The failures showed the absent durable receipt, report acceptance of coherent
+failed-to-clean edits and impossible result order, missing plan/mapping input,
+missing semantic source identity comparison, and unsafe unreviewed nested
+values.
+
+### Green evidence
+
+```text
+node --test "test/issue-201-split-report.test.js" "test/issue-201-publish-precheck.test.js"
+tests 32, pass 32, fail 0
+```
+
+Focused report, Task 4/5, Task 6, legacy publication, oversized receipt, and
+documentation regressions:
+
+```text
+node --test "test/issue-136.test.js" "test/issue-201-split-report.test.js" "test/issue-201-publish-precheck.test.js" "test/issue-201-semantic-review.test.js" "test/issue-201-worker-split-mapping.test.js" "test/issue-149.test.js" "test/issue-189.test.js" "test/issue-120-doc-executability.test.js"
+tests 104, pass 104, fail 0
+```
+
+Requested focused report run:
+
+```text
+node --test "test/issue-201-split-report.test.js" "test/issue-136.test.js"
+tests 30, pass 30, fail 0
+```
+
+Requested Task 6 run:
+
+```text
+node --test "test/issue-201-publish-precheck.test.js" "test/issue-149.test.js" "test/issue-189.test.js"
+tests 33, pass 33, fail 0
+```
+
+Final complete suite:
+
+```text
+node --test "test/*.test.js"
+tests 638, pass 638, fail 0, skipped 0, todo 0
+duration_ms 40117.587917
+```
+
+Repository whitespace check:
+
+```text
+git diff --check -- . ':!.claude/worktrees/issue-153-parent-dir'
+exit 0
+```
+
+### Self-review
+
+Self-review found and fixed these follow-up issues:
+
+- Receipt path validation first allowed any normalized repository-relative path
+  with the correct basename. It now requires the exact three-part
+  `.okf-staging/<bundle>/.okf-publication-receipt.json` shape.
+- Receipt envelope validation first did not strictly check nested artifact
+  identities and checked-candidate rows. Every nested row now has exact fields,
+  normalized identity values, and valid SHA-256 values.
+- Candidate and result membership first used exact sets without separately
+  proving their common Task 6 order. The receipt now requires result identities
+  in the exact checked candidate order shared by concepts and indexes.
+- Older publication fixtures carried abbreviated unreviewed rows. They now use
+  exact empty `sections` and `outputs` arrays; production validation remains
+  strict.
+- The first contract text could imply that the receipt hash supplied
+  authenticity. It now states that the hash checks integrity and that the
+  independent evidence is the suite-owned on-disk receipt.
+
+No open Critical or Important fix-round finding remains.

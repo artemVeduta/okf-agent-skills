@@ -104,7 +104,7 @@ test('publish survives a pre-publish precheck whose delegated validate answer ex
         duplicates: [],
       },
       mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, source_identity: `sha256:${sourceDigest}`, body: '# A\n\nBody text.\n' }],
-      split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', proposal: null }],
+      split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', sections: [], outputs: [], proposal: null }],
       semantic_review: { human_assessed: false, candidates: [], sources: [] },
     },
   });

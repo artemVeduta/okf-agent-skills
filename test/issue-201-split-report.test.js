@@ -7,6 +7,7 @@ const { runWrapper, temporaryRoot, writeManifest } = require('../test-support/sn
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const SOURCE = 'docs/guide.md';
+const UNSPLIT_SOURCE = 'docs/decision.md';
 
 function run(operation, root, payload) {
   return runWrapper(wrapper, {
@@ -14,7 +15,7 @@ function run(operation, root, payload) {
   });
 }
 
-function repo(t, headings) {
+function repo(t, headings, withUnreviewed = false) {
   const root = temporaryRoot(t, 'okf-201-split-report-');
   fs.mkdirSync(path.join(root, '.git'));
   writeManifest(root, 'okf');
@@ -25,6 +26,9 @@ function repo(t, headings) {
     '---', 'type: Playbook', '---',
     ...headings.flatMap((heading) => [`# ${heading}`, '', `${heading} instructions.`]),
   ].join('\n'));
+  if (withUnreviewed) {
+    fs.writeFileSync(path.join(root, UNSPLIT_SOURCE), '---\ntype: Decision\n---\n# Decision\n\nKeep this decision.\n');
+  }
   return root;
 }
 
@@ -49,8 +53,9 @@ function output(name, title, group = null) {
   };
 }
 
-function plan(root, outputs, result, keepReason = null) {
-  const sources = run('discover', root, {}).data.sources.filter((item) => item.path === SOURCE);
+function plan(root, outputs, result, keepReason = null, withUnreviewed = false) {
+  const acceptedPaths = withUnreviewed ? [SOURCE, UNSPLIT_SOURCE] : [SOURCE];
+  const sources = run('discover', root, {}).data.sources.filter((item) => acceptedPaths.includes(item.path));
   const sections = [{ line_start: 1, line_end: 3, disposition: 'residue' }];
   for (let index = 0; index < outputs.length; index++) {
     const lineStart = 4 + (index * 3);
@@ -76,7 +81,7 @@ function plan(root, outputs, result, keepReason = null) {
       whole_source_link_routes: [],
     }],
   });
-  assert.equal(response.data.split_review[0].proposal.status, 'accepted', JSON.stringify(response));
+  assert.equal(response.data.split_review.find((item) => item.path === SOURCE).proposal.status, 'accepted', JSON.stringify(response));
   return response.data;
 }
 
@@ -88,17 +93,22 @@ function assemble(root, accepted) {
     split_review: accepted.split_review,
   });
   const brief = partitioned.data.shards[0].brief;
-  const review = brief.split_review[0];
   const shard = {
     shard: brief.shard,
-    concepts: review.proposal.outputs.map((item) => ({
-      path: review.path,
-      output: item.output,
-      concept: item.concept_id,
-      type: item.type,
-      sections: review.outputs.find((candidate) => candidate.output === item.output).sections.map((section) => ({ ...section })),
-      body: `# ${item.title}\n`,
-    })),
+    concepts: brief.mapping.flatMap((mapping) => {
+      const review = brief.split_review.find((item) => item.path === mapping.path);
+      if (review.proposal === null) {
+        return [{ path: mapping.path, concept: mapping.concept, type: mapping.type, body: mapping.body }];
+      }
+      return review.proposal.outputs.map((item) => ({
+        path: review.path,
+        output: item.output,
+        concept: item.concept_id,
+        type: item.type,
+        sections: review.outputs.find((candidate) => candidate.output === item.output).sections.map((section) => ({ ...section })),
+        body: `# ${item.title}\n`,
+      }));
+    }),
     references: [], warnings: [], blockers: [],
   };
   const shardFile = '.okf-staging/shards/report.json';
@@ -117,7 +127,7 @@ function identity(bytes) {
 }
 
 function semanticInput(root, accepted) {
-  const review = accepted.split_review[0];
+  const review = accepted.split_review.find((item) => item.path === SOURCE);
   const stagingRoot = path.join(root, '.okf-staging', 'okf');
   const candidates = fs.readdirSync(stagingRoot, { recursive: true, withFileTypes: true })
     .filter((item) => item.isFile() && item.name.endsWith('.md'))
@@ -140,9 +150,9 @@ function semanticInput(root, accepted) {
   };
 }
 
-function fixture(t, outputs, result = 'split', keepReason = null) {
-  const root = repo(t, outputs.map((item) => item.title));
-  const accepted = plan(root, outputs, result, keepReason);
+function fixture(t, outputs, result = 'split', keepReason = null, withUnreviewed = false) {
+  const root = repo(t, outputs.map((item) => item.title), withUnreviewed);
+  const accepted = plan(root, outputs, result, keepReason, withUnreviewed);
   const staged = assemble(root, accepted);
   const validated = run('migration-validate', root, {
     selected: [SOURCE],
@@ -169,6 +179,8 @@ function report(value, publication) {
   return run('report', value.root, {
     migration: {
       settings: value.accepted.settings,
+      plan: value.accepted.plan,
+      mapping: value.accepted.mapping,
       split_review: value.accepted.split_review,
       validation: {
         structural_coverage: value.validated.structural_coverage,
@@ -190,7 +202,7 @@ test('one reviewed source with three published outputs counts three concepts and
   assert.equal(publication.result, 'ok');
   assert.deepEqual(publication.data.candidate_conformance, {
     passed: true,
-    concepts: outputs.map((item) => ({ source: SOURCE, concept: item.concept_id, path: item.path })),
+    concepts: outputs.map((item) => ({ source: SOURCE, concept: item.concept_id, path: item.path, type: item.type })),
     navigation_indexes: [{ path: 'operators/index.md' }],
   });
   assert.equal(response.result, 'ok', JSON.stringify(response));
@@ -272,5 +284,140 @@ test('malformed or inconsistent reporting artifacts block with an exact finding'
     assert.equal(response.data.code, 'UNSUPPORTED_INPUT', name);
     assert.equal(response.findings[0].code, code, name);
     assert.equal(response.findings[0].blocks, true, name);
+  }
+});
+
+test('a coherent failed-to-clean JSON edit cannot fabricate actual publication', (t) => {
+  const outputs = [output('install', 'Install'), output('operate', 'Operate'), output('repair', 'Repair')];
+  const value = fixture(t, outputs);
+  fs.writeFileSync(path.join(value.root, 'okf', 'operate.md'), '---\ntype: Playbook\n---\n# Existing\n');
+  const publication = publish(value);
+  const changed = structuredClone(publication);
+  changed.data.results = changed.data.results.map((item) => ({ ...item, status: 'clean', findings: [] }));
+  changed.data.published = changed.data.results.map((item) => item.concept);
+  changed.data.failed = [];
+  changed.data.skipped = [];
+  changed.data.status = 'complete';
+
+  const response = report(value, changed);
+
+  assert.equal(response.result, 'blocked');
+  assert.equal(response.findings[0].code, 'REPORT_ARTIFACT_MISMATCH');
+  assert.deepEqual(response.findings[0].detail, { artifact: 'publication_receipt', reason: 'data_mismatch' });
+});
+
+test('changed suite-owned receipt bytes block even when caller JSON is unchanged', (t) => {
+  const value = fixture(t, [output('guide', 'Guide')], 'keep_as_one', 'One purpose.');
+  const publication = publish(value);
+  fs.appendFileSync(path.join(value.root, publication.data.publication_receipt.path), '\n');
+
+  const response = report(value, publication);
+
+  assert.equal(response.result, 'blocked');
+  assert.deepEqual(response.findings[0].detail, { artifact: 'publication_receipt', reason: 'identity' });
+});
+
+test('report rejects complete-with-skipped and clean-after-failed Task 6 sequences', (t) => {
+  const outputs = [output('install', 'Install'), output('operate', 'Operate'), output('repair', 'Repair')];
+  const value = fixture(t, outputs);
+  const publication = publish(value);
+  const cases = [
+    ['complete with skipped', (changed) => {
+      const last = changed.data.results.at(-1);
+      last.status = 'not-attempted';
+      changed.data.published.pop();
+      changed.data.skipped = [{ concept: last.concept, status: 'not-attempted' }];
+    }],
+    ['clean after failed', (changed) => {
+      changed.data.results[0].status = 'failed';
+      changed.data.failed = [{ concept: changed.data.results[0].concept, status: 'failed' }];
+      changed.data.published = changed.data.results.slice(1).map((item) => item.concept);
+      changed.data.status = 'partial';
+    }],
+  ];
+
+  for (const [name, mutate] of cases) {
+    const changed = structuredClone(publication);
+    mutate(changed);
+    const response = report(value, changed);
+    assert.equal(response.result, 'blocked', name);
+    assert.equal(response.findings[0].detail.reason, 'result_sequence', name);
+  }
+});
+
+test('accepted plan and mapping prevent added or reassigned unreviewed candidate inflation', (t) => {
+  const value = fixture(t, [output('guide', 'Guide')], 'keep_as_one', 'One purpose.', true);
+  const publication = publish(value);
+  const cases = [
+    ['added', (changedValue, changedPublication) => {
+      changedValue.accepted.plan.entries.push({
+        path: 'docs/added.md', disposition: 'migrate', reason: 'explicit_type', concept: 'added', type: 'Playbook',
+      });
+      changedValue.accepted.mapping.push({
+        path: 'docs/added.md', concept: 'added', type: 'Playbook', sources: null,
+        source_identity: `sha256:${'1'.repeat(64)}`, body: '# Added\n',
+      });
+      changedValue.accepted.split_review.push({
+        path: 'docs/added.md', word_count: 2, review_required: false, review_reason: null,
+        source_identity: `sha256:${'1'.repeat(64)}`, line_count: 0, sections: [], outputs: [],
+        accounting_status: 'not_required', proposal: null,
+      });
+      changedPublication.data.candidate_conformance.concepts.push({
+        source: 'docs/added.md', concept: 'added', path: 'added.md', type: 'Playbook',
+      });
+      changedPublication.data.results.push({ concept: 'added', status: 'clean', findings: [] });
+      changedPublication.data.published.push('added');
+      changedValue.validated.semantic_review.candidates.push({ path: 'added.md', identity: `sha256:${'2'.repeat(64)}` });
+    }],
+    ['reassigned', (changedValue, changedPublication) => {
+      const mapping = changedValue.accepted.mapping.find((item) => item.path === UNSPLIT_SOURCE);
+      mapping.concept = 'decisions/other';
+      const entry = changedValue.accepted.plan.entries.find((item) => item.path === UNSPLIT_SOURCE);
+      entry.concept = 'decisions/other';
+      const candidate = changedPublication.data.candidate_conformance.concepts.find((item) => item.source === UNSPLIT_SOURCE);
+      const oldConcept = candidate.concept;
+      candidate.concept = 'decisions/other';
+      candidate.path = 'decisions/other.md';
+      const result = changedPublication.data.results.find((item) => item.concept === oldConcept);
+      result.concept = candidate.concept;
+      changedPublication.data.published[changedPublication.data.published.indexOf(oldConcept)] = candidate.concept;
+      const semantic = changedValue.validated.semantic_review.candidates.find((item) => item.path === `${oldConcept}.md`);
+      semantic.path = candidate.path;
+    }],
+  ];
+
+  for (const [name, mutate] of cases) {
+    const changedValue = structuredClone(value);
+    changedValue.root = value.root;
+    const changedPublication = structuredClone(publication);
+    mutate(changedValue, changedPublication);
+    const response = report(changedValue, changedPublication);
+    assert.equal(response.result, 'blocked', name);
+    assert.equal(response.findings[0].code, 'REPORT_ARTIFACT_MISMATCH', name);
+  }
+});
+
+test('canonical semantic source identity must equal the accepted reviewed source identity', (t) => {
+  const value = fixture(t, [output('guide', 'Guide')], 'keep_as_one', 'One purpose.');
+  const publication = publish(value);
+  value.validated.semantic_review.sources[0].source_identity = `sha256:${'3'.repeat(64)}`;
+
+  const response = report(value, publication);
+
+  assert.equal(response.result, 'blocked');
+  assert.deepEqual(response.findings[0].detail, { artifact: 'validation', reason: 'semantic_review' });
+});
+
+test('null or string unreviewed section and output arrays block without a runtime failure', (t) => {
+  const value = fixture(t, [output('guide', 'Guide')], 'keep_as_one', 'One purpose.', true);
+  const publication = publish(value);
+  for (const [field, bad] of [['sections', null], ['sections', 'none'], ['outputs', null], ['outputs', 'none']]) {
+    const changed = structuredClone(value);
+    changed.root = value.root;
+    changed.accepted.split_review.find((item) => item.path === UNSPLIT_SOURCE)[field] = bad;
+    const response = report(changed, publication);
+    assert.equal(response.result, 'blocked', `${field}:${bad}`);
+    assert.notEqual(response.result, 'failed/incomplete', `${field}:${bad}`);
+    assert.equal(response.findings[0].code, 'REPORT_ARTIFACT_MALFORMED', `${field}:${bad}`);
   }
 });

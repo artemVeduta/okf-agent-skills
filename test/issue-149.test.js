@@ -76,7 +76,9 @@ function authority(root, staged) {
       source_identity: `sha256:${item.sources[0].sha256}`,
       body: validationBody(root, item),
     })),
-    split_review: staged.map((item) => ({ path: item.path, accounting_status: 'not_required', proposal: null })),
+    split_review: staged.map((item) => ({
+      path: item.path, accounting_status: 'not_required', sections: [], outputs: [], proposal: null,
+    })),
     semantic_review: { human_assessed: false, candidates: [], sources: [] },
   };
 }
@@ -264,7 +266,7 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
     sources: ['docs/a.md'],
     mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, body: '# A\n' }],
     references: [],
-    split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', proposal: null }],
+    split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', sections: [], outputs: [], proposal: null }],
     neighbors: [],
   };
   const shard = {

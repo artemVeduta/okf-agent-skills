@@ -12,10 +12,44 @@ const validation = require('./validation');
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value) => typeof value === 'string' && value !== '';
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
+const RECEIPT_FILE = '.okf-publication-receipt.json';
 
 function exactFields(value, fields) {
   return object(value) && Object.keys(value).length === fields.length
     && Object.keys(value).every((field) => fields.includes(field));
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!object(value)) return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+}
+
+function artifactIdentity(value) {
+  return `sha256:${crypto.createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')}`;
+}
+
+function buildReceipt(checked, artifacts, results, classification) {
+  return {
+    protocol: 'okf-publication-receipt/1',
+    artifacts: {
+      plan: artifactIdentity(artifacts.plan),
+      mapping: artifactIdentity(artifacts.mapping),
+      split_review: artifactIdentity(artifacts.splitReview),
+      semantic_review: artifactIdentity(artifacts.semanticReview),
+    },
+    candidate_conformance: {
+      passed: true,
+      concepts: checked.filter((item) => item.kind === 'concept')
+        .map((item) => ({ source: item.source, concept: item.concept, path: item.path, type: item.tree.type })),
+      navigation_indexes: checked.filter((item) => item.kind === 'index').map((item) => ({ path: item.path })),
+    },
+    checked_candidates: checked.map((item) => item.kind === 'concept'
+      ? { kind: 'concept', source: item.source, concept: item.concept, path: item.path, type: item.tree.type, identity: item.identity }
+      : { kind: 'index', path: item.path, identity: item.identity }),
+    results,
+    classification,
+  };
 }
 
 function validSourceBinding(value) {
@@ -372,6 +406,6 @@ function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview
 }
 
 module.exports = {
-  evaluate, planMappingCoverage, safePath,
+  RECEIPT_FILE, artifactIdentity, buildReceipt, evaluate, planMappingCoverage, safePath,
   validCanonicalReview, validMapping, validPlan, validStaged,
 };

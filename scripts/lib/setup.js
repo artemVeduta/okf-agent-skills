@@ -560,22 +560,26 @@ function validReportFlag(value, field) {
 }
 
 function validateReportPublication(value) {
-  if (!exactFields(value, ['status', 'published', 'failed', 'skipped', 'results', 'candidate_conformance'])
+  if (!exactFields(value, ['status', 'published', 'failed', 'skipped', 'results', 'candidate_conformance', 'publication_receipt'])
     || !['complete', 'partial'].includes(value.status)
     || !Array.isArray(value.published) || value.published.some((item) => typeof item !== 'string' || item === '')
     || !Array.isArray(value.failed) || !Array.isArray(value.skipped) || !Array.isArray(value.results)
     || !exactFields(value.candidate_conformance, ['passed', 'concepts', 'navigation_indexes'])
     || value.candidate_conformance.passed !== true
     || !Array.isArray(value.candidate_conformance.concepts)
-    || !Array.isArray(value.candidate_conformance.navigation_indexes)) {
+    || !Array.isArray(value.candidate_conformance.navigation_indexes)
+    || !exactFields(value.publication_receipt, ['path', 'identity'])
+    || monorepo.normalizeRelative(value.publication_receipt.path) !== value.publication_receipt.path
+    || path.posix.basename(value.publication_receipt.path) !== publication.RECEIPT_FILE
+    || !/^sha256:[0-9a-f]{64}$/.test(value.publication_receipt.identity)) {
     return { ok: false, code: 'REPORT_ARTIFACT_MALFORMED', artifact: 'publication', reason: 'shape' };
   }
   const concepts = value.candidate_conformance.concepts;
   const indexes = value.candidate_conformance.navigation_indexes;
-  if (concepts.some((item) => !exactFields(item, ['source', 'concept', 'path'])
+  if (concepts.some((item) => !exactFields(item, ['source', 'concept', 'path', 'type'])
       || monorepo.normalizeRelative(item.source) !== item.source
       || monorepo.normalizeRelative(item.concept) !== item.concept
-      || item.path !== `${item.concept}.md`)
+      || item.path !== `${item.concept}.md` || typeof item.type !== 'string' || item.type === '')
     || indexes.some((item) => !exactFields(item, ['path']) || monorepo.normalizeRelative(item.path) !== item.path)
     || value.failed.some((item) => !exactFields(item, ['concept', 'status'])
       || typeof item.concept !== 'string' || item.concept === '' || typeof item.status !== 'string' || item.status === ''
@@ -588,6 +592,19 @@ function validateReportPublication(value) {
     return { ok: false, code: 'REPORT_ARTIFACT_MALFORMED', artifact: 'publication', reason: 'row_shape' };
   }
 
+  let failedIndex = -1;
+  for (let index = 0; index < value.results.length; index++) {
+    const status = value.results[index].status;
+    if (failedIndex === -1 && status === 'clean') continue;
+    if (failedIndex === -1 && status !== 'not-attempted') {
+      failedIndex = index;
+      continue;
+    }
+    if (failedIndex === -1 || status !== 'not-attempted') {
+      return { ok: false, code: 'REPORT_ARTIFACT_MISMATCH', artifact: 'publication', reason: 'result_sequence' };
+    }
+  }
+
   const candidateIds = [...concepts.map((item) => item.concept), ...indexes.map((item) => item.path)];
   const resultIds = value.results.map((item) => item.concept);
   const candidateSet = canonicalReview.exactSet(candidateIds, resultIds);
@@ -596,7 +613,7 @@ function validateReportPublication(value) {
     .map((item) => ({ concept: item.concept, status: item.status }));
   const skipped = value.results.filter((item) => item.status === 'not-attempted')
     .map((item) => ({ concept: item.concept, status: item.status }));
-  const expectedStatus = failed.length === 0 ? 'complete' : 'partial';
+  const expectedStatus = failedIndex === -1 ? 'complete' : 'partial';
   if (canonicalReview.differs(candidateSet) || !isDeepStrictEqual(value.published, clean)
     || !isDeepStrictEqual(value.failed, failed) || !isDeepStrictEqual(value.skipped, skipped)
     || value.status !== expectedStatus) {
@@ -605,20 +622,94 @@ function validateReportPublication(value) {
   return { ok: true, concepts, indexes };
 }
 
-function executeMigrationReport(request, migrationReport) {
+function publicationReceipt(request, migrationReport, publicationResult, gitRoot, services) {
+  const receiptPath = migrationReport.publication.publication_receipt.path;
+  const parts = receiptPath.split('/');
+  const receiptFile = path.resolve(gitRoot, receiptPath);
+  if (parts.length !== 3 || parts[0] !== '.okf-staging' || parts[2] !== publication.RECEIPT_FILE
+    || !inside(gitRoot, receiptFile)) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'publication_receipt', 'path') };
+  }
+  let bytes;
+  try { bytes = services.readBuffer(receiptFile); } catch {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'unavailable') };
+  }
+  if (contentIdentity(bytes) !== migrationReport.publication.publication_receipt.identity) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'identity') };
+  }
+  let receipt;
+  try { receipt = JSON.parse(bytes.toString('utf8')); } catch {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'publication_receipt', 'content') };
+  }
+  if (!exactFields(receipt, ['protocol', 'artifacts', 'candidate_conformance', 'checked_candidates', 'results', 'classification'])
+    || receipt.protocol !== 'okf-publication-receipt/1'
+    || !exactFields(receipt.artifacts, ['plan', 'mapping', 'split_review', 'semantic_review'])
+    || Object.values(receipt.artifacts).some((item) => !/^sha256:[0-9a-f]{64}$/.test(item))
+    || !Array.isArray(receipt.checked_candidates)
+    || receipt.checked_candidates.some((item) => {
+      if (item.kind === 'concept') {
+        return !exactFields(item, ['kind', 'source', 'concept', 'path', 'type', 'identity'])
+          || monorepo.normalizeRelative(item.source) !== item.source
+          || monorepo.normalizeRelative(item.concept) !== item.concept
+          || item.path !== `${item.concept}.md` || typeof item.type !== 'string' || item.type === ''
+          || !/^sha256:[0-9a-f]{64}$/.test(item.identity);
+      }
+      return item.kind !== 'index' || !exactFields(item, ['kind', 'path', 'identity'])
+        || monorepo.normalizeRelative(item.path) !== item.path || !/^sha256:[0-9a-f]{64}$/.test(item.identity);
+    })) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'publication_receipt', 'content') };
+  }
+  const artifacts = {
+    plan: publication.artifactIdentity(migrationReport.plan),
+    mapping: publication.artifactIdentity(migrationReport.mapping),
+    split_review: publication.artifactIdentity(migrationReport.split_review),
+    semantic_review: publication.artifactIdentity(migrationReport.validation.semantic_review),
+  };
+  if (!isDeepStrictEqual(receipt.artifacts, artifacts)) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'accepted_artifacts') };
+  }
+  const suppliedClassification = {
+    status: migrationReport.publication.status,
+    published: migrationReport.publication.published,
+    failed: migrationReport.publication.failed,
+    skipped: migrationReport.publication.skipped,
+  };
+  if (!isDeepStrictEqual(receipt.candidate_conformance, migrationReport.publication.candidate_conformance)
+    || !isDeepStrictEqual(receipt.results, migrationReport.publication.results)
+    || !isDeepStrictEqual(receipt.classification, suppliedClassification)) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'data_mismatch') };
+  }
+  const checked = receipt.checked_candidates.map((item) => item.kind === 'concept'
+    ? { source: item.source, concept: item.concept, path: item.path, type: item.type }
+    : { path: item.path });
+  const checkedOrder = receipt.checked_candidates.map((item) => item.kind === 'concept' ? item.concept : item.path);
+  if (!isDeepStrictEqual(checkedOrder, receipt.results.map((item) => item.concept))) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'result_order') };
+  }
+  if (!isDeepStrictEqual(checked.filter((item) => item.source !== undefined), publicationResult.concepts)
+    || !isDeepStrictEqual(checked.filter((item) => item.source === undefined), publicationResult.indexes)) {
+    return { refusal: reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'publication_receipt', 'checked_candidates') };
+  }
+  return { receipt };
+}
+
+function executeMigrationReport(request, migrationReport, gitRoot, services) {
   const splitReviewFields = [
     'path', 'word_count', 'review_required', 'review_reason', 'source_identity', 'line_count',
     'sections', 'outputs', 'accounting_status', 'proposal',
   ];
-  if (!exactFields(migrationReport, ['settings', 'split_review', 'validation', 'publication'])
+  if (!exactFields(migrationReport, ['settings', 'plan', 'mapping', 'split_review', 'validation', 'publication'])
     || !exactFields(migrationReport.settings, ['max_words_per_file'])
     || !Number.isInteger(migrationReport.settings.max_words_per_file)
     || migrationReport.settings.max_words_per_file < 1
+    || !publication.validPlan(migrationReport.plan) || !publication.validMapping(migrationReport.mapping)
     || !Array.isArray(migrationReport.split_review)) {
     return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'migration', 'shape');
   }
+  const planMapping = publication.planMappingCoverage(migrationReport.plan, migrationReport.mapping);
+  if (!planMapping.ok) return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'plan_mapping', 'coverage');
   const splitReview = partition.validateSplitReviews(
-    migrationReport.split_review.map((item) => ({ path: item && item.path })), migrationReport.split_review,
+    migrationReport.mapping, migrationReport.split_review,
   );
   if (!splitReview.ok) {
     return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'split_review', splitReview.code);
@@ -669,6 +760,8 @@ function executeMigrationReport(request, migrationReport) {
       request, publicationResult.code, publicationResult.artifact, publicationResult.reason,
     );
   }
+  const durable = publicationReceipt(request, migrationReport, publicationResult, gitRoot, services);
+  if (durable.refusal) return durable.refusal;
   const accepted = acceptedGroups.collect(migrationReport.split_review);
   if (!accepted.ok) {
     return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'split_review', 'groups');
@@ -683,10 +776,22 @@ function executeMigrationReport(request, migrationReport) {
     publicationResult.concepts.filter((item) => planned.some((output) => output.source === item.source))
       .map((item) => `${item.source}\0${item.concept}\0${item.path}`),
   );
+  const reviews = new Map(migrationReport.split_review.map((item) => [item.path, item]));
+  const expectedConcepts = migrationReport.mapping.flatMap((item) => {
+    const review = reviews.get(item.path);
+    return review.proposal === null
+      ? [{ source: item.path, concept: item.concept, path: `${item.concept}.md`, type: item.type }]
+      : review.proposal.outputs.map((output) => ({
+        source: item.path, concept: output.concept_id, path: output.path, type: output.type,
+      }));
+  });
+  const conceptSet = canonicalReview.exactSet(
+    expectedConcepts.map((item) => JSON.stringify(item)), publicationResult.concepts.map((item) => JSON.stringify(item)),
+  );
   const indexSet = canonicalReview.exactSet(
     expectedIndexes.map((item) => item.path), publicationResult.indexes.map((item) => item.path),
   );
-  if (canonicalReview.differs(plannedSet) || canonicalReview.differs(indexSet)) {
+  if (canonicalReview.differs(plannedSet) || canonicalReview.differs(conceptSet) || canonicalReview.differs(indexSet)) {
     return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'candidate_conformance', 'accepted_plan');
   }
   const candidatePaths = canonicalReview.exactSet(
@@ -767,7 +872,7 @@ function executeReport(request, services) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
 
-  if (hasMigration) return executeMigrationReport(request, payload.migration);
+  if (hasMigration) return executeMigrationReport(request, payload.migration, gitRoot, services);
 
   if (hasSources) {
     if (!Array.isArray(payload.sources) || !payload.sources.every(validSourceItem)) {
@@ -1935,6 +2040,8 @@ function executePublish(request, services) {
   }
 
   const results = [];
+  const receiptFile = path.join(stagingRoot, publication.RECEIPT_FILE);
+  services.remove(receiptFile);
   for (const item of checked.checked) {
     const target = path.join(bundleRoot, item.target);
     if (!publication.safePath(bundleRoot, target, services)) {
@@ -1970,20 +2077,31 @@ function executePublish(request, services) {
   const findings = failed.flatMap((item) => item.findings.map((finding) => (
     { ...finding, detail: { ...finding.detail, concept: item.concept } }
   )));
-
-  return respond(request, 'ok', {
+  const classification = {
     status: failed.length === 0 ? 'complete' : 'partial',
-    candidate_conformance: {
-      passed: true,
-      concepts: checked.checked.filter((item) => item.kind === 'concept')
-        .map((item) => ({ source: item.source, concept: item.concept, path: item.path })),
-      navigation_indexes: checked.checked.filter((item) => item.kind === 'index')
-        .map((item) => ({ path: item.path })),
-    },
     published,
     failed: failed.map((item) => ({ concept: item.concept, status: item.status })),
     skipped,
-    results: [...results, ...skipped.map((item) => ({ ...item, findings: [] }))],
+  };
+  const receipt = publication.buildReceipt(checked.checked, {
+    plan: payload.plan, mapping: payload.mapping, splitReview: payload.split_review, semanticReview: payload.semantic_review,
+  }, [...results, ...skipped.map((item) => ({ ...item, findings: [] }))], classification);
+  const receiptText = `${JSON.stringify(receipt, null, 2)}\n`;
+  try { services.writeFile(receiptFile, receiptText); } catch (error) {
+    return respond(request, 'failed/incomplete', { code: 'PUBLICATION_RECEIPT_WRITE_FAILED' }, [
+      suiteFinding('PUBLICATION_RECEIPT_WRITE_FAILED', { reason: writeFailureReason(error) }),
+    ]);
+  }
+  const publicationReceiptRef = {
+    path: path.relative(gitRoot, receiptFile).split(path.sep).join('/'),
+    identity: contentIdentity(Buffer.from(receiptText)),
+  };
+
+  return respond(request, 'ok', {
+    ...classification,
+    candidate_conformance: receipt.candidate_conformance,
+    publication_receipt: publicationReceiptRef,
+    results: receipt.results,
   }, findings);
 }
 

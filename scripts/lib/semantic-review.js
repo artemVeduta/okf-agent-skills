@@ -31,6 +31,9 @@ function canonicalCoverage(semanticReview, splitReview) {
 
   for (const review of reviewed) {
     const submitted = semanticReview.sources.find((item) => item.path === review.path);
+    if (submitted.source_identity !== review.source_identity) {
+      return { ok: false, detail: { path: review.path, reason: 'source_identity' } };
+    }
     if (!isDeepStrictEqual(submitted.accepted, acceptedReview(review))) {
       return { ok: false, detail: { path: review.path, reason: 'accepted_mismatch' } };
     }

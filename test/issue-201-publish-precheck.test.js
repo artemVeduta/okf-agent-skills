@@ -354,6 +354,24 @@ test('publish accepts the complete split and unsplit candidate set after all pre
   assert.deepEqual(response.data.published, value.staged.map((item) => item.concept));
   assert.deepEqual(response.data.failed, []);
   assert.deepEqual(response.data.skipped, []);
+  assert.match(response.data.publication_receipt.path, /^\.okf-staging\/okf\//);
+  assert.match(response.data.publication_receipt.identity, /^sha256:[0-9a-f]{64}$/);
+  const receipt = JSON.parse(fs.readFileSync(path.join(value.root, response.data.publication_receipt.path), 'utf8'));
+  assert.equal(receipt.protocol, 'okf-publication-receipt/1');
+  assert.equal(Object.values(receipt.artifacts).every((item) => /^sha256:[0-9a-f]{64}$/.test(item)), true);
+  assert.deepEqual(receipt.checked_candidates.map((item) => ({
+    kind: item.kind, path: item.path, identity: /^sha256:[0-9a-f]{64}$/.test(item.identity),
+  })), [
+    { kind: 'concept', path: 'decisions/decision.md', identity: true },
+    { kind: 'concept', path: 'install.md', identity: true },
+    { kind: 'concept', path: 'operate.md', identity: true },
+  ]);
+  assert.deepEqual(receipt.classification, {
+    status: response.data.status,
+    published: response.data.published,
+    failed: response.data.failed,
+    skipped: response.data.skipped,
+  });
 });
 
 test('an extra, missing, or changed real candidate blocks publication and requires a new proposal', (t) => {
@@ -437,6 +455,14 @@ test('a later write failure reports successful, failed, and unattempted writes e
   assert.equal(fs.existsSync(path.join(value.root, 'okf', 'install.md')), true);
   assert.equal(fs.readFileSync(path.join(value.root, 'okf', 'operate.md'), 'utf8'), existing);
   assert.equal(fs.existsSync(path.join(value.root, 'okf', 'decisions', 'decision.md')), false);
+  const receipt = JSON.parse(fs.readFileSync(path.join(value.root, response.data.publication_receipt.path), 'utf8'));
+  assert.deepEqual(receipt.results, response.data.results);
+  assert.deepEqual(receipt.classification, {
+    status: 'partial',
+    published: ['install'],
+    failed: [{ concept: 'operate', status: 'failed' }],
+    skipped: [{ concept: 'decisions/decision', status: 'not-attempted' }],
+  });
 });
 
 test('duplicate mapping sources cannot omit a required migrate plan entry', (t) => {

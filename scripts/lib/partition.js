@@ -330,7 +330,9 @@ function validateSplitReviews(mapping, splitReview) {
   for (const review of splitReview) {
     if (!isPlainObject(review)) return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: null, reason: 'review_shape' });
     if (review.proposal === null) {
-      if (review.accounting_status !== 'not_required') {
+      if (review.accounting_status !== 'not_required'
+        || !Array.isArray(review.sections) || review.sections.length !== 0
+        || !Array.isArray(review.outputs) || review.outputs.length !== 0) {
         return invalid('SPLIT_WORKER_REVIEW_INVALID', { path: review.path, reason: 'review_status' });
       }
       continue;
