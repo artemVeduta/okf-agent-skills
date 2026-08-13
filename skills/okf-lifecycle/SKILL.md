@@ -93,6 +93,8 @@ Every write stays independent. The report names every applied effect, every fail
 
 ## Procedure
 
+Steps 1 to 4 run for one `sync` request. Steps 5 to 12 run through the whole task, for every request and also when no request is sent.
+
 1. Read the requested operation. `init`, `migrate`, and `compact` are not v0.1.0 operations: if the operation is not `sync`, stop and return the runtime's unknown-operation result. Done when that result is the only thing emitted for the request; not done if any payload has been built or any concept touched for a non-`sync` name.
 2. Classify the trigger as incremental (ordinary work, agent-selected) or explicit reconciliation (requested by name). Both trigger classes send `invocation: "explicit"`. Done when the trigger class is fixed before any payload is built; not done if the class is still undecided or was inferred after the scope was chosen.
 3. Build the wrapper request for the scope that trigger class authorizes: narrow for incremental synchronization, wider only for explicit reconciliation. Done when the request matches the shape above and its scope matches the trigger class from step 2; not done if the scope is wider than the trigger authorizes.
