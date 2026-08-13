@@ -77,6 +77,20 @@ No mutation is automatic. Acceptance uses the existing owner flow, and each acce
 
 For each proposal, the skill resolves the effective `settings.max_words_per_file` from `.okf-workspace.json` over the built-in default. When a proposed new or revised substantive concept is more than that target, the proposal carries an exact semantic split, or an explicit keep-as-one decision. The target is a soft target. It never warns on a read, and it is never a validation gate.
 
+## Folder-local maintenance
+
+Every proposed concept names exactly one bounded reader-purpose group. No substantive concept and no glossary sits directly at the bundle root. The root holds only `index.md` and the optional `log.md`.
+
+Every proposal carries the exact index, glossary, local-guidance, and optional local-log change for each touched group, or an explicit no-change disposition for that part. When a group owns no glossary, the proposal states the explicit no-local-terms result.
+
+For each new or changed concept, the skill reads the local glossary and the glossaries that glossary links to. It proposes the needed term additions, links, scope changes, and removals. It never changes a term without acceptance.
+
+A new group is proposed as one complete package. The skill creates no empty glossary, no empty guidance, and no other folder-template scaffolding.
+
+A known structural defect in a touched group joins that proposal. A defect in an untouched group is reported and offered as a separate restructuring proposal. Such a defect never blocks the unrelated local work.
+
+Every write stays independent. The report names every applied effect, every failed effect, and every skipped effect. A partial result marks the touched group as a group that needs repair, and the next mutation of that group includes the repair. There is no automatic retry, no rollback, no checkpoint, and no resume. Git is the recovery mechanism.
+
 ## Procedure
 
 1. Read the requested operation. `init`, `migrate`, and `compact` are not v0.1.0 operations: if the operation is not `sync`, stop and return the runtime's unknown-operation result. Done when that result is the only thing emitted for the request; not done if any payload has been built or any concept touched for a non-`sync` name.
@@ -87,5 +101,8 @@ For each proposal, the skill resolves the effective `settings.max_words_per_file
 6. Filter the held candidates. Done when each temporary fact, code-recoverable detail, duplicate, weak guess, and item the user already declined in this task is dropped, and when a declined item returns only with new evidence; not done if a dropped item enters the proposal.
 7. Resolve the effective `settings.max_words_per_file` from `.okf-workspace.json` over the built-in default, and size each proposed substantive concept against it. Done when every proposed concept over the target carries an exact semantic split or an explicit keep-as-one decision; not done if the target blocks a read, blocks a write, or is reported as a validation gate.
 8. Present one compact proposal at a natural checkpoint or before the final response, and name every missing fact with a concrete recommendation or a compact draft. Done when the proposal is one presentation and the help is marked as an assisted user decision; not done if the help is counted as acceptance, or if a mutation runs before the owner accepts.
-9. Write each accepted item as one ordinary `okf-write` call. Done when each accepted item is one separate call; not done if items are batched, or if an item is written without acceptance.
-10. Report within the ceiling. A clean result is done when reported as one line: the operation and result, nothing else; not done if the full response is shown. A refusal, an internal failure, or a `failed/incomplete` result is done only with the full response, naming the gate code and next action; not done if trimmed to one line, softened, or reported as a crash. Show the full response for any result if the caller asks.
+9. Give each proposed concept exactly one bounded reader-purpose group, and give each touched group its exact index, glossary, local-guidance, and optional local-log change, or an explicit no-change disposition. Done when every touched group carries all four dispositions, and when a group with no glossary carries the explicit no-local-terms result; not done if a substantive concept or a glossary is proposed at the bundle root, or if a disposition is left unstated.
+10. Read the local glossary of each touched group and the glossaries it links to, and propose the needed term additions, links, scope changes, and removals. Done when every new or changed concept has its term effect proposed for acceptance; not done if a term changes without acceptance.
+11. Propose a new group as one complete package, and join a known structural defect of a touched group to that proposal. Done when the new-group package holds no empty glossary, no empty guidance, and no other folder-template scaffolding, and when a defect in an untouched group is reported as a separate restructuring proposal; not done if a defect outside the touched groups blocks the local work.
+12. Write each accepted item as one ordinary `okf-write` call, and report every applied, failed, and skipped effect. Done when each accepted item is one separate independent call, and when a partial result marks the touched group as a group that needs repair for the next mutation of that group; not done if items are batched, if an item is written without acceptance, or if the skill retries, rolls back, checkpoints, or resumes instead of leaving recovery to Git.
+13. Report within the ceiling. A clean result is done when reported as one line: the operation and result, nothing else; not done if the full response is shown. A refusal, an internal failure, or a `failed/incomplete` result is done only with the full response, naming the gate code and next action; not done if trimmed to one line, softened, or reported as a crash. Show the full response for any result if the caller asks.
