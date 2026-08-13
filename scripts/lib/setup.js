@@ -4,6 +4,7 @@
 
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { isDeepStrictEqual } = require('node:util');
 const { dispatchWrapper } = require('./wrapper-dispatch');
 const validation = require('./validation');
 const admission = require('./admission');
@@ -440,8 +441,12 @@ function validLinkItem(item) {
     typeof item.resolved === 'boolean';
 }
 
-function validSemanticReview(value) {
-  return !!value && typeof value === 'object' && !Array.isArray(value) && typeof value.performed === 'boolean';
+function validSemanticReview(value, evidence = false) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.performed !== 'boolean') return false;
+  const rich = value.sources !== undefined || value.candidates !== undefined;
+  if (!rich) return true;
+  return evidence && Object.keys(value).every((field) => ['performed', 'sources', 'candidates'].includes(field))
+    && Array.isArray(value.sources) && Array.isArray(value.candidates);
 }
 
 function reportFinding(code, severity, detail) {
@@ -1329,6 +1334,119 @@ function validSelectedPath(item) {
   return typeof item === 'string' && item !== '';
 }
 
+const SEMANTIC_VERDICTS = new Set(['preserved', 'missing', 'duplicated', 'uncertain']);
+const SHA256_IDENTITY = /^sha256:[0-9a-f]{64}$/;
+
+function semanticRefusal(code, detail) {
+  return { ok: false, finding: suiteFinding(code, detail) };
+}
+
+function exactSet(expected, actual) {
+  const counts = new Map();
+  for (const item of actual) counts.set(item, (counts.get(item) || 0) + 1);
+  const expectedSet = new Set(expected);
+  const actualSet = new Set(actual);
+  return {
+    missing: expected.filter((item) => !actualSet.has(item)).sort(),
+    extra: [...actualSet].filter((item) => !expectedSet.has(item)).sort(),
+    duplicate: [...counts].filter(([, count]) => count > 1).map(([item]) => item).sort(),
+  };
+}
+
+function setDiffers(diff) {
+  return diff.missing.length > 0 || diff.extra.length > 0 || diff.duplicate.length > 0;
+}
+
+function acceptedReview(review) {
+  return { sections: review.sections, outputs: review.outputs, proposal: review.proposal };
+}
+
+function contentIdentity(bytes) {
+  return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+}
+
+// Task 5 extends the existing semantic-review seam. It validates submitted
+// read-only review evidence; it does not perform a model call or prompt.
+function evaluateSemanticReview(semanticReview, splitReview, gitRoot, stagingRoot, services) {
+  const reviewed = splitReview.filter((item) => item && item.proposal !== null);
+  const rich = semanticReview.sources !== undefined || semanticReview.candidates !== undefined;
+  if (reviewed.length === 0 && !rich) return { ok: true, passed: true, findings: [] };
+  if (!rich) return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'review_missing' });
+
+  const sourceRows = semanticReview.sources;
+  const candidateRows = semanticReview.candidates;
+  const sourceShape = sourceRows.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+    && Object.keys(item).every((field) => ['path', 'source_identity', 'accepted', 'sections'].includes(field))
+    && typeof item.path === 'string' && item.path !== ''
+    && typeof item.source_identity === 'string' && SHA256_IDENTITY.test(item.source_identity)
+    && item.accepted && typeof item.accepted === 'object' && !Array.isArray(item.accepted)
+    && Array.isArray(item.sections));
+  const candidateShape = candidateRows.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+    && Object.keys(item).length === 2 && typeof item.path === 'string' && item.path !== ''
+    && typeof item.identity === 'string' && SHA256_IDENTITY.test(item.identity));
+  if (!sourceShape || !candidateShape) {
+    return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'row_shape' });
+  }
+
+  const acceptedShape = reviewed.every((item) => typeof item.path === 'string' && item.path !== ''
+    && typeof item.source_identity === 'string' && SHA256_IDENTITY.test(item.source_identity)
+    && Array.isArray(item.sections) && Array.isArray(item.outputs)
+    && item.proposal && typeof item.proposal === 'object' && !Array.isArray(item.proposal)
+    && item.proposal.status === 'accepted' && item.proposal.accepted === true && Array.isArray(item.proposal.outputs));
+  if (!acceptedShape) return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'accepted_review_shape' });
+
+  const expectedSources = reviewed.map((item) => item.path);
+  const sourceSet = exactSet(expectedSources, sourceRows.map((item) => item.path));
+  if (setDiffers(sourceSet)) return semanticRefusal('SEMANTIC_REVIEW_SOURCE_SET_MISMATCH', sourceSet);
+
+  const currentCandidates = services.listFiles(stagingRoot).files
+    .filter(discovery.isMarkdownFile)
+    .map((file) => path.relative(stagingRoot, file).split(path.sep).join('/'));
+  const candidateSet = exactSet(currentCandidates, candidateRows.map((item) => item.path));
+  if (setDiffers(candidateSet)) return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_MISMATCH', candidateSet);
+
+  for (const review of reviewed) {
+    const submitted = sourceRows.find((item) => item.path === review.path);
+    let currentSourceIdentity;
+    try { currentSourceIdentity = sections.identify(services.readFile(path.join(gitRoot, review.path))); } catch { currentSourceIdentity = null; }
+    if (submitted.source_identity !== review.source_identity || submitted.source_identity !== currentSourceIdentity) {
+      return semanticRefusal('SEMANTIC_REVIEW_SOURCE_MISMATCH', {
+        path: review.path, expected: review.source_identity, submitted: submitted.source_identity, actual: currentSourceIdentity,
+      });
+    }
+    if (!isDeepStrictEqual(submitted.accepted, acceptedReview(review))) {
+      return semanticRefusal('SEMANTIC_REVIEW_ACCEPTED_MISMATCH', { path: review.path });
+    }
+
+    const sectionShape = submitted.sections.every((item) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.keys(item).length === 3 && Number.isInteger(item.line_start) && Number.isInteger(item.line_end)
+      && SEMANTIC_VERDICTS.has(item.verdict));
+    if (!sectionShape) return semanticRefusal('SEMANTIC_REVIEW_MALFORMED', { reason: 'section_shape', path: review.path });
+    const rangeKey = (item) => `${item.line_start}:${item.line_end}`;
+    const sectionSet = exactSet(review.sections.map(rangeKey), submitted.sections.map(rangeKey));
+    if (setDiffers(sectionSet)) {
+      return semanticRefusal('SEMANTIC_REVIEW_SECTION_SET_MISMATCH', { path: review.path, ...sectionSet });
+    }
+  }
+
+  for (const candidate of candidateRows) {
+    let actual;
+    try { actual = contentIdentity(services.readBuffer(path.join(stagingRoot, candidate.path))); } catch { actual = null; }
+    if (candidate.identity !== actual) {
+      return semanticRefusal('SEMANTIC_REVIEW_CANDIDATE_MISMATCH', {
+        path: candidate.path, expected: candidate.identity, actual,
+      });
+    }
+  }
+
+  const findings = sourceRows.flatMap((source) => source.sections
+    .filter((section) => section.verdict !== 'preserved')
+    .map((section) => suiteFinding(`SEMANTIC_SECTION_${section.verdict.toUpperCase()}`, {
+      path: source.path, line_start: section.line_start, line_end: section.line_end,
+    })));
+  return { ok: true, passed: findings.length === 0, findings };
+}
+
 function executeMigrationValidate(request, services) {
   const payload = request.payload;
   const context = setupContext(request, services);
@@ -1342,7 +1460,10 @@ function executeMigrationValidate(request, services) {
   if (!validPartitionPlan(payload.plan)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (!validSemanticReview(payload.semantic_review)) {
+  if (!validSemanticReview(payload.semantic_review, true)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  if (payload.split_review !== undefined && !Array.isArray(payload.split_review)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
 
@@ -1361,15 +1482,26 @@ function executeMigrationValidate(request, services) {
     : { data: { concepts: [] }, findings: [] };
   findings.push(...structural.findings);
 
+  const semantic = evaluateSemanticReview(
+    payload.semantic_review, payload.split_review || [], gitRoot, stagingRoot, services,
+  );
+  if (!semantic.ok) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [semantic.finding]);
+  }
+  findings.push(...semantic.findings);
+
   const assessed = payload.semantic_review.performed === true;
   if (!assessed) findings.push(reportFinding('semantic_fidelity_not_assessed', 'warning', { scope: 'bundle' }));
 
-  const publishable = !findings.some((item) => item.blocks);
+  const structuralPassed = !findings.some((item) => item.blocks && !item.code.startsWith('SEMANTIC_SECTION_'));
+  const publishable = structuralPassed && semantic.passed;
   return respond(request, 'ok', {
     status: publishable ? 'complete' : 'partial',
     publishable,
     missing_disposition: missingDisposition,
     concepts_checked: structural.data.concepts.map((item) => item.path),
+    structural_coverage: { passed: structuralPassed },
+    agent_semantic_review: { passed: semantic.passed },
     semantic_fidelity: { assessed },
   }, findings);
 }

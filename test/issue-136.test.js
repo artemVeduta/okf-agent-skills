@@ -181,7 +181,7 @@ test('a green structural report never implies semantic fidelity: no ambiguity, n
 test('semantic_review is required and must be a well-formed object', (t) => {
   const root = repo(t);
   git(root);
-  for (const semantic_review of [undefined, {}, { performed: 'yes' }, null, 'true']) {
+  for (const semantic_review of [undefined, {}, { performed: 'yes' }, { performed: true, sources: [], candidates: [] }, null, 'true']) {
     const payload = { sources: [migrated('docs/a.md', 'decisions/a.md')] };
     if (semantic_review !== undefined) payload.semantic_review = semantic_review;
     const response = run(reportRequest(root, payload));
