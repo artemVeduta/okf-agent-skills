@@ -302,6 +302,32 @@ test('route inventory includes local anchors and links from the bundle root', (t
   });
 });
 
+test('a case-variant Markdown extension contributes a required route', (t) => {
+  const root = repo(t);
+  fs.writeFileSync(path.join(root, 'inbound.MARKDOWN'), '[Guide](docs/guide.md).\n');
+  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
+  const complete = proposal('keep_as_one', outputs);
+  complete[0].whole_source_link_routes.push({
+    from: 'inbound.MARKDOWN', line: 1, occurrence: 1, resource: 'docs/guide.md',
+    target: { kind: 'output', output: 'guide' },
+  });
+
+  const accepted = run(request(root, {
+    split_sections: accounting(['guide']), split_proposals: complete,
+  }));
+  const omitted = run(request(root, {
+    split_sections: accounting(['guide']), split_proposals: proposal('keep_as_one', outputs),
+  }));
+
+  assert.equal(review(accepted).proposal.status, 'accepted');
+  assert.deepEqual(review(accepted).proposal.known_routes.whole_source, [
+    { from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md' },
+    { from: 'inbound.MARKDOWN', line: 1, occurrence: 1, resource: 'docs/guide.md' },
+  ]);
+  assert.equal(splitFindings(omitted).some((item) => item.code === 'SPLIT_PROPOSAL_ROUTE_MISSING'), true);
+  assert.equal(review(omitted).proposal.accepted, false);
+});
+
 test('an incomplete route inventory walk blocks the proposal with one exact finding', (t) => {
   const root = repo(t);
   fs.symlinkSync(path.join(root, 'README.md'), path.join(root, 'linked.md'));
@@ -380,9 +406,9 @@ test('duplicate source heading anchors stay visible and block ambiguous routing'
   }]);
 });
 
-test('a block-boundary fragment inside a heading does not invent a second heading row', (t) => {
+test('a block fragment starting #not-a-heading does not invent a heading row', (t) => {
   const root = repo(t);
-  const divided = ['---', 'type: Note', '---', '# Operate', '', 'First paragraph.', '', 'Second paragraph.'].join('\n');
+  const divided = ['---', 'type: Note', '---', '# Operate', '', 'First paragraph.', '', '#not-a-heading'].join('\n');
   fs.writeFileSync(path.join(root, SOURCE), divided);
   fs.writeFileSync(path.join(root, 'README.md'), 'No links.\n');
   const splitSections = [{
@@ -402,6 +428,7 @@ test('a block-boundary fragment inside a heading does not invent a second headin
   assert.deepEqual(review(response).proposal.known_headings, [{
     line: 4, level: 1, text: 'Operate', anchor: 'operate', line_start: 4, line_end: 7, output: 'guide',
   }]);
+  assert.equal(splitFindings(response).some((item) => item.code.startsWith('SPLIT_HEADING_CHANGE_')), false);
 });
 
 test('missing, extra, and duplicate routes refuse acceptance against the known route inventory', (t) => {

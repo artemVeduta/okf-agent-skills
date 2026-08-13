@@ -4,6 +4,8 @@
 const path = require('node:path');
 const validation = require('./validation');
 const mapping = require('./mapping');
+const discovery = require('./discovery');
+const sections = require('./sections');
 const { normalizeRelative } = require('./monorepo');
 
 const results = new Set(['keep_as_one', 'split']);
@@ -116,14 +118,13 @@ function headingAnchor(value) {
 function sourceHeadings(review, raw) {
   const lines = raw.split('\n').map((line) => line.replace(/\r$/, ''));
   return review.sections.filter((section) => section.kind === 'heading').flatMap((section) => {
-    const match = (lines[section.line_start - 1] || '').match(/^[ \t]{0,3}(#{1,6})[ \t]*(.*)$/);
-    if (!match) return [];
-    const headingText = section.heading_path[section.heading_path.length - 1];
+    const heading = sections.parseAtxHeading(lines[section.line_start - 1] || '');
+    if (!heading) return [];
     return [{
       line: section.line_start,
-      level: match[1].length,
-      text: headingText,
-      anchor: headingAnchor(headingText),
+      level: heading.level,
+      text: heading.text,
+      anchor: headingAnchor(heading.text),
       line_start: section.line_start,
       line_end: section.line_end,
       output: section.output,
@@ -213,7 +214,7 @@ function buildInventory(sourcePath, raw, review, gitRoot, bundleRoot, services) 
   const listing = services.listFiles(gitRoot, (dir) => excluded.has(path.basename(dir)));
   if (!listing.complete) findings.push(finding('SPLIT_PROPOSAL_ROUTE_INVENTORY_INCOMPLETE', { reason: 'walk_incomplete' }));
   for (const file of listing.files) {
-    if (!file.endsWith('.md') || !insideRoot(gitRoot, file)) continue;
+    if (!discovery.isMarkdownFile(file) || !insideRoot(gitRoot, file)) continue;
     const from = path.relative(gitRoot, file).split(path.sep).join('/');
     if (from === sourcePath) continue;
     let content;

@@ -52,6 +52,10 @@ const PDF_MAGIC = Buffer.from('%PDF-');
 const OLE_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
+function isMarkdownFile(file) {
+  return MARKDOWN_EXTENSIONS.has(path.extname(file).toLowerCase());
+}
+
 // Wiki-markup detectors. MediaWiki's markers are checked first because a MediaWiki
 // export can also contain a bare `[[Page]]` wikilink, which is the one construct it
 // shares with Obsidian; a stronger, more specific marker settles the format rather
@@ -207,7 +211,7 @@ function classifyOther(rel, ext) {
 
 function classify(file, rel, services) {
   const ext = path.extname(file).toLowerCase();
-  if (MARKDOWN_EXTENSIONS.has(ext)) {
+  if (isMarkdownFile(file)) {
     return classifyMarkdown(rel, services.readBuffer(file));
   }
   if (HTML_EXTENSIONS.has(ext) || PDF_EXTENSIONS.has(ext) || WORD_EXTENSIONS.has(ext)) {
@@ -246,4 +250,4 @@ function discover(gitRoot, bundleRoot, services, scanRoot) {
   return { sources, complete };
 }
 
-module.exports = { discover, classify };
+module.exports = { discover, classify, isMarkdownFile };

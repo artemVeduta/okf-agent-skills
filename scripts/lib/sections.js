@@ -82,9 +82,13 @@ function frontmatterEnd(raw, lines) {
   return lines.findIndex((line, index) => index > 0 && line === '---') + 1;
 }
 
-function headingText(line) {
+function parseAtxHeading(line) {
+  if (!HEADING.test(line)) return null;
   const match = line.match(HEADING_TEXT);
-  return match[2].replace(/[ \t]+#+[ \t]*$/, '').trim();
+  return {
+    level: match[1].length,
+    text: match[2].replace(/[ \t]+#+[ \t]*$/, '').trim(),
+  };
 }
 
 function sectionRow(index, kind, headingPath, lineStart, lineEnd, lines) {
@@ -122,12 +126,12 @@ function deriveSections(raw, lines) {
   let kind = 'preamble';
   let headingPath = [];
   for (let i = frontmatter; i < lines.length; i++) {
-    if (fenced[i] || !HEADING.test(lines[i])) continue;
+    const heading = fenced[i] ? null : parseAtxHeading(lines[i]);
+    if (!heading) continue;
     const line = i + 1;
     if (line > start) push(kind, headingPath, start, line - 1);
-    const level = lines[i].match(HEADING_TEXT)[1].length;
-    while (stack.length > 0 && stack[stack.length - 1].level >= level) stack.pop();
-    stack.push({ level, text: headingText(lines[i]) });
+    while (stack.length > 0 && stack[stack.length - 1].level >= heading.level) stack.pop();
+    stack.push(heading);
     start = line;
     kind = 'heading';
     headingPath = stack.map((item) => item.text);
@@ -328,4 +332,4 @@ function account(raw, supplied) {
   };
 }
 
-module.exports = { identify, account };
+module.exports = { identify, account, parseAtxHeading };
