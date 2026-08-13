@@ -43,10 +43,19 @@ function isPlaceholder(value) {
 }
 
 // `today` is documented as optional (skills/okf-review/SKILL.md), and so are
-// `project_mode`, `manifest`, `workspace_id`, `mappings`, `answers`, and
-// `package_root` (skills/okf-setup/SKILL.md, #146); any other placeholder this
-// fixture can't fill is a doc/runtime mismatch, not something to hide.
-const OPTIONAL_PLACEHOLDER_KEYS = new Set(['today', 'project_mode', 'manifest', 'workspace_id', 'mappings', 'answers', 'package_root']);
+// `project_mode`, `manifest`, `workspace_id`, `mappings`, `answers`,
+// `package_root` (skills/okf-setup/SKILL.md, #146), `split_requested`
+// (skills/okf-setup/SKILL.md, #200/#201 task 1), and `split_sections`
+// (skills/okf-setup/SKILL.md, #200/#201 task 2), and `split_proposals`
+// (skills/okf-setup/SKILL.md, #200/#201 task 3), and `split_review`
+// (skills/okf-setup/SKILL.md, #200/#201 task 5), and `group_packages` and
+// `root_package` (skills/okf-setup/SKILL.md, #202/#203); any other placeholder
+// this fixture can't fill is a doc/runtime mismatch, not something to hide.
+const OPTIONAL_PLACEHOLDER_KEYS = new Set([
+  'today', 'project_mode', 'manifest', 'workspace_id', 'mappings', 'answers', 'package_root',
+  'split_requested', 'semantic_boundary_sources', 'split_sections', 'split_proposals', 'split_review',
+  'group_packages', 'root_package',
+]);
 
 function fixtureRequest(example, fixture) {
   const payload = {};
@@ -70,7 +79,12 @@ function bundle(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-120-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' }],
+  }));
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   fs.writeFileSync(path.join(root, 'evidence.md'), 'observed evidence\n');
   fs.writeFileSync(path.join(root, 'note.md'), '---\ntype: Note\ntitle: Before\n---\n# Note\n');

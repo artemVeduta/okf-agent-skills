@@ -11,12 +11,23 @@ const scripts = path.join(__dirname, '..', 'scripts');
 const runtime = require(path.join(scripts, 'lib', 'runtime'));
 const services = require(path.join(scripts, 'lib', 'services'));
 
+// #197: `okf_version`/`project_mode` live in the manifest's selected bundle
+// record now, not `index.md`'s frontmatter.
+function setManifest(root, { okfVersion = '0.2', projectMode = 'knowledge-only' } = {}) {
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: '.', okf_version: okfVersion, project_mode: projectMode }],
+  }));
+}
+
 function bundle(t, mode = 'knowledge-only') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-53-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
-  fs.writeFileSync(path.join(root, 'index.md'), `---\nokf_version: "0.2"\nproject_mode: "${mode}"\n---\n# Bundle\n`);
+  setManifest(root, { projectMode: mode });
+  fs.writeFileSync(path.join(root, 'index.md'), '# Bundle\n');
   fs.writeFileSync(path.join(root, 'evidence.md'), 'observed evidence\n');
   return root;
 }
@@ -85,10 +96,18 @@ test('writer applies a bounded evidence-backed revision and reports its atomic o
   assert.match(fs.readFileSync(path.join(root, 'note.md'), 'utf8'), /title: After/);
 });
 
+// #197: `root version`/`project mode` used to inject a mid-flight `index.md`
+// corruption between the write and `postWrite`'s re-check to prove the
+// re-check reads the file fresh rather than trusting the pre-write value.
+// `okf_version`/`project_mode` now come from the manifest bundle record
+// resolved once before the write and reused unchanged for the re-check (never
+// re-read from either file), so there is no longer a file whose mid-flight
+// mutation this scenario could observe -- it is unreachable the same way
+// `test/issue-78.test.js` documents for the same two checks. `link`/`upstream`
+// are untouched: `checkLinks`/`checkUpstreams` still read the bundle tree
+// fresh in `postWrite`.
 test('writer rechecks the saved bundle through its filesystem service', (t) => {
   const cases = [
-    ['root version', (root) => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.1"\nproject_mode: "knowledge-only"\n---\n# Bundle\n'), 'failed/incomplete', 'ROOT_DECLARATION_NOT_EXACT'],
-    ['project mode', (root) => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "other"\n---\n# Bundle\n'), 'failed/incomplete', 'PROJECT_MODE_INVALID'],
     ['link', (root) => fs.rmSync(path.join(root, 'source.md')), 'applied', 'UNRESOLVED_INTERNAL_LINK'],
     ['upstream', (root) => fs.writeFileSync(path.join(root, 'source.md'), '---\ntitle: Source\n---\n# Source\n'), 'failed/incomplete', 'DEPENDS_ON_BLOCKED_CONCEPT'],
   ];
@@ -202,10 +221,16 @@ test('no-op, abstained, and blocked bounded outcomes do not hide their state', (
 test('mode, scope, ownership, evidence, and semantic gates block only the request', (t) => {
   const root = bundle(t);
   concept(root);
+  // #197: `project_mode` is a required, non-empty-string manifest bundle-record
+  // field now, not optional `index.md` frontmatter -- `manifest.validate()`
+  // itself rejects an absent one as an invalid manifest (refused at the
+  // activation gate, not this write gate), so "missing mode" has no equivalent
+  // here. "conflicting mode" (a YAML frontmatter block repeating one key) has
+  // none either -- `JSON.parse` silently keeps the last of two duplicate JSON
+  // keys rather than refusing the document. Only a present-but-unrecognized
+  // value stays expressible at this gate.
   const cases = [
-    ['missing mode', () => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n'), 'PROJECT_MODE_INVALID'],
-    ['invalid mode', () => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "other"\n---\n# Bundle\n'), 'PROJECT_MODE_INVALID'],
-    ['conflicting mode', () => fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\nproject_mode: "code-backed"\n---\n# Bundle\n'), 'PROJECT_MODE_INVALID'],
+    ['invalid mode', () => setManifest(root, { projectMode: 'other' }), 'PROJECT_MODE_INVALID'],
   ];
   for (const [label, setup, code] of cases) {
     setup();
@@ -213,7 +238,7 @@ test('mode, scope, ownership, evidence, and semantic gates block only the reques
     assert.equal(response.result, 'blocked', label);
     assert.equal(response.data.code, code, label);
     assert.equal(fs.readFileSync(path.join(root, 'note.md'), 'utf8').includes('After'), false, label);
-    fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
+    setManifest(root);
   }
   assert.equal(run(request(root, 'okf-write', 'revise', { evidence: ['evidence.md'] })).data.code, 'UNSUPPORTED_INPUT');
   const invalidScope = request(root, 'okf-write', 'revise');

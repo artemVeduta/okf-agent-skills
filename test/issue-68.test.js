@@ -4,7 +4,7 @@ const cp = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { REQUIRED_BRIEF_FIELDS, binding } = require('../test-support/snapshot');
+const { REQUIRED_BRIEF_FIELDS, binding, writeManifest } = require('../test-support/snapshot');
 
 const scripts = path.join(__dirname, '..', 'scripts');
 const delegation = require(path.join(scripts, 'lib', 'delegation'));
@@ -16,7 +16,7 @@ function bundle(t, mode = 'knowledge-only') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-68-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   fs.writeFileSync(path.join(root, 'index.md'), `---\nokf_version: "0.2"\nproject_mode: "${mode}"\n---\n# Bundle\n`);
   fs.writeFileSync(path.join(root, 'evidence.md'), 'observed\n');
   return root;
@@ -264,8 +264,8 @@ test('a delegated read dispatches through the real okf-read wrapper and reports 
   const delegated = run(delegateWrapper, readBrief(root));
   assert.equal(delegated.status, 0);
   assert.equal(delegated.response.role, 'okf-reader');
-  assert.equal(inline.response.result, 'unavailable');
-  assert.equal(delegated.response.status, 'unavailable');
+  assert.equal(inline.response.result, 'degraded');
+  assert.equal(delegated.response.status, 'degraded');
   assert.deepEqual(delegated.response.findings, inline.response.findings);
 });
 
@@ -332,15 +332,12 @@ test('a writer child that fails to produce a parseable response is reported inde
   assert.deepEqual(bytes(path.join(root, 'note.md')), before);
 });
 
-test('delegation never touches .okf-active or .okf-workspace.json', (t) => {
+test('delegation never touches .okf-workspace.json', (t) => {
   const root = bundle(t);
   concept(root);
-  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({ schema_version: 1 }));
-  const markerBefore = bytes(path.join(root, '.okf-active'));
   const workspaceBefore = bytes(path.join(root, '.okf-workspace.json'));
 
   run(delegateWrapper, brief(root));
 
-  assert.deepEqual(bytes(path.join(root, '.okf-active')), markerBefore);
   assert.deepEqual(bytes(path.join(root, '.okf-workspace.json')), workspaceBefore);
 });

@@ -13,7 +13,7 @@
  */
 
 const path = require('node:path');
-const childProcess = require('node:child_process');
+const { dispatchWrapper } = require('./wrapper-dispatch');
 const orientation = require('./orientation');
 
 const occurrencesName = '.okf-occurrences.json';
@@ -114,24 +114,19 @@ function claimAndDispatch(payload, ledgerDir, services) {
     protocol: 'okf-wrapper/1', skill: 'okf-read', operation: 'orient', invocation: 'automatic',
     payload: { ...payload, claimed: firstAttempt ? [] : [{ occurrence_key: key, outcome: prior.outcome }] },
   };
-  let dispatched = null;
-  let response = null;
-  try {
-    dispatched = childProcess.spawnSync(process.execPath, [readWrapper], { input: JSON.stringify(request), encoding: 'utf8' });
-    const parsed = JSON.parse(dispatched.stdout);
-    if (parsed !== null && typeof parsed === 'object' && parsed.protocol === 'okf-wrapper/1') response = parsed;
-  } catch { response = null; }
+  const dispatched = dispatchWrapper(readWrapper, request);
+  const response = dispatched.ok && dispatched.response.protocol === 'okf-wrapper/1' ? dispatched.response : null;
 
   let record;
   let presented;
   if (response) {
     record = { outcome: claimOutcome(response.result), reason: reasonOf(response) };
     presented = present(response, firstAttempt ? reasonOf(response) : prior.reason);
-  } else if (dispatched && !dispatched.error && dispatched.status === 0) {
+  } else if (!dispatched.spawnError && dispatched.exitCode === 0) {
     record = null;
     presented = null;
   } else {
-    presented = present({ result: 'unavailable' }, 'dispatch_failed');
+    presented = present({ result: 'unavailable' }, dispatched.truncated ? 'response_truncated' : 'dispatch_failed');
   }
 
   if (file && firstAttempt && record !== undefined) {

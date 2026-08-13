@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { runWrapper } = require('../test-support/snapshot');
+const { runWrapper, writeManifest } = require('../test-support/snapshot');
 const orientation = require('../scripts/lib/orientation');
 
 const repo = path.resolve(__dirname, '..');
@@ -32,7 +32,7 @@ function installedWrapper(t, store) {
   fs.mkdirSync(storeRoot, { recursive: true });
   fs.symlinkSync(path.relative(storeRoot, skill), path.join(storeRoot, 'okf-read'), 'dir');
   fs.mkdirSync(path.join(worktree, '.git'), { recursive: true });
-  fs.writeFileSync(path.join(worktree, '.okf-active'), '');
+  writeManifest(worktree, '.');
   fs.writeFileSync(path.join(worktree, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
 
   return { home, worktree, wrapper: path.join(storeRoot, 'okf-read', 'scripts', 'okf-read.js') };

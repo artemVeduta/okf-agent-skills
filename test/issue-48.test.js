@@ -4,7 +4,7 @@ const cp = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { RESPONSE_KEYS: responseKeys, assertEnvelope, treeHash } = require('../test-support/snapshot');
+const { RESPONSE_KEYS: responseKeys, assertEnvelope, treeHash, writeManifest } = require('../test-support/snapshot');
 
 const repo = path.resolve(__dirname, '..');
 const scripts = path.join(repo, 'scripts');
@@ -16,14 +16,14 @@ const ACTIVATION_BLOCKED_DATA = {
   residue: [],
   evidence: [],
   validation: 'not-run',
-  code: 'ACTIVATION_MARKER_INVALID',
+  code: 'MANIFEST_INVALID',
 };
 const ACTIVATION_INVALID_FINDING = {
-  code: 'ACTIVATION_MARKER_INVALID',
+  code: 'MANIFEST_INVALID',
   origin: 'suite',
   severity: 'error',
   blocks: true,
-  detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
+  detail: { gate: 'activation', reason: 'manifest_invalid' },
 };
 
 function temporaryRoot(t, prefix = 'okf-48-') {
@@ -33,7 +33,7 @@ function temporaryRoot(t, prefix = 'okf-48-') {
 }
 
 function activate(root) {
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
 }
 
 function repository(t, prefix = 'okf-48-repo-', active = true) {
@@ -56,6 +56,13 @@ function request(skill, operation, payload, fields = {}) {
 
 function admitRequest(root, invocation) {
   return request('okf-read', 'admit', { cwd: root, candidates: [] }, invocation === undefined ? {} : { invocation });
+}
+
+// `resolve` is a normal gated read, never exempt like `admit` (see the
+// `admit bypasses activation entirely...` test below) -- it is the operation
+// the manifest-placement tests further down drive the gate through.
+function resolveRequest(cwd, target) {
+  return request('okf-read', 'resolve', { cwd, candidates: [], target });
 }
 
 function reviseRequest(root, invocation) {
@@ -255,11 +262,11 @@ test('automatic revise is blocked without changing the concept', (t) => {
   assert.equal(treeHash(root), beforeTree);
 });
 
-test('an invalid activation marker takes precedence over automatic mutation blocking', (t) => {
+test('an invalid manifest takes precedence over automatic mutation blocking', (t) => {
   const root = repository(t, 'okf-48-invalid-marker-automatic-', false);
   bundle(root);
   writeConcept(root);
-  fs.writeFileSync(path.join(root, '.okf-active'), 'invalid');
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
   const target = path.join(root, 'concept.md');
   const beforeTarget = fs.readFileSync(target);
   for (const [skill, value] of [
@@ -333,12 +340,84 @@ test('guard operations are valid UNKNOWN_OPERATION refusals and no guard module 
   assert.equal(treeHash(root), before);
 });
 
-test('absent activation marker reports not-configured for default and explicit invocation', (t) => {
+// #197: `admit` is exempt from the activation gate (it is the inspection
+// primitive at which REACH/PRESENCE/TRUST/ACCESS and federation fallback are
+// independently observable -- see `runtime.js`'s `activationBypassOperations`
+// comment). Unlike every other explicit call, it never reports
+// `not-configured`/blocked activation, and this is true regardless of cwd
+// nesting or where a manifest would have had to sit relative to the Git
+// root -- there is no more "activation" state for it to consult at all. This
+// is the accepted cost of the exemption, not an oversight.
+test('admit bypasses activation entirely: it never reports not-configured for a manifest-less repository', (t) => {
   const root = repository(t, 'okf-48-no-marker-', false);
+  const nested = path.join(root, 'nested', 'work');
+  fs.mkdirSync(nested, { recursive: true });
   const before = treeHash(root);
-  assertNotConfigured(runWrapper('okf-read', admitRequest(root)));
-  assertNotConfigured(runWrapper('okf-read', admitRequest(root, 'explicit')));
+  for (const cwd of [root, nested]) {
+    for (const invocation of [undefined, 'explicit']) {
+      const result = runWrapper('okf-read', admitRequest(cwd, invocation));
+      assertEnvelope(result);
+      assert.equal(result.response.result, 'ok');
+      assert.deepEqual(result.response.data, { federation: 'none', candidates: [] });
+    }
+  }
   assert.equal(treeHash(root), before);
+});
+
+// #197 fix round 1: `manifest.select()`'s `discover()` is the exact function
+// `activationState()` calls for every non-exempt operation (`resolve` here),
+// so the four placement properties below are load-bearing for the gate
+// itself, not a `resolve`-specific detail. They replace the marker-era
+// "a valid root marker activates a request from a nested cwd" and "markers
+// above, below, and outside a Git root are ignored" tests this file lost
+// when `admit` -- the only operation those drove -- became gate-exempt.
+test('a valid manifest at the repository root activates a request from a nested cwd', (t) => {
+  const root = repository(t, 'okf-48-nested-cwd-');
+  bundle(root);
+  fs.writeFileSync(path.join(root, 'note.md'), '# Note\n');
+  const nested = path.join(root, 'nested', 'work');
+  fs.mkdirSync(nested, { recursive: true });
+  const before = treeHash(root);
+  const result = runWrapper('okf-read', resolveRequest(nested, 'note'));
+  assertEnvelope(result);
+  assert.equal(result.response.result, 'ok');
+  assert.equal(result.response.data.selected.bundle_alias, 'repo');
+  assert.equal(treeHash(root), before);
+});
+
+test('a manifest above the Git root is ignored', (t) => {
+  const workspace = temporaryRoot(t, 'okf-48-above-root-');
+  const root = path.join(workspace, 'repo');
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+  bundle(root);
+  fs.writeFileSync(path.join(root, 'note.md'), '# Note\n');
+  writeManifest(workspace, '.');
+  const before = treeHash(workspace);
+  assertNotConfigured(runWrapper('okf-read', resolveRequest(root, 'note')));
+  assert.equal(treeHash(workspace), before);
+});
+
+test('a manifest below cwd is ignored', (t) => {
+  const root = repository(t, 'okf-48-below-cwd-', false);
+  bundle(root);
+  fs.writeFileSync(path.join(root, 'note.md'), '# Note\n');
+  const child = path.join(root, 'child');
+  fs.mkdirSync(child, { recursive: true });
+  writeManifest(child, '.');
+  const before = treeHash(root);
+  assertNotConfigured(runWrapper('okf-read', resolveRequest(root, 'note')));
+  assert.equal(treeHash(root), before);
+});
+
+test('a manifest outside any Git repository does not activate a non-repository cwd', (t) => {
+  const workspace = temporaryRoot(t, 'okf-48-outside-root-');
+  const plain = path.join(workspace, 'plain');
+  fs.mkdirSync(plain, { recursive: true });
+  fs.writeFileSync(path.join(plain, 'note.md'), '# Note\n');
+  writeManifest(plain, '.');
+  const before = treeHash(workspace);
+  assertNotConfigured(runWrapper('okf-read', resolveRequest(plain, 'note')));
+  assert.equal(treeHash(workspace), before);
 });
 
 test('absent activation marker is silent for exactly automatic invocation', (t) => {
@@ -352,52 +431,21 @@ test('absent activation marker is silent for exactly automatic invocation', (t) 
   assert.equal(treeHash(root), before);
 });
 
-test('a valid root marker activates a request from a nested cwd', (t) => {
-  const root = repository(t);
-  const nested = path.join(root, 'nested', 'work');
-  fs.mkdirSync(nested, { recursive: true });
-  const before = treeHash(root);
-  const result = runWrapper('okf-read', admitRequest(nested));
-  assertEnvelope(result);
-  assert.equal(result.response.result, 'ok');
-  assert.deepEqual(result.response.data, { federation: 'none', candidates: [] });
-  assert.equal(treeHash(root), before);
-});
-
-test('markers above, below, and outside a Git root are ignored', (t) => {
-  const workspace = temporaryRoot(t, 'okf-48-marker-placement-');
-  const root = path.join(workspace, 'repo');
-  fs.mkdirSync(path.join(root, '.git'), { recursive: true });
-  activate(workspace);
-
-  const nested = path.join(root, 'nested');
-  fs.mkdirSync(nested);
-  activate(nested);
-
-  const plain = path.join(workspace, 'plain');
-  fs.mkdirSync(plain);
-  activate(plain);
-  const before = treeHash(workspace);
-  assertNotConfigured(runWrapper('okf-read', admitRequest(nested)));
-  assertNotConfigured(runWrapper('okf-read', admitRequest(plain)));
-  assert.equal(treeHash(workspace), before);
-});
-
-test('non-empty, directory, and symlink markers block with the exact activation finding', (t) => {
+// #197: a marker's invalidity was a physical-file question (non-empty, a
+// directory, a symlink). A manifest's is a data question: unparseable JSON, or
+// JSON that fails the schema. `directory` still hits the exact same read
+// failure a marker directory did (`services.readFile` throws either way).
+test('malformed JSON, a directory, and a schema-invalid manifest block with the exact activation finding', (t) => {
   const cases = [
-    ['non-empty', (marker) => fs.writeFileSync(marker, 'active')],
-    ['directory', (marker) => fs.mkdirSync(marker)],
-    ['symlink', (marker) => {
-      const target = path.join(path.dirname(marker), 'marker-target');
-      fs.writeFileSync(target, '');
-      fs.symlinkSync(target, marker);
-    }],
+    ['malformed-json', (manifestFile) => fs.writeFileSync(manifestFile, 'not json')],
+    ['directory', (manifestFile) => fs.mkdirSync(manifestFile)],
+    ['schema-invalid', (manifestFile) => fs.writeFileSync(manifestFile, JSON.stringify({ schema_version: 1 }))],
   ];
   for (const [name, setup] of cases) {
     const root = repository(t, `okf-48-invalid-marker-${name}-`, false);
     bundle(root);
     writeConcept(root);
-    setup(path.join(root, '.okf-active'));
+    setup(path.join(root, '.okf-workspace.json'));
     const target = path.join(root, 'concept.md');
     const beforeTarget = fs.readFileSync(target);
     const beforeTree = treeHash(root);
@@ -422,8 +470,8 @@ test('activation checks do not change the marker tree', (t) => {
   assert.equal(treeHash(root), before);
 });
 
-test('a valid marker does not bypass the REACH admission gate', (t) => {
-  const root = repository(t);
+test('an explicit candidate still goes through the REACH admission gate', (t) => {
+  const root = repository(t, 'okf-48-reach-', false);
   const before = treeHash(root);
   const result = runWrapper('okf-read', request('okf-read', 'admit', {
     cwd: root,
@@ -436,8 +484,8 @@ test('a valid marker does not bypass the REACH admission gate', (t) => {
   assert.equal(treeHash(root), before);
 });
 
-test('a valid marker does not bypass the TRUST admission gate', (t) => {
-  const root = repository(t);
+test('an explicit candidate still goes through the TRUST admission gate', (t) => {
+  const root = repository(t, 'okf-48-trust-', false);
   const peer = path.join(root, 'peer');
   fs.mkdirSync(path.join(peer, '.git'), { recursive: true });
   activate(peer);
@@ -454,13 +502,13 @@ test('a valid marker does not bypass the TRUST admission gate', (t) => {
   assert.equal(treeHash(root), before);
 });
 
-test('a valid marker does not bypass the ACCESS admission gate', (t) => {
+test('an explicit candidate still goes through the ACCESS admission gate', (t) => {
   if (process.getuid && process.getuid() === 0) {
     t.skip('root can read mode-zero fixtures');
     return;
   }
 
-  const root = repository(t);
+  const root = repository(t, 'okf-48-access-', false);
   const peer = path.join(root, 'peer');
   const inaccessible = bundle(peer, 'knowledge');
   fs.mkdirSync(path.join(peer, '.git'), { recursive: true });

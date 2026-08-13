@@ -7,8 +7,8 @@ publish. Each fixture builds a bundle under the OS temp dir and drives
 response line — the same seam `test/write-gate.test.js` uses.
 
 Check                       Finding code                  Pass observable                                     Fail observable
- 1 bundle-root declaration   ROOT_DECLARATION_NOT_EXACT    root `okf_version` is exactly the string "0.2"      `failed/incomplete`
- 2 project mode              PROJECT_MODE_INVALID          root `project_mode` is a declared mode              `failed/incomplete`
+ 1 bundle-root declaration   ROOT_DECLARATION_NOT_EXACT    selected manifest bundle's `okf_version` is "0.2"   none (unreachable, 4)
+ 2 project mode              PROJECT_MODE_INVALID          selected manifest bundle's `project_mode` is valid  none (unreachable, 4)
  3 concept re-read           FRONTMATTER_UNPARSEABLE       written concept re-parses                           none (unreachable, 1)
  4 written-tree compare      POST_WRITE_VALIDATION_FAILED  re-read tree equals the expected tree               none (unreachable, 1)
  5 reserved bundle files     BUNDLE_FILES_NONCONFORMING    every reserved file parses                          `blocked` (2)
@@ -29,7 +29,7 @@ The pass column is covered by one shared conformant fixture rather than one
 fixture per check: that request drives every check's pass branch in a single
 `applied` response, so per-check pass fixtures would only duplicate it.
 
-Three facts limit the fail column, and each is a property of the runtime, not
+Four facts limit the fail column, and each is a property of the runtime, not
 of these fixtures:
 
  1. Checks 3 and 4 re-verify what the pre-write gate already proved with the
@@ -43,13 +43,21 @@ of these fixtures:
  3. Check 11 reports a warning, not a blocker, so it cannot move the result off
     `applied`. A source that resolves to a directory takes this same branch:
     a directory is not an existing file for this check.
+ 4. Checks 1 and 2 (#197) read the selected manifest bundle record, resolved
+    once before the write and reused unchanged for the post-write re-check —
+    never the bundle root's own `index.md`, which a concept `revise` can reach
+    but the manifest never can. The self-corrupting-write scenario these two
+    checks existed to catch (a write whose own target is the check's source)
+    is gone by construction, so like checks 3 and 4 they have no fail fixture;
+    the file instead pins the decoupling itself (below).
 
-Consequence: nine of the twelve checks have no `failed/incomplete` observable
+Consequence: eleven of the twelve checks have no `failed/incomplete` observable
 reachable from a normal wrapper request, so this file covers their reachable
-observable instead — the pre-write `blocked` case for checks 5-10, and no
-forced fixture at all for checks 3 and 4, whose fail conditions stay
-documented rather than fixture-forced. This reflects the issue #86
-resolution, not a renegotiated criterion.
+observable instead — the pre-write `blocked` case for checks 5-10, no forced
+fixture for checks 3, 4, 1, and 2, whose fail conditions stay documented
+rather than fixture-forced, and a decoupling proof for checks 1 and 2 in place
+of their retired fail fixture. This reflects the issue #86 resolution and
+issue #197's write-gate relocation, not a renegotiated criterion.
 */
 
 const test = require('node:test');
@@ -59,14 +67,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { binding } = require('../test-support/snapshot');
+const { binding, writeManifest } = require('../test-support/snapshot');
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-write.js');
 
 function bundle(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-78-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   fs.writeFileSync(path.join(root, 'evidence.md'), 'observed evidence\n');
   fs.writeFileSync(path.join(root, 'good.md'), '---\ntype: Note\ntitle: Good\n---\n# Good\n');
@@ -116,34 +124,28 @@ test('a fully conformant new concept passes every post-write check', (t) => {
   assert.match(fs.readFileSync(path.join(root, 'child.md'), 'utf8'), /type: Attested Computation/);
 });
 
-test('a write that makes the bundle root non-conforming reports incomplete and stays on disk', (t) => {
+// #197: checks 1 and 2 read `okf_version`/`project_mode` off the selected
+// manifest bundle record now, never off the bundle root's own `index.md` --
+// the root is navigation only, and a concept write can never reach the
+// manifest. The two tests this replaced revised `index.md` itself to prove
+// `postWrite` catches a write that corrupts its own gate source; that
+// scenario is gone by construction (a `revise` targets one concept file, and
+// `index.md` is no longer that source), so both checks join checks 3/4 in
+// having no `failed/incomplete` observable reachable from a normal wrapper
+// request. This test instead pins the decoupling itself: corrupting
+// `index.md`'s frontmatter no longer affects any other concept's write gate.
+test('revising index.md itself no longer affects the write gate for other concepts', (t) => {
   const root = bundle(t);
-  const response = run(request(root, {
+  const corrupt = run(request(root, {
     concept: 'index.md',
-    set: { type: 'Bundle', okf_version: '0.3' },
+    set: { type: 'Bundle', okf_version: '0.3', project_mode: 'both' },
   }));
-  assert.equal(response.result, 'failed/incomplete');
-  assert.equal(response.data.validation, 'failed');
-  const finding = response.findings.find((f) => f.code === 'ROOT_DECLARATION_NOT_EXACT');
-  assert.ok(finding, 'expected ROOT_DECLARATION_NOT_EXACT');
-  assert.equal(finding.origin, 'suite');
-  assert.deepEqual(finding.detail, { observed: '0.3', observed_type: 'string' });
+  assert.equal(corrupt.result, 'applied');
   assert.match(fs.readFileSync(path.join(root, 'index.md'), 'utf8'), /okf_version: "0.3"/);
-});
 
-test('a write that makes the project mode invalid reports incomplete and stays on disk', (t) => {
-  const root = bundle(t);
-  const response = run(request(root, {
-    concept: 'index.md',
-    set: { type: 'Bundle', project_mode: 'both' },
-  }));
-  assert.equal(response.result, 'failed/incomplete');
-  assert.equal(response.data.validation, 'failed');
-  const finding = response.findings.find((f) => f.code === 'PROJECT_MODE_INVALID');
-  assert.ok(finding, 'expected PROJECT_MODE_INVALID');
-  assert.equal(finding.origin, 'suite');
-  assert.deepEqual(finding.detail, { gate: 'project mode' });
-  assert.match(fs.readFileSync(path.join(root, 'index.md'), 'utf8'), /project_mode: both/);
+  const stillGates = run(request(root, { concept: 'good.md', set: { title: 'After' } }));
+  assert.equal(stillGates.result, 'applied');
+  assert.equal(stillGates.findings.some((f) => f.code === 'ROOT_DECLARATION_NOT_EXACT' || f.code === 'PROJECT_MODE_INVALID'), false);
 });
 
 test('a created concept whose source is blocked reports incomplete after the write', (t) => {

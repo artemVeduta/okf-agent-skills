@@ -46,8 +46,9 @@ gives all three harnesses one CRUD contract for OKF bundles (#5, #4).
 
 From the developer's side:
 
-- **Opt in per project.** A zero-byte `.okf-active` file at the worktree root turns on automatic
-  behavior. Without it, nothing happens (#35).
+- **Opt in per project.** A valid `.okf-workspace.json` manifest, with an admitted bundle record,
+  turns on automatic behavior. Without one, automatic calls stay silent and an explicit call
+  reports `not-configured` [precedence: #196 over #35].
 - **Session entry orients, and reads nothing else.** At a supported session seam the adapter emits
   one bounded, read-only orientation carrying activation, current bundle identity, the root index
   path, aggregate workspace health, and one next action. It never mutates and never guesses the
@@ -232,7 +233,7 @@ source of truth (#6).
 151. As a developer recovering from a crash mid-move, I want a proven partial result classified `partially-applied` and an unknown result classified `indeterminate`, so that the suite never claims an atomicity Git cannot provide.
 152. As a developer recovering from a crash mid-move, I want both classifications to block further mutation until explicit reconciliation, so that I cannot compound the damage with a second write.
 153. As a developer recovering from a crash mid-move, I want rollback and repair to be new operations with their own approval and recovery gates, so that undoing a change is as carefully checked as making it.
-154. As an implementation agent building the suite, I want a fixture list covering revoked consent, wrong identity, missing markers, unknown mode, collisions, lock contention, and both failure orders, so that I know when the cross-repository move is done.
+154. As an implementation agent building the suite, I want a fixture list covering revoked consent, wrong identity, missing manifests, unknown mode, collisions, lock contention, and both failure orders, so that I know when the cross-repository move is done.
 155. As a developer using an agent in a code-backed project, I want a warm cache and a cold run to produce the same result, so that performance state can never change what the agent is allowed to see.
 156. As a developer using an agent in a code-backed project, I want admission verdicts, authority, and write targets never cached, so that revoking trust takes effect on the very next resolution.
 157. As a developer using an agent in a code-backed project, I want the persistent cache outside my repository and outside my bundle, so that a scan cannot walk its own cache and my repository stays clean.
@@ -257,7 +258,7 @@ source of truth (#6).
 173. As the agent, I want to refuse to fall back from an exact target to a similar name or a broad search, so that I cannot answer a precise question with an approximate document.
 174. As the agent, I want to read only admitted and routed bundles, so that concept discovery cannot widen what the user admitted.
 175. As the agent, I want concept discovery to grant no trust, access, write ownership, approval, or permission, so that finding a file never becomes authority over it.
-176. As the agent, I want to recheck the activation marker, routing, admission, and files on every explicit read, so that a stale earlier result cannot decide a current answer.
+176. As the agent, I want to recheck the manifest, routing, admission, and files on every explicit read, so that a stale earlier result cannot decide a current answer.
 177. As the agent, I want to treat my own memory as not being bundle content, so that I never report a remembered concept as a read one.
 178. As a developer using an agent in a code-backed project, I want a missing, stale, or unreadable index reported rather than repaired, so that a read operation never quietly edits my bundle.
 179. As a knowledge-base owner in a knowledge-only project, I want the agent to fall back to native search inside admitted scope when an index does not resolve my request, so that a bad index does not hide my content.
@@ -298,7 +299,7 @@ source of truth (#6).
 214. As the agent, I want orientation to make no token-budget estimate, so that no invented cost number decides what I show.
 215. As the agent, I want a fresh orientation in every forked or delegated child context, so that I never act on an inherited and possibly stale view.
 216. As the agent, I want a non-clean orientation to block mutation and claim nothing clean, so that a failed entry cannot become a licence to write.
-217. As a developer using an agent in a code-backed project, I want an absent activation marker to make automatic behavior a silent no-op and explicit reads report `not-configured`, so that an unopted project stays untouched and I still get a clear answer when I ask.
+217. As a developer using an agent in a code-backed project, I want an absent manifest to make automatic behavior a silent no-op and explicit reads report `not-configured`, so that an unopted project stays untouched and I still get a clear answer when I ask.
 
 ### Operation risk, approval, the manual-operation guard, and recovery
 
@@ -504,7 +505,7 @@ source of truth (#6).
 408. As a knowledge-base owner in a knowledge-only project, I want `okf-review` to own trust tiers and review baselines, so that review evidence lives in one place instead of being scattered across operations.
 409. As a knowledge-base owner in a knowledge-only project, I want a review task kind to read, validate, and report only, so that reviewing my bundle cannot quietly rewrite it.
 410. As a knowledge-base owner in a knowledge-only project, I want a mismatched or partial installation to fail closed, so that half-installed OKF behavior cannot act on my bundle.
-411. As a knowledge-base owner in a knowledge-only project, I want adapter installation and removal to touch nothing but the harness, so that uninstalling an adapter cannot alter my markers, manifests, guard state, or content.
+411. As a knowledge-base owner in a knowledge-only project, I want adapter installation and removal to touch nothing but the harness, so that uninstalling an adapter cannot alter my manifests, guard state, or content.
 412. As the agent, I want the router to dispatch to exactly four sub-skills, so that I can reach the right capability without guessing.
 413. As the agent, I want every skill to declare an explicit invocation design, so that I know which capabilities I may reach on my own and which need the human.
 414. As the agent, I want each description to state distinct trigger branches once in third-person language, so that routing stays cheap and unambiguous.
@@ -539,14 +540,14 @@ source of truth (#6).
 
 ### Harness adapters, session entry, and delegated agents
 
-443. As a developer using an agent in a code-backed project, I want automatic OKF behavior only in worktrees where I placed `.okf-active`, so that my other repositories are untouched.
-444. As a developer using an agent in a code-backed project, I want installation to leave `.okf-active` alone, so that installing an adapter never silently activates a project.
-445. As a knowledge-base owner in a knowledge-only project, I want marker creation to be a separate explicit step, so that activation is always my decision.
-446. As a reviewer, I want `.okf-active` to grant no trust, authority, access, filesystem access, discovery authority, write ownership, foreign-write authority, approval, or permission, so that a one-byte file can never be read as consent.
-447. As a developer using an agent in a code-backed project, I want a project without the marker to stay silent in automatic paths and report `not-configured` when I ask directly, so that I am never confused about whether the suite is on.
-448. As a developer using an agent in a code-backed project, I want a malformed marker to produce a diagnostic and block mutation, so that I cannot silently corrupt my bundle through a broken setup.
-449. As a knowledge-base owner in a knowledge-only project, I want workspace, federation, and routing declarations to stay in `.okf-workspace.json`, so that activation and federation remain separable.
-450. As a reviewer, I want a cross-repository operation to require valid markers in both worktrees, so that one repository cannot reach into another that never opted in.
+443. As a developer using an agent in a code-backed project, I want automatic OKF behavior only in worktrees where a valid `.okf-workspace.json` manifest exists, so that my other repositories are untouched.
+444. As a developer using an agent in a code-backed project, I want installation to leave `.okf-workspace.json` alone, so that installing an adapter never silently activates a project.
+445. As a knowledge-base owner in a knowledge-only project, I want manifest repair to be a separate explicit step, so that activation is always my decision.
+446. As a reviewer, I want a valid manifest to grant no trust, authority, access, filesystem access, discovery authority, write ownership, foreign-write authority, approval, or permission, so that a declared bundle can never be read as consent.
+447. As a developer using an agent in a code-backed project, I want a project without a manifest to stay silent in automatic paths and report `not-configured` when I ask directly, so that I am never confused about whether the suite is on.
+448. As a developer using an agent in a code-backed project, I want an invalid manifest to produce a diagnostic and block mutation, so that I cannot silently corrupt my bundle through a broken setup.
+449. As a knowledge-base owner in a knowledge-only project, I want workspace, federation, routing, and activation unified in one user-authored `.okf-workspace.json` manifest, so that a single valid file turns on automatic behavior and declares my bundles.
+450. As a reviewer, I want a cross-repository operation to require a valid manifest in both worktrees, so that one repository cannot reach into another that never opted in.
 451. As an adapter author, I want to know that the target side needs no native adapter while the invoking side does, so that I do not require an unnecessary install on the peer.
 452. As an adapter author, I want a defined list of what my adapter may own, so that I add native registration and presentation without touching shared semantics.
 453. As an adapter author, I want a defined list of what my adapter must not redefine, so that authority, trust, guard, and mutation rules stay in one place.
@@ -555,14 +556,14 @@ source of truth (#6).
 456. As a developer using an agent in a code-backed project, I want a mismatched adapter and suite version to fail closed, so that a partial upgrade cannot half-apply safety rules.
 457. As a developer using an agent in a code-backed project, I want my namespaced adapter configuration preserved across updates, so that upgrading does not erase my settings.
 458. As a developer using an agent in a code-backed project, I want local overrides limited to presentation, admitted-bundle selection, and adapter capabilities, so that I cannot accidentally disable a safety rule.
-459. As a knowledge-base owner in a knowledge-only project, I want removing an adapter to leave markers, content, manifests, and guard state untouched, so that uninstalling is safe.
+459. As a knowledge-base owner in a knowledge-only project, I want removing an adapter to leave manifests, content, and guard state untouched, so that uninstalling is safe.
 460. As a reviewer, I want semantic parity defined as agreement on shared decisions and safety outcomes, so that nobody claims identical native behavior the harnesses do not have.
 461. As the agent, I want one bounded, read-only orientation at session entry, so that I know where the bundle is without reading it all.
 462. As a developer using an agent in a code-backed project, I want orientation limited to activation, bundle identity, root index path, aggregate workspace health, and one next action, so that session entry stays cheap and predictable.
 463. As a developer using an agent in a code-backed project, I want orientation to carry no full index and no concept body, so that entering a session does not dump my knowledge base into context.
 464. As a knowledge-base owner in a knowledge-only project, I want orientation to infer no task and perform no maintenance, so that opening a session never edits my documents.
 465. As the agent, I want orientation to grant no authority, approval, brief, or writer permission, so that I never mistake a status summary for consent.
-466. As the agent, I want every explicit read to start fresh and recheck the marker, routing, admission, and current files, so that I never answer from a stale session view.
+466. As the agent, I want every explicit read to start fresh and recheck the manifest, routing, admission, and current files, so that I never answer from a stale session view.
 467. As the agent, I want each forked or delegated child context to get its own orientation, so that I never inherit a parent's stale claim about a different scope.
 468. As a reviewer, I want a child context to recheck activation, scope, routing, and admission, so that a delegated agent cannot ride a parent's admission decision.
 469. As an adapter author, I want to own an occurrence key containing harness, repository instance, context ID, logical cause, and native event ID, so that I can deduplicate native events correctly.
@@ -591,7 +592,7 @@ source of truth (#6).
 492. As the agent, I want an immutable delegation brief naming task kind, operation class, exact targets, allowed and forbidden effects, evidence, required gates, settings, and expected result, so that I know my exact bounds.
 493. As the agent, I want a brief that may narrow but never widen shipped rules, so that a prompt cannot enlarge my authority.
 494. As the agent, I want to return `blocked: incomplete-brief` or `blocked: conflicting-rules` instead of guessing, so that I cannot silently corrupt a bundle from an ambiguous instruction.
-495. As the agent, I want to recheck marker, routing, admission, target identity, content, evidence, operation class, and guard state before execution, so that I never write against a stale handoff.
+495. As the agent, I want to recheck the manifest, routing, admission, target identity, content, evidence, operation class, and guard state before execution, so that I never write against a stale handoff.
 496. As a developer using an agent in a code-backed project, I want `blocked: stale-handoff` and `blocked: target-conflict` on drift, so that a changed target aborts instead of overwriting.
 497. As a developer using an agent in a code-backed project, I want `blocked: repository-instance-mismatch` when the writer is not in the named worktree, so that a write cannot land in the wrong clone.
 498. As a reviewer, I want only one active guarded writer operation per bundle, so that two sessions cannot arm and execute at once.
@@ -608,7 +609,7 @@ source of truth (#6).
 509. As a developer using an agent in a code-backed project, I want my session override to expire at session end, so that a temporary choice does not become permanent.
 510. As a knowledge-base owner in a knowledge-only project, I want the suite to read and validate settings but never rewrite them, so that my configuration files stay mine.
 511. As a developer using an agent in a code-backed project, I want an invalid setting to produce a diagnostic and fall back to the next valid value, so that a typo never turns into an invented behavior.
-512. As a reviewer, I want delegation to change execution placement only, so that moving work into a sub-agent cannot change mode, admission, trust, access, authority, approval, recovery, markers, the write ceiling, or the guard.
+512. As a reviewer, I want delegation to change execution placement only, so that moving work into a sub-agent cannot change mode, admission, trust, access, authority, approval, recovery, the manifest, the write ceiling, or the guard.
 513. As an adapter author, I want the Codex hook-scoping fact stated with its consequence, so that I build per-skill behavior from deterministic in-skill steps instead of an impossible matcher.
 514. As an adapter author, I want the corrected OpenCode invocation facts stated, so that I do not repeat the retracted claim that no explicit-only equivalent exists.
 515. As an adapter author, I want the OpenCode symlink fact stated with its narrow scope, so that I test my exact installation topology rather than assume every layout works.
@@ -847,10 +848,17 @@ source of truth (#6).
 
 #### Write gate
 
-- The suite MUST mutate only a bundle whose bundle-root `index.md` declares parsed `okf_version` exactly as the string `"0.2"`. (#21)
-- The suite MUST treat an absent declaration, `"0.1"`, a future version, an unquoted numeric `0.2`, and every other value as read-only. (#21)
+- The suite MUST mutate only a bundle whose selected manifest bundle record declares `okf_version`
+  exactly as the string `"0.2"` [precedence: #196 over #21].
+- The suite MUST treat an absent declaration, `"0.1"`, a future version, an unquoted numeric `0.2`,
+  and every other value as read-only [precedence: #196 over #21].
 - Flags and project configuration MUST NOT override the exact declaration requirement. (#21)
-- The writer MUST emit `okf_version: "0.2"`. (#21)
+- The bundle-root `index.md` MUST be navigation only: the runtime MUST NOT read `okf_version` or
+  `project_mode` from it, and MUST NOT fall back to a root declaration. (#196)
+- `init` MUST write a navigation-only bundle root and MUST NOT write `okf_version` or
+  `project_mode` frontmatter to it. (#196)
+- The manifest bundle record's `okf_version` and `project_mode` MUST be written only by an explicit
+  `repair` of the manifest. (#196)
 - Adopting an undeclared bundle MUST be an explicit, previewed operation whose only write is the declaration. (#21)
 - Migration MUST be a separate explicit operation and MUST NOT happen implicitly. (#21)
 - A concept write MUST be blocked if the affected concept fails an OKF section 11 test. (#21)
@@ -890,7 +898,7 @@ source of truth (#6).
 
 #### Suite profile
 
-- The suite profile MUST impose exactly two rules beyond OKF bundle conformance: mutation requires the exact root declaration `okf_version: "0.2"`, and a rewrite must reproduce frontmatter parsed semantics through the suite writer. (#21)
+- The suite profile MUST impose exactly two rules beyond OKF bundle conformance: mutation requires the exact manifest bundle record declaration `okf_version: "0.2"`, and a rewrite must reproduce frontmatter parsed semantics through the suite writer [precedence: #196 over #21].
 - A suite-profile finding MUST use origin `suite`. (#21)
 - A suite-profile finding MUST NOT be reported as an OKF conformance error. (#21)
 - A suite-profile finding MUST carry severity `error` or `warning` and an independent `blocks` boolean. (#21)
@@ -1059,16 +1067,17 @@ The implementation MUST accept exactly these declarations and MUST NOT accept ot
 |---|---|---|
 | root | `schema_version` | MUST be exactly `1` |
 | root | `workspace_id` | MUST be a UUIDv4 |
+| root | `settings` | MAY be present; MUST be an object when present (#200) |
 | repository | name | MUST be unique across repository records |
 | repository | relative path | MUST be unique across repository records; MUST be relative |
 | repository | identity | MUST be either a canonical remote with aliases, or `local: true` |
 | repository | revision | MAY be an exact Git object revision |
 | bundle | ordering | bundle records MUST be ordered |
-| bundle | routing alias | MUST be unique across bundle records |
+| bundle | `alias` | MUST be unique across bundle records |
 | bundle | owner | MUST be either a repository owner or `null` for a workspace owner |
 | bundle | root path | MUST be a relative path |
-| bundle | `required` | MUST be present |
-| bundle | mode | MUST be one of `source`, `generated`, `vendored` |
+| bundle | `okf_version` | MUST be a non-empty string (#196) |
+| bundle | `project_mode` | MUST be a non-empty string (#196) |
 
 - An unknown key MUST reject federation. (#22)
 - A duplicate name MUST reject federation. (#22)
@@ -1078,7 +1087,20 @@ The implementation MUST accept exactly these declarations and MUST NOT accept ot
 - A `..` path segment MUST reject federation. (#22)
 - An invalid field combination MUST reject federation. (#22)
 - Rejected federation MUST preserve current-repository local operation. (#22)
-- A `generated` or `vendored` bundle MUST be explicitly declared to participate in reads. (#22)
+- A bundle record's `required` and `mode` fields MUST NOT be accepted; every declared bundle is required, and every declared bundle is a source bundle. [precedence: #196 over #22, #109]
+- A bundle record MUST declare both `okf_version` and `project_mode` as non-empty strings; a missing or empty value MUST reject federation. [precedence: #196 over #22, #109]
+
+#### The workspace manifest: settings
+
+- The root `settings` object MAY be present, and MUST be an object when present. (#200)
+- `settings.max_words_per_file` MAY be present, and MUST be a positive whole number when present. (#200)
+- The built-in default for `max_words_per_file` MUST be `1000`. (#200)
+- Setting precedence MUST be `built-in default < .okf-workspace.json override`, with no user-global, bundle, harness, or session layer [precedence: #200 over #38].
+- An unknown `settings` key MUST produce a non-blocking `SETTING_INVALID` finding and MUST NOT invalidate the manifest. (#200)
+- An invalid `max_words_per_file` value MUST produce a non-blocking `SETTING_INVALID` finding and MUST leave the built-in default effective for that key. (#200)
+- A `SETTING_INVALID` finding MUST NOT block validation or mutation. (#200)
+- A word, for `max_words_per_file`, MUST be one continuous sequence of letters or numbers; headings, prose, tables, frontmatter, and code count, and Markdown marks do not. (#200)
+- The file-word target MUST remain a soft target that MUST NOT by itself block validation or mutation. (#200)
 
 #### The workspace manifest: what it never contains and never grants
 
@@ -1338,7 +1360,7 @@ The grant MUST permit exactly these effects and MUST forbid the rest. (#37)
 - A workspace manifest MUST NOT grant foreign-write authority. (#37)
 - A filesystem grant MUST NOT grant foreign-write authority. (#37)
 - Repository trust MUST NOT grant foreign-write authority. (#37)
-- An `.okf-active` marker MUST NOT grant foreign-write authority. (#37)
+- A valid workspace manifest MUST NOT grant foreign-write authority. [precedence: #196 over #37]
 - A project mode MUST NOT grant foreign-write authority. (#37)
 - An approval MUST NOT grant foreign-write authority. (#37)
 - A guard ledger MUST NOT grant foreign-write authority. (#37)
@@ -1348,7 +1370,7 @@ The grant MUST permit exactly these effects and MUST forbid the rest. (#37)
 
 #### Cross-repository write authority: preconditions
 
-- Both affected worktrees MUST have valid `.okf-active` markers. (#37)
+- Both affected worktrees MUST have a valid workspace manifest. [precedence: #196 over #37]
 - The invoking harness adapter MUST be present. (#37)
 - A compatible shared runtime MUST be present. (#37)
 - A target native adapter MAY be absent. (#37)
@@ -1446,7 +1468,7 @@ The implementation MUST execute these phases in this order. (#37)
 - An `indeterminate` result MUST block further mutation on the affected bundles until explicit reconciliation. (#37)
 - Rollback MUST be a new operation with a fresh request, preview, approval, and recovery gate. (#37)
 - Repair MUST be a new operation with a fresh request, preview, approval, and recovery gate. (#37)
-- Deterministic `v0.1.0` fixtures MUST cover a valid transformed move, source deprecation and successor notice, provenance reset, link and index maintenance, missing or revoked consent, wrong identity, missing markers, unknown mode, target collision, an inaccessible target ledger, stale content, a stale grant, a stale approval, lock contention, target-first failure, source-after-target failure, unknown crash state, recovery, and reconciliation. (#37)
+- Deterministic `v0.1.0` fixtures MUST cover a valid transformed move, source deprecation and successor notice, provenance reset, link and index maintenance, missing or revoked consent, wrong identity, missing manifests, unknown mode, target collision, an inaccessible target ledger, stale content, a stale grant, a stale approval, lock contention, target-first failure, source-after-target failure, unknown crash state, recovery, and reconciliation. (#37)
 - Live cross-harness process tests MUST be deferred to `v0.2.0`. (#37)
 
 #### Caching: the transparency rule
@@ -1512,7 +1534,7 @@ The implementation MUST NOT persist any of these across resolutions. (#32, #36)
 - Each explicit resolution MUST recompute write-target selection. (#32)
 - Complete-result memoization inside one resolution transaction MUST be scoped to that exact canonical CWD and immutable authority snapshot. (#32)
 - Complete-result memoization MUST NOT survive its resolution transaction. (#32)
-- A native read MUST start fresh and MUST recheck the marker, current routing, admission, and current files. (#36)
+- A native read MUST start fresh and MUST recheck the manifest, current routing, admission, and current files. [precedence: #196 over #36]
 - A native read MUST use no retrieval-result, cursor, scope, or validation-result cache. (#36)
 
 #### Caching: integrity, failure, and refresh
@@ -1563,17 +1585,17 @@ The implementation MUST NOT persist any of these across resolutions. (#32, #36)
 
 #### Preconditions before any concept navigation
 
-- The harness MUST check the `.okf-active` activation marker before automatic behavior. (#35)
-- Automatic behavior MUST be a silent no-op when the marker is absent. (#35, #36)
-- An explicit read MUST report `not-configured` when the marker is absent. (#35, #36)
-- A malformed marker MUST produce a diagnostic, inactive behavior, and blocked mutation. (#35)
+- The harness MUST check for a valid workspace manifest before automatic behavior. [precedence: #196 over #35]
+- Automatic behavior MUST be a silent no-op when the manifest is absent. [precedence: #196 over #35, #36]
+- An explicit read MUST report `not-configured` when the manifest is absent. [precedence: #196 over #35, #36]
+- An invalid manifest MUST produce a `MANIFEST_INVALID` diagnostic, inactive behavior, and blocked mutation. [precedence: #196 over #35]
 - Bundle admission MUST run before concept navigation. (#36)
 - Bundle admission MUST run in the fixed order `REACH -> PRESENCE -> {TRUST, ACCESS}`. (#36)
 - Native tools MUST read only admitted and routed bundles. (#36)
 - Concept discovery MUST NOT widen bundle admission. (#22, #36)
 - Concept discovery MUST NOT grant trust, access, write ownership, approval, or permission. (#22)
 - An explicit read MUST start fresh. (#36)
-- An explicit read MUST recheck the activation marker, current routing, bundle admission, and the current files. (#36)
+- An explicit read MUST recheck the manifest, current routing, bundle admission, and the current files. [precedence: #196 over #36]
 - An explicit read MUST NOT use a retrieval result, cursor, retrieval scope, or validation-result cache. (#36)
 - A read MUST assume that nothing returned by an earlier read remains available. (#36)
 
@@ -1678,7 +1700,7 @@ The fixed navigation vocabulary is:
 
 | Dimension | Fixed labels | Meaning constraint |
 | --- | --- | --- |
-| result | `ok`, `degraded`, `not-configured`, `unavailable` | `not-configured` covers an absent activation marker on an explicit read (#35, #36) |
+| result | `ok`, `degraded`, `not-configured`, `unavailable` | `not-configured` covers an absent manifest on an explicit read [precedence: #196 over #35, #36] |
 | match | `found`, `no match in searched scope` | A complete no-match claim is limited to the declared scope and search channel (#36) |
 | findings | `missing`, `unreadable`, `unobservable`, `invalid` | `invalid` is reserved for a verified native-tool or safety-contract violation (#36) |
 | coverage | complete for a named scope and channel, or `non-exhaustive` | Completeness is claimed only for a named scope and channel (#36) |
@@ -2333,7 +2355,7 @@ post-operation validation bound to the approved plan passes
 - A user setting MUST NOT alter approval, recovery, or guard behavior (#38).
 - Creating a delegated writer MUST NOT constitute approval (#38).
 - A delegated writer MAY prepare a complete dry-run preview and verify approval, and MUST NOT self-approve (#38).
-- A delegated writer MUST recheck the marker, routing, admission, target identity, current content, evidence, operation class, and guard state before execution (#38).
+- A delegated writer MUST recheck the manifest, routing, admission, target identity, current content, evidence, operation class, and guard state before execution [precedence: #196 over #38].
 - A delegated writer MUST verify the operation class, MUST block a mismatch, and MUST NOT downgrade a broad effect to a bounded update (#38).
 - Preview, approval, and execution MUST stay bound to one operation identity, one bundle epoch, and one guard generation (#38).
 - A new writer, a session boundary, a target change, or preview drift MUST require a fresh plan and fresh approval (#38).
@@ -2377,7 +2399,16 @@ post-operation validation bound to the approved plan passes
 - One selected source document MUST map to one output concept by default (#19).
 - Migration MUST NOT automatically extract glossary entries, split documents, or invent concepts (#19).
 - An explicit mapping or a separate restructuring operation MUST be used for glossary extraction, splitting, or other such transformations (#19).
-- Output identity MUST be the deterministic normalized form of the selected source's relative path (#19).
+- Output identity MUST be the accepted reader-purpose group joined with the selected source's own base name, without `.md` (#202, #203; supersedes the source-relative-path form from #19 and the type-directory form from #145).
+- Every substantive concept MUST belong to exactly one approved concept group, and the direct bundle root MUST carry only the required `index.md` and an optional `log.md` (#202, #203; supersedes root-concept permission in #160 and #163 and root `glossary.md` placement in #162).
+- A concept type, a source directory, a file count, and a directory depth MUST NOT select a concept group; an unassigned source MUST ask which accepted group it belongs to (#202, #203).
+- An accepted concept-group package MUST carry the group's exact reader purpose and a disposition for its `index.md`, its `glossary.md`, its local guidance concept, and its `log.md`, including an explicit no-change and an explicit no-local-terms result (#202, #203).
+- Setup MUST NOT create an empty group glossary, empty local guidance, or other folder-template scaffolding (#202, #203).
+- A term with one shared meaning MUST have exactly one canonical owning group glossary, and a consuming group MUST link to that owner rather than copy the definition; two separate meanings MUST each state their own explicit scope, and a general `shared/` glossary MUST NOT be created as a fallback (#202, #203).
+- Every group index and the root index MUST be derived from the same accepted rows the conformance gate is proved against, and MUST list that group's own direct concepts and direct child groups (#202, #203).
+- Staged and published candidates MUST exactly match the accepted group-package set and MUST contain no root concept (#202, #203).
+- Reader purpose, semantic group fit, term ownership, and term meaning MUST remain human-reviewed facts and MUST NOT be reported as deterministic claims (#202, #203).
+- On partial publication the report MUST name every planned, applied, failed, and skipped concept and group-package effect, and MUST mark each affected group as needing repair, with no retry, rollback, checkpoint, resume, or atomicity claim (#202, #203).
 - Migration MUST NOT invent UUID continuity, silently rename, auto-merge, or overwrite concepts (#19).
 - An existing target-path collision MUST block the plan (#19).
 - A Concept ID MUST remain the bundle-relative file path without `.md`; moving or renaming a concept MUST change its identity (#22).
@@ -2427,8 +2458,8 @@ post-operation validation bound to the approved plan passes
 - Migration MUST write all transformed output to a separate staging area (#19).
 - Migration MUST validate staged output before publication (#19).
 - Migration MUST publish through an atomic write-new-then-swap operation (#19).
-- The exact bundle-root `okf_version: "0.2"` write gate MUST remain in force for migration (#21).
-- Migration MUST NOT weaken the exact bundle-root `okf_version: "0.2"` write gate to make bootstrap publication reachable (#19, #21).
+- The exact manifest bundle record `okf_version: "0.2"` write gate MUST remain in force for migration [precedence: #196 over #21].
+- Migration MUST NOT weaken the exact manifest bundle record `okf_version: "0.2"` write gate to make bootstrap publication reachable [precedence: #196 over #19, #21].
 - Migration MUST NOT mutate sources or targets in place (#19).
 - Migration MUST NOT publish incomplete work (#19).
 - Partial work MUST remain staged and reported until the request is narrowed or the blocker is resolved (#19).
@@ -2797,11 +2828,11 @@ post-operation validation bound to the approved plan passes
 - Agent definitions MUST be inert release artifacts, and registration MUST NOT grant permission, trust, authority, approval, or write ownership. (#35, #38)
 - Exact compatible suite versions MUST be required, and a missing, partial, or mismatched installation MUST fail closed for OKF behavior. (#35)
 - Adapter install, disablement, and uninstall MUST be harness-local. (#35)
-- Adapter install, disablement, and uninstall MUST NOT alter markers, OKF content, manifests, guard state, project files, or other adapters. (#35)
+- Adapter install, disablement, and uninstall MUST NOT alter manifests, OKF content, guard state, project files, or other adapters. [precedence: #196 over #35]
 - A native adapter MUST configure only native registration, shared skill and runtime wiring, and the supported orientation seam. (#5, #35) [precedence: #35 over #5]
 - A native adapter MUST NOT grant write permissions, trust hooks, initialize guard state, create project files, or generate workspace configuration. (#5, #35) [precedence: #35 over #5]
 - Base-install harness integration beyond adapter defaults MUST remain manual and documented in the README. (#5)
-- Per-project opt-in MUST use the `.okf-active` marker. (#5, #35)
+- Per-project opt-in MUST use a valid `.okf-workspace.json` manifest with an admitted bundle record. [precedence: #196 over #5, #35]
 - OpenCode skill-directory symlink following MAY be relied upon only after installation fixtures test the exact project and global layout this repository uses. (#18)
 - OpenCode symlink behavior MUST NOT be generalized to broken or cyclic links, links escaping trusted roots, sibling repositories, or future versions. (#18)
 
@@ -2977,35 +3008,40 @@ The following classification governs adoption. (#26)
 
 ### 9. Harness adapters, session entry, and delegated agents
 
-#### Activation marker
+#### Activation
 
-- The activation marker MUST be a zero-byte regular file named `.okf-active`. (#35)
-- The marker MUST sit at the Git worktree root. (#35)
-- The marker MUST be a passive, project-local behavior selector. (#35)
-- The marker MUST select only whether harness adapters provide automatic OKF behavior. (#35)
-- Installation MUST NOT create or modify `.okf-active`. (#35)
-- Session entry MUST NOT create or modify `.okf-active`. (#35)
-- Marker creation MUST be a separate explicit setup action. (#35)
-- `.okf-active` MUST NOT grant trust, authority, access, filesystem access, discovery authority, write ownership, foreign-write authority, approval, or permission. (#35, #37)
-- A valid marker in a target worktree MUST NOT be treated as foreign-write authority. (#37)
-- `.okf-workspace.json` MUST remain a separate user-authored workspace, bundle, federation, and routing manifest. (#35)
-- `.okf-active` MUST remain activation-only and MUST NOT carry workspace, federation, or routing declarations. (#35)
+- The activation condition MUST be a valid `.okf-workspace.json` manifest resolved for the current
+  worktree, with an admitted bundle record [precedence: #196 over #35].
+- A valid manifest MUST select whether harness adapters provide automatic OKF behavior, in addition
+  to its federation, routing, and settings declarations [precedence: #196 over #35].
+- Installation MUST NOT create or modify `.okf-workspace.json`. [precedence: #196 over #35]
+- Session entry MUST NOT create or modify `.okf-workspace.json`. [precedence: #196 over #35]
+- Manifest repair MUST be a separate explicit setup action. [precedence: #196 over #35]
+- A valid manifest MUST NOT grant trust, authority, access, filesystem access, discovery authority, write ownership, foreign-write authority, approval, or permission. [precedence: #196 over #35, #37]
+- A valid manifest in a target worktree MUST NOT be treated as foreign-write authority. (#37)
+- The manifest MUST carry activation, workspace, bundle, federation, routing, and settings declarations together as one user-authored file [precedence: #196 over #35].
 - The guarded bundle-initialization flow MAY initialize an admitted bundle, and it MUST NOT manage harness hooks, permissions, agents, instruction blocks, workspace manifests, or adapter configuration. (#35)
 
-#### Marker states and their behavior
+#### Manifest activation states and their behavior
 
-- An absent marker MUST make automatic behavior a silent no-op. (#35, #36, #39)
-- An absent marker MUST make an explicit read report `not-configured`. (#35, #36, #39)
-- An absent marker MUST block mutation. (#35)
-- A malformed marker MUST produce a diagnostic. (#35, #39)
-- A malformed marker MUST leave OKF behavior inactive. (#35)
-- A malformed marker MUST block mutation. (#35, #39)
-- A valid marker with an admitted bundle MUST produce bounded orientation under ordinary shared-runtime policy. (#35)
-- A valid marker MUST NOT remove the explicit guard requirement for mutation. (#35)
+- An absent manifest MUST make automatic behavior a silent no-op. [precedence: #196 over #35, #36, #39]
+- An absent manifest MUST make an explicit read report `not-configured`. [precedence: #196 over #35, #36, #39]
+- An absent manifest MUST block mutation. [precedence: #196 over #35]
+- An invalid manifest MUST produce a `MANIFEST_INVALID` diagnostic. [precedence: #196 over #35, #39]
+- An invalid manifest MUST leave OKF behavior inactive. [precedence: #196 over #35]
+- An invalid manifest MUST block mutation and MUST NOT fall back to an undeclared local bundle. [precedence: #196 over #35, #39]
+- A valid manifest with an admitted bundle MUST produce bounded orientation under ordinary shared-runtime policy. [precedence: #196 over #35]
+- A valid manifest MUST NOT remove the explicit guard requirement for mutation. (#35)
+
+> Implementation note (#197, built on #196 but not stated by it): an explicit `admit` request is
+> exempt from this gate. `admit` is the inspection primitive at which `REACH`, `PRESENCE`, `TRUST`,
+> `ACCESS`, and manifest-candidate resolution are independently observable; gating it identically to
+> `read`/`write`/`orient` would leave that code in place but unverifiable through any wrapper-level
+> test. See `activationBypassOperations` in `scripts/lib/runtime.js`.
 
 #### Cross-repository activation
 
-- A cross-repository operation MUST require a valid `.okf-active` marker in both affected worktrees. (#37)
+- A cross-repository operation MUST require a valid manifest in both affected worktrees. [precedence: #196 over #37]
 - A native adapter on the target side MAY be absent for a cross-repository operation. (#37)
 - The invoking adapter MUST be present for a cross-repository operation. (#37)
 - A compatible shared runtime MUST be present for a cross-repository operation. (#37)
@@ -3044,10 +3080,10 @@ The following classification governs adoption. (#26)
 #### Adapter installation, disablement, and removal
 
 - Adapter installation, disablement, and removal MUST be harness-local. (#35)
-- Adapter installation, disablement, and removal MUST NOT alter markers, OKF content, manifests, guard state, project files, or other adapters. (#35)
+- Adapter installation, disablement, and removal MUST NOT alter manifests, OKF content, guard state, project files, or other adapters. [precedence: #196 over #35]
 - The suite MUST ship the `okf-reader` and `okf-writer` agent definitions as reviewed release artifacts of the same tag as the skills. (#35, #38)
 - Harness adapters MAY expose those agent definitions through thin native wrappers. (#35, #38)
-- Agent registration MUST NOT invoke a writer, create `.okf-active`, create settings, or grant permission, trust, authority, approval, or write ownership. (#35, #38)
+- Agent registration MUST NOT invoke a writer, create a workspace manifest, create settings, or grant permission, trust, authority, approval, or write ownership. [precedence: #196 over #35, #38]
 
 #### Semantic parity
 
@@ -3068,7 +3104,7 @@ The following classification governs adoption. (#26)
 - Automatic hooks MUST remain read-only. (#35)
 - Orientation seams MUST remain read-only. (#35)
 - Every bounded `v0.1.0` mutation MUST require explicit user intent, regardless of native invocation controls. The shared manual-operation guard is retained design for a later guarded release. (#35, #43)
-- Automatic orientation MUST be marker-gated on every harness. (#35)
+- Automatic orientation MUST be manifest-gated on every harness. [precedence: #196 over #35]
 
 #### Orientation context
 
@@ -3086,7 +3122,7 @@ The following classification governs adoption. (#26)
 - The orientation MUST NOT create authority, approval, a delegation brief, or writer permission. (#39)
 - The orientation MUST provide navigation and status only. (#36)
 - An explicit read MUST start fresh. (#36)
-- An explicit read MUST recheck the marker, the current routing, bundle admission, and the current files. (#36)
+- An explicit read MUST recheck the manifest, the current routing, bundle admission, and the current files. [precedence: #196 over #36]
 
 #### Fresh orientation for child contexts
 
@@ -3114,13 +3150,13 @@ The following classification governs adoption. (#26)
 
 #### Session-entry seam — Claude Code
 
-- The Claude Code adapter MUST use a marker-gated `SessionStart` hook inside a native plugin bundle. (#35)
+- The Claude Code adapter MUST use a manifest-gated `SessionStart` hook inside a native plugin bundle. [precedence: #196 over #35]
 - The Claude Code adapter MUST treat `SessionStart(source=startup|resume|clear|compact)` as the orientation seam. (#35, #39)
 - The Claude Code adapter MUST use `SessionStart(source=fork)` for a forked session. (#39)
 
 #### Session-entry seam — OpenAI Codex
 
-- The Codex adapter MUST use a marker-gated `SessionStart` hook inside a native plugin bundle. (#35)
+- The Codex adapter MUST use a manifest-gated `SessionStart` hook inside a native plugin bundle. [precedence: #196 over #35]
 - The Codex adapter MUST treat `SessionStart(source=startup|resume|clear|compact)` as the orientation seam. (#35, #39)
 - The Codex adapter MUST use `SubagentStart` to identify a child context. (#39)
 - The Codex adapter MUST NOT infer `fork` when Codex supplies no fork signal. (#39)
@@ -3161,8 +3197,8 @@ The following classification governs adoption. (#26)
 
 | Result | Meaning | Required behavior |
 | --- | --- | --- |
-| `not-configured` | `.okf-active` is absent. | Automatic behavior is silent; an explicit read reports `not-configured`. |
-| `invalid` | The marker, adapter contract, or required configuration is malformed. | Emit a diagnostic, emit no orientation, and block mutation. |
+| `not-configured` | A valid workspace manifest is absent. | Automatic behavior is silent; an explicit read reports `not-configured`. |
+| `invalid` | The manifest, adapter contract, or required configuration is malformed. | Emit a diagnostic, emit no orientation, and block mutation. |
 | `unavailable` | The bundle, runtime, or required admission evidence cannot be read. | Emit a diagnostic, emit no orientation, and block mutation. |
 | `degraded` | The seam is unsupported or untrusted, or the logical cause is unobservable. | Continue the host session without claiming clean orientation, and block mutation. |
 | `failed` | An accepted seam was invoked but orientation dispatch failed. | Report the failure, do not retry the claimed occurrence, and block mutation. |
@@ -3233,7 +3269,7 @@ shared safety and authority rules > shipped agent rules > per-call delegation br
 
 #### Writer preflight and write authority
 
-- The writer MUST recheck the marker, routing, admission, target identity, current content, evidence, and operation class before execution. Guard-state checks are retained design for a later guarded release. (#38, #43)
+- The writer MUST recheck the manifest, routing, admission, target identity, current content, evidence, and operation class before execution. Guard-state checks are retained design for a later guarded release. [precedence: #196 over #38] (#43)
 - The writer MUST verify the operation class and MUST block a mismatch. (#38)
 - The writer MUST NOT downgrade a broad effect to a bounded update. (#38)
 - Every bounded `v0.1.0` mutation MUST use the shared `okf-write` runtime. (#38, #43)
@@ -3303,7 +3339,7 @@ adapter defaults < user/global settings < project/worktree settings < current-se
 ```
 
 - A current-session override MUST expire at session end. (#38)
-- `.okf-active` and `.okf-workspace.json` MUST remain outside this settings hierarchy. (#38)
+- `.okf-workspace.json` MUST remain outside this settings hierarchy; its own optional `settings` object (#200) is a separate, single-layer setting store, not a layer of this hierarchy. [precedence: #196 over #38]
 - Settings MUST be user-authored. (#38)
 - The suite MUST read and validate settings. (#38)
 - The suite MUST NOT create, repair, normalize, or rewrite settings. (#38)
@@ -3321,7 +3357,6 @@ adapter defaults < user/global settings < project/worktree settings < current-se
 - Delegation MUST NOT change write authority. (#38)
 - Delegation MUST NOT change approval. (#38)
 - Delegation MUST NOT change recovery requirements. (#38)
-- Delegation MUST NOT change `.okf-active`. (#38)
 - Delegation MUST NOT change `.okf-workspace.json`. (#38)
 - Delegation MUST NOT change the automatic-write ceiling. (#38)
 - Delegation MUST NOT change the retained-design manual-operation guard. (#38, #43)
@@ -3454,8 +3489,8 @@ defense-in-depth for a changed saved state.
 
 | Check | Pass observation | Fail observation |
 |---|---|---|
-| Exact root declaration | No `ROOT_DECLARATION_NOT_EXACT` finding; the bundle-root `index.md` parses with `okf_version: "0.2"`. | A `ROOT_DECLARATION_NOT_EXACT` finding. |
-| Project mode | No `PROJECT_MODE_INVALID` finding; the root declares `code-backed` or `knowledge-only`. | A `PROJECT_MODE_INVALID` finding. |
+| Exact root declaration | No `ROOT_DECLARATION_NOT_EXACT` finding; the selected manifest bundle record declares `okf_version: "0.2"` [precedence: #196 over #21]. | A `ROOT_DECLARATION_NOT_EXACT` finding. |
+| Project mode | No `PROJECT_MODE_INVALID` finding; the selected manifest bundle record declares `code-backed` or `knowledge-only` [precedence: #196 over #21]. | A `PROJECT_MODE_INVALID` finding. |
 | Saved concept read | The saved concept exists and its frontmatter parses. | A `FRONTMATTER_UNPARSEABLE` finding. |
 | Saved-tree comparison | When an expected tree is supplied, the saved tree is equal to it. | A `POST_WRITE_VALIDATION_FAILED` finding with `reason: "saved tree mismatch"`. |
 | Reserved bundle files | Present `index.md` and `log.md` files parse. | A `BUNDLE_FILES_NONCONFORMING` finding. |
@@ -3673,6 +3708,14 @@ Tickets inside one wave MAY run in parallel. (#41)
 | Coexistence with the existing third-party OKF skill | Closed (D9) | Release positioning and installation conflicts | #1 records that whether to replace, extend, or coexist with `fabricioctelles/okf-open-knowledge-format` is not yet specified; no closed ticket supplies it | **Adopted (D9):** closed by explicit deferral. `v0.1.0` makes no claim about `fabricioctelles/okf-open-knowledge-format`; positioning is revisited only if a real install conflict is observed. |
 | Support-ceiling fixture corpora and strata | Deferred (D10) | Any calibrated claim about the declared support ceiling | #36 requires fixture evidence before a calibrated support-ceiling claim and lists the fixture subjects, but names no corpora, no scale strata, and no acceptance condition; #1 records the fixture evidence as not yet specified | Name the fixture corpora and strata, and the observation that makes the ceiling calibrated |
 
+> Decision #196 further revises the "New-bundle write-gate bootstrap exception" row above and the
+> bootstrap order #133, #134, #141, and #166 established for it: the exact `okf_version: "0.2"`
+> declaration that row concerns now lives in the selected manifest bundle record, never the
+> bundle-root `index.md`, and the documented setup order becomes
+> `inspect -> consent -> repair manifest -> init -> discover`. An explicit `init` may still run
+> while no manifest exists yet, narrower than #166's original exception: it creates only the
+> bundle root, and the manifest is written by a separate explicit `repair`. See #196 and #197.
+
 #### Terms formerly undefined, now in `CONTEXT.md` (#9)
 
 The terms below were the gap list this specification opened against `CONTEXT.md`. Every one of them
@@ -3745,9 +3788,9 @@ Each entry below was raised by the section that needs it. It repeats nothing dec
 
 #### Identity, workspace federation, and bundle admission
 
-- The exact JSON schema grammar, field optionality, field types, and path-base rules for `.okf-workspace.json` — needed by manifest parsing, validation, and the federation-rejection rules — last touched by (#22)
+- The exact JSON schema grammar, field optionality, field types, and path-base rules for `.okf-workspace.json` — needed by manifest parsing, validation, and the federation-rejection rules — last touched by (#22). Closed for the bundle-record fields and the optional `settings` object by #109 and then #196/#200; still open for `workspace_id` derivation, the alias character set, and the remaining rows below.
 - The derivation, persistence, and replacement rules for `workspace_id` beyond its required UUIDv4 form — needed by workspace identity and workspace-root bundle identity — last touched by (#22)
-- The permitted character set and comparison rule for a bundle routing alias — needed by manifest uniqueness validation and `okf-workspace://` resolution — last touched by (#22)
+- The permitted character set and comparison rule for a bundle `alias` — needed by manifest uniqueness validation and `okf-workspace://` resolution — last touched by (#22)
 - The mechanism by which a user explicitly selects a workspace root or supplies an out-of-band manifest — needed by discovery-authority bootstrap above the discovery ceiling — last touched by (#22, #27)
 - The interface for granting, inspecting, and revoking repository trust, and the exact storage location of the instance UUIDv4 inside Git common metadata — needed by the `TRUST` gate and by trust survival across a move — last touched by (#22)
 - The physical location of the workspace-level bundle of a non-repository workspace root, and the location and format of its trust sidecar — needed by non-repository workspace admission and trust — last touched by (#22, #27)
@@ -3800,7 +3843,7 @@ Each entry below was raised by the section that needs it. It repeats nothing dec
 
 #### Migration
 
-- How migration stages and publishes a new bundle root before an exact root `okf_version: "0.2"` declaration exists — needed by first migration publication without weakening the suite write gate — last touched by (#19, #21)
+- How migration stages and publishes a new bundle root before an exact root `okf_version: "0.2"` declaration exists — needed by first migration publication without weakening the suite write gate — last touched by (#19, #21). Closed by D11 and then revised by #196: the declaration now lives in the manifest bundle record, written by an explicit `repair` that follows `init` in the documented setup order.
 - The include and exclude rule syntax and selector schema — needed by expressing and validating a bounded migration request — last touched by (#19)
 - The relative-path normalization algorithm — needed by deterministic output identity and collision detection — last touched by (#19)
 - The source-class-to-OKF-type mapping table — needed by human-approved type conversion — last touched by (#19)

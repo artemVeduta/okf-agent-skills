@@ -2,18 +2,18 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runWrapper, spawnWrapper, temporaryRoot } = require('../test-support/snapshot');
+const { runWrapper, spawnWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 
 // `discover` needs an active bundle (it excludes the bundle root from its own scan),
-// so the fixture always writes `.okf-active` unless a test asks for an inactive one,
-// the opposite default from #138's `inspect`/`repair` fixtures.
+// so the fixture always writes a valid manifest unless a test asks for an inactive
+// one, the opposite default from #138's `inspect`/`repair` fixtures.
 function repo(t, { active = true } = {}) {
   const root = temporaryRoot(t, 'okf-142-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  if (active) fs.writeFileSync(path.join(root, '.okf-active'), '');
+  if (active) writeManifest(root, '.');
   return root;
 }
 
@@ -256,12 +256,12 @@ test('discover does not bypass the activation gate: an inactive bundle answers n
   assert.equal(response.data.sources, undefined);
 });
 
-test('discover reports ACTIVATION_MARKER_INVALID like every other operation on a broken marker', (t) => {
+test('discover reports MANIFEST_INVALID like every other operation on a broken manifest', (t) => {
   const root = repo(t, { active: false });
-  fs.mkdirSync(path.join(root, '.okf-active'));
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
   const response = run(discoverRequest(root));
   assert.equal(response.result, 'blocked');
-  assert.equal(response.data.code, 'ACTIVATION_MARKER_INVALID');
+  assert.equal(response.data.code, 'MANIFEST_INVALID');
 });
 
 // -------------------------------------------------------- automatic + router

@@ -54,9 +54,11 @@ function bootstrap(t) {
   fs.writeFileSync(path.join(root, 'docs', 'agent-policy.md'), '# Agent policy\n\nIssues live in the tracker. Labels are triaged weekly.\n');
 
   assert.equal(setup(root, 'inspect').data.index_md.state, 'missing');
-  assert.equal(setup(root, 'init', { project_mode: 'knowledge-only' }).result, 'applied');
-  assert.equal(setup(root, 'repair', { targets: ['activation'] }).result, 'applied');
-  assert.equal(setup(root, 'repair', { targets: ['manifest'] }).result, 'applied');
+  // #196/#197: the documented setup order writes the manifest before `init` now
+  // (inspect -> consent -> repair manifest -> init -> discover); there is no
+  // activation-marker repair target left to call.
+  assert.equal(setup(root, 'repair', { targets: ['manifest'], project_mode: 'knowledge-only' }).result, 'applied');
+  assert.equal(setup(root, 'init').result, 'applied');
   assert.equal(setup(root, 'discover').result, 'ok');
   return root;
 }
@@ -65,9 +67,11 @@ test('the documented setup order gives a new bundle the root-to-connector naviga
   const root = bootstrap(t);
   const bundle = path.join(root, 'okf');
 
+  // #196/#197: the root is navigation only -- no okf_version/project_mode
+  // frontmatter, both of which now live only in the manifest bundle record.
   assert.equal(
     fs.readFileSync(path.join(bundle, 'index.md'), 'utf8'),
-    '---\nokf_version: "0.2"\nproject_mode: knowledge-only\n---\n# Bundle\n\n- [Agents](agents/index.md)\n',
+    '# Bundle\n\n- [Agents](agents/index.md)\n',
   );
   const agentsIndex = fs.readFileSync(path.join(bundle, 'agents', 'index.md'), 'utf8');
   assert.equal(agentsIndex, '# Agents\n\n- [OKF agent connector](okf.md)\n');
@@ -134,7 +138,7 @@ test('init leaves an existing bundle root without the connector', (t) => {
   fs.writeFileSync(path.join(bundle, 'index.md'), '---\nokf_version: [\n---\n# Old bundle\n');
 
   assert.equal(setup(root, 'init').result, 'applied');
-  assert.equal(fs.readFileSync(path.join(bundle, 'index.md'), 'utf8'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
+  assert.equal(fs.readFileSync(path.join(bundle, 'index.md'), 'utf8'), '# Bundle\n');
   assert.equal(fs.existsSync(path.join(bundle, 'agents')), false);
 });
 

@@ -3,8 +3,6 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-  bundle: createBundle,
-  repository,
   spawnWrapper,
   temporaryRoot,
 } = require('../test-support/snapshot');
@@ -12,12 +10,26 @@ const {
 const repo = path.resolve(__dirname, '..');
 const wrapper = path.join(repo, 'scripts', 'okf-read.js');
 
-function activate(root) {
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+// #197: every test here drives `admit` with its own explicit `candidates`,
+// probing REACH/PRESENCE/TRUST/ACCESS directly -- `admit` is exempt from the
+// activation gate for exactly this reason (see `runtime.js`'s
+// `activationBypassOperations`), so these fixtures need no marker and no
+// manifest. A manifest here would be actively wrong: `admission.js` prefers a
+// present manifest's own declared candidates over whatever the caller
+// supplies, which would silently replace the candidate each test means to
+// probe -- shared `test-support/snapshot.js` helpers write one now, so this
+// file uses its own bare versions instead.
+function repository(t, prefix = 'okf-46-repo-') {
+  const root = temporaryRoot(t, prefix);
+  fs.mkdirSync(path.join(root, '.git'));
+  return root;
 }
 
 function bundle(root, relative = '.') {
-  return createBundle(root, relative, '# Bundle\n');
+  const target = path.join(root, relative);
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, 'index.md'), '# Bundle\n');
+  return target;
 }
 
 function runWrapper(value, cwd) {

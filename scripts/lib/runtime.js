@@ -2,6 +2,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const validation = require('./validation');
 const admission = require('./admission');
+const manifest = require('./manifest');
 const routing = require('./routing');
 const { inside } = require('./paths');
 const lifecycle = require('./lifecycle');
@@ -27,12 +28,13 @@ const routerOwners = new Map([
 
 // `inspect`, `repair`, `plan`, `aggregate`, `report`, `partition`, `assemble`, and
 // `publish` all report on or compute around state that exists before or independently
-// of the activation marker, so all eight bypass the shared activation gate the same way
-// (#133/#138/#135/#136/#146/#147/#149). `discover` (#142) and `migration-plan` (#144)
-// deliberately do NOT: unlike those eight, each needs a bundle root to already exist
-// -- `discover` to exclude it from the scan, `migration-plan` to check a candidate
-// target path for a collision -- and each runs as a step of an already-active setup
-// session rather than something that inspects or repairs the marker itself.
+// of the manifest (#197: was the activation marker), so all eight bypass the shared
+// activation gate the same way (#133/#138/#135/#136/#146/#147/#149). `discover`
+// (#142) and `migration-plan` (#144) deliberately do NOT: unlike those eight, each
+// needs a bundle root to already exist -- `discover` to exclude it from the scan,
+// `migration-plan` to check a candidate target path for a collision -- and each
+// runs as a step of an already-active setup session rather than something that
+// inspects or repairs the manifest itself.
 // `partition` (#146) needs no bundle root at all: it only groups an already-determined
 // plan the caller supplies (or validates a worker's returned shard against the brief
 // the caller supplies), never touching the bundle or the filesystem beyond resolving
@@ -49,7 +51,25 @@ const routerOwners = new Map([
 // delegated call already has. An automatic caller gets the same silence every other
 // operation on an inactive bundle gets; only an explicit call after `init`/`repair`
 // have run reaches `discover`/`migration-plan`.
-const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report', 'partition', 'assemble', 'migration-validate', 'publish']);
+//
+// `admit` (#197) joins this set for a different reason than the other eight, and it
+// is a decision made on top of #196's resolution, not implied by it -- document it
+// here because nothing else names it. Once a valid manifest is required for the
+// gate to open, "the gate is open" and "a manifest exists to resolve candidates
+// from" became the same fact: `admission.js`'s own candidate-source priority
+// (manifest over caller-supplied `payload.candidates`, by design, so a real
+// manifest is never silently overridden by a caller) means any repository that
+// could reach `admit` past a manifest-mandatory gate would also have its explicit
+// candidates replaced by the manifest's own. `admit` is the one operation whose
+// entire contract is evaluating the caller's own candidates -- it is the
+// inspection primitive at which REACH, PRESENCE, TRUST, ACCESS, and federation
+// fallback-on-invalid-manifest are independently observable at all; gating it the
+// same way as `read`/`write`/`orient` would leave that code in place but
+// unverifiable through any wrapper-level test. The accepted cost: `admit` on a
+// manifest-less or invalid-manifest repository still returns real candidate
+// evaluation instead of `not-configured`/`invalid configuration`, unlike every
+// other explicit call.
+const activationBypassOperations = new Set(['inspect', 'repair', 'plan', 'aggregate', 'report', 'partition', 'assemble', 'migration-validate', 'publish', 'admit']);
 
 const forbiddenEffectKeys = ['deprecate', 'move', 'rename', 'rewrite'];
 
@@ -208,7 +228,14 @@ function executeBounded(request, services, operation, requireScope = false) {
   } }, services);
   const candidate = admitted.data.candidates && admitted.data.candidates.find((item) => item.state === 'active' && item.bundle_root === bundleRoot);
   if (!candidate) return refuse('BUNDLE_NOT_ADMITTED', null, admitted.findings);
-  const mode = validation.projectMode(bundleRoot, services);
+  // #197: `okf_version`/`project_mode` come from the selected manifest bundle
+  // record, never from the bundle root's own `index.md` (that file is navigation
+  // only now). `admitted.data.manifest` is always the manifest this same request
+  // was just gated on -- the activation gate above already required a valid one --
+  // so this is a lookup into data `admission.admit` already returned, not a second
+  // manifest read.
+  const bundleRecord = admitted.data.manifest && admitted.data.manifest.bundles.find((item) => item.alias === candidate.bundle_alias);
+  const mode = validation.projectMode(bundleRecord && bundleRecord.project_mode);
   if (!mode) return refuse('PROJECT_MODE_INVALID', { gate: 'project mode' });
   if (mode === 'code-backed' && payload.code_recoverable === true) {
     return refuse('CODE_RECOVERABLE_MATERIAL', { gate: 'project mode' });
@@ -219,7 +246,10 @@ function executeBounded(request, services, operation, requireScope = false) {
 
   let outcome;
   try {
-    const writerRequest = { ...request, scope: scoped.scope, payload: { ...payload, bundle: bundleRoot } };
+    const writerRequest = {
+      ...request, scope: scoped.scope,
+      payload: { ...payload, bundle: bundleRoot, okf_version: bundleRecord && bundleRecord.okf_version },
+    };
     outcome = operation === 'create' ? validation.evaluateCreate(writerRequest, services) : validation.evaluate(writerRequest, services);
   } catch (error) {
     const finding = suiteFinding('POST_WRITE_VALIDATION_FAILED', { gate: 'write', reason: writeFailureReason(error) });
@@ -387,12 +417,23 @@ function orientRespond(request, services, marker) {
   return outcome === null ? null : respond(request, outcome.result, outcome.data, outcome.findings, { next_action: outcome.next_action });
 }
 
+// #197: a valid manifest replaces the valid activation marker as the runtime
+// condition below. Same three-state shape the marker gave `run()` --
+// 'invalid-input' (unusable `cwd`, handled by the caller's own validation),
+// 'absent' (no manifest discoverable from `cwd` up to the Git root -- OKF is
+// simply not configured here), or the manifest's own tri-state resolved by
+// `manifest.select()`/`validate()`: 'valid', or 'invalid' for anything
+// discovered but malformed. An invalid manifest never falls through to
+// 'absent': a broken declaration is refused as invalid configuration, not
+// silently treated as no configuration at all.
 function activationState(request, services) {
   const cwd = request.payload && request.payload.cwd;
   if (typeof cwd !== 'string' || cwd === '') return 'invalid-input';
   const root = services.gitRootOf(cwd);
   if (!root) return 'absent';
-  return services.activationMarker(root);
+  const selected = manifest.select(request.payload, { cwd: path.resolve(cwd), gitRoot: root }, services);
+  if (selected.finding) return 'invalid';
+  return selected.manifest ? 'valid' : 'absent';
 }
 
 function isWriteOperation(skill, request) {
@@ -461,13 +502,14 @@ function runActive(skill, request, services) {
 function run(skill, request, services) {
   if (!skills.has(skill)) return respond(request, 'blocked', { code: 'UNKNOWN_SKILL' }, []);
 
-  // `inspect` and `repair` report and fix the activation marker itself, `plan` and
-  // `aggregate` plan and report around a workspace that may not have one yet, and
-  // `report` only classifies caller-supplied migration signals, so all five run
-  // ahead of the shared activation gate below rather than being gated behind it,
-  // whether reached directly through `okf-setup` or through the `okf` router; an
-  // automatic caller still gets silence, matching every other operation's automatic
-  // behavior when OKF is not yet active here (#138/#135/#136).
+  // `inspect` and `repair` report and fix the manifest itself (#197: was the
+  // activation marker), `plan` and `aggregate` plan and report around a workspace
+  // that may not have one yet, and `report` only classifies caller-supplied
+  // migration signals, so all five run ahead of the shared activation gate below
+  // rather than being gated behind it, whether reached directly through
+  // `okf-setup` or through the `okf` router; an automatic caller still gets
+  // silence, matching every other operation's automatic behavior when OKF is not
+  // yet active here (#138/#135/#136).
   if (activationBypassOperations.has(request.operation)) {
     if (skill === 'okf-setup') {
       if (request.invocation === 'automatic') return null;
@@ -477,17 +519,31 @@ function run(skill, request, services) {
       if (request.invocation === 'automatic') return null;
       return routerRun(request, services);
     }
+    // `admit` (#197, see the bypass set's own comment above) is the one bypass
+    // operation reached through `okf-read` rather than `okf-setup`/`okf` -- it is
+    // not in `routerOwners`, so the generic router does not carry it at all.
+    if (skill === 'okf-read') {
+      if (request.invocation === 'automatic') return null;
+      return runActive(skill, request, services);
+    }
   }
 
   const activation = activationState(request, services);
   if (activation === 'absent') {
     if (request.invocation === 'automatic') return null;
-    // The bootstrap exception (#166/#173): an explicit `init` runs while the marker is
-    // *absent*, because there is no bundle yet for a marker to declare active, and the
-    // documented order `inspect -> consent -> init -> repair activation -> ...` would
-    // otherwise be unreachable on a clean repository. It is narrower than the bypass set
-    // above: an invalid marker still blocks below, `init` still creates only the bundle
-    // root, and marker creation stays a separate explicit `repair`.
+    // The pre-manifest bootstrap exception (#166/#173, kept by #196/#197): an
+    // explicit `init` may run while the manifest is *absent* (#197: was the
+    // activation marker), because there is no bundle yet for a manifest to
+    // declare active. The documented order is now
+    // `inspect -> consent -> repair manifest -> init -> discover` (#196), which
+    // writes the manifest before `init` ever runs, so a normal run no longer
+    // needs this exception to reach `init` at all -- it stays so an explicit
+    // `init` still works standalone on a repository that holds nothing but a
+    // Git root, the explicit pre-manifest setup path #196 keeps alongside the
+    // documented order (`test/issue-173.test.js`). It is narrower than the
+    // bypass set above: an invalid manifest still blocks below, `init` still
+    // creates only the bundle root, and the manifest still gets written by a
+    // separate explicit `repair`.
     // A Git repository is still the precondition every operation shares: outside one,
     // `init` keeps answering `not-configured` rather than reaching ownership.
     if (request.operation === 'init' && (skill === 'okf-setup' || skill === 'okf') &&
@@ -509,7 +565,7 @@ function run(skill, request, services) {
         origin: 'suite',
         severity: 'error',
         blocks: false,
-        detail: { gate: 'activation', reason: 'marker_invalid' },
+        detail: { gate: 'activation', reason: 'manifest_invalid' },
       }]);
     }
     if (isWriteOperation(skill, request)) {
@@ -518,21 +574,21 @@ function run(skill, request, services) {
         result: 'blocked',
         effects: effectRecords([effect], 'blocked'),
         findings: [{
-          code: 'ACTIVATION_MARKER_INVALID',
+          code: 'MANIFEST_INVALID',
           origin: 'suite',
           severity: 'error',
           blocks: true,
-          detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
+          detail: { gate: 'activation', reason: 'manifest_invalid' },
         }],
-        code: 'ACTIVATION_MARKER_INVALID',
+        code: 'MANIFEST_INVALID',
       });
     }
-    return respond(request, 'blocked', { code: 'ACTIVATION_MARKER_INVALID' }, [{
-      code: 'ACTIVATION_MARKER_INVALID',
+    return respond(request, 'blocked', { code: 'MANIFEST_INVALID' }, [{
+      code: 'MANIFEST_INVALID',
       origin: 'suite',
       severity: 'error',
       blocks: true,
-      detail: { gate: 'activation', reason: 'not_zero_byte_regular_file' },
+      detail: { gate: 'activation', reason: 'manifest_invalid' },
     }]);
   }
   if (automaticMutation(skill, request)) return automaticMutationBlocked(request);

@@ -232,7 +232,7 @@ function supportEvidence(candidates, services, findings, readMissingBodies) {
         observable = false;
         continue;
       }
-      if (parts.includes('.git') || relative === '.okf-active' || relative === '.okf-workspace.json') continue;
+      if (parts.includes('.git') || relative === '.okf-workspace.json') continue;
       const guard = guardPath(candidate, file, services);
       if (guard.state === 'invalid') {
         addFinding(findings, navigationFinding('invalid', guard.detail, 'error', true));

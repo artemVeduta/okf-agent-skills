@@ -29,7 +29,12 @@ function installSkill(name, skillsDir) {
 
 function orientedBundle(root) {
   fs.mkdirSync(path.join(root, '.git'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: '.', okf_version: '0.2', project_mode: 'knowledge-only' }],
+  }));
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
   return root;
 }
@@ -58,7 +63,10 @@ test('a project-layout skill install answers a real request from its own install
 
   assert.equal(result.status, 0);
   assert.equal(result.stderr, '');
-  assert.deepEqual(JSON.parse(result.stdout).data, { federation: 'none', candidates: [] });
+  const data = JSON.parse(result.stdout).data;
+  assert.equal(data.federation, 'accepted');
+  assert.equal(data.candidates.length, 1);
+  assert.equal(data.candidates[0].bundle_alias, 'repo');
 });
 
 test('a global-layout skill install resolves its wrapper from the skill root, not from cwd or PATH', (t) => {

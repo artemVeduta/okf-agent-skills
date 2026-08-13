@@ -7,10 +7,12 @@ const { runSilent, runWrapper, temporaryRoot } = require('../test-support/snapsh
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const router = path.join(__dirname, '..', 'scripts', 'okf.js');
 
-// #173 (decision #166): an explicit `init` is the one bootstrap exception to the
-// activation-marker gate. It may run while `.okf-active` is absent, so the documented
-// order `inspect -> consent -> init -> repair activation -> repair manifest -> discover`
-// works on a repository that holds nothing but a Git root.
+// #173 (decision #166, kept by #196/#197): an explicit `init` is the one
+// bootstrap exception to the manifest gate. It may run while the manifest
+// is absent, so a caller can still create the bundle root before ever writing
+// a manifest at all -- the explicit pre-manifest setup path #196 keeps
+// alongside its own documented order `inspect -> consent -> repair manifest ->
+// init -> discover`, which `test/issue-170.test.js` covers instead.
 function request(operation, root, payload = {}, extra = {}) {
   return {
     protocol: 'okf-wrapper/1',
@@ -27,7 +29,7 @@ function cleanRepository(t, prefix) {
   return root;
 }
 
-test('the documented setup order bootstraps a repository that holds only a Git root', (t) => {
+test('an explicit init runs on a repository that holds nothing but a Git root, before any manifest exists', (t) => {
   const root = cleanRepository(t, 'okf-173-clean-');
 
   const before = runWrapper(wrapper, request('inspect', root));
@@ -36,21 +38,17 @@ test('the documented setup order bootstraps a repository that holds only a Git r
   assert.equal(before.data.activation.state, 'missing');
   assert.equal(before.data.manifest.state, 'missing');
 
-  const init = runWrapper(wrapper, request('init', root, { project_mode: 'code-backed' }));
+  const init = runWrapper(wrapper, request('init', root));
   assert.equal(init.result, 'applied');
   assert.deepEqual(init.findings, []);
+  // #196/#197: the root is navigation only -- the exception never widens beyond
+  // the bundle root and its agent connector (#170).
   assert.equal(
     fs.readFileSync(path.join(root, 'okf', 'index.md'), 'utf8'),
-    '---\nokf_version: "0.2"\nproject_mode: code-backed\n---\n# Bundle\n\n- [Agents](agents/index.md)\n',
+    '# Bundle\n\n- [Agents](agents/index.md)\n',
   );
-  // The exception never widens: `init` writes the bundle root and its agent connector
-  // (#170) alone.
-  assert.equal(fs.existsSync(path.join(root, '.okf-active')), false);
 
-  const activation = runWrapper(wrapper, request('repair', root, { targets: ['activation'] }));
-  assert.equal(activation.result, 'applied');
-
-  const manifest = runWrapper(wrapper, request('repair', root, { targets: ['manifest'] }));
+  const manifest = runWrapper(wrapper, request('repair', root, { targets: ['manifest'], project_mode: 'code-backed' }));
   assert.equal(manifest.result, 'applied');
 
   const after = runWrapper(wrapper, request('inspect', root));
@@ -62,20 +60,20 @@ test('the documented setup order bootstraps a repository that holds only a Git r
   assert.equal(discover.result, 'ok');
 });
 
-test('an automatic init on a repository with no activation marker stays silent and writes nothing', (t) => {
+test('an automatic init on a repository with no manifest stays silent and writes nothing', (t) => {
   const root = cleanRepository(t, 'okf-173-automatic-');
 
   runSilent(wrapper, request('init', root, {}, { invocation: 'automatic' }));
   assert.deepEqual(fs.readdirSync(root), ['.git']);
 });
 
-test('a malformed activation marker still blocks init', (t) => {
+test('a malformed manifest still blocks init', (t) => {
   const root = cleanRepository(t, 'okf-173-invalid-');
-  fs.writeFileSync(path.join(root, '.okf-active'), 'not empty');
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), 'not json');
 
   const response = runWrapper(wrapper, request('init', root));
   assert.equal(response.result, 'blocked');
-  assert.equal(response.data.code, 'ACTIVATION_MARKER_INVALID');
+  assert.equal(response.data.code, 'MANIFEST_INVALID');
   assert.equal(fs.existsSync(path.join(root, 'okf', 'index.md')), false);
 });
 
@@ -92,7 +90,7 @@ test('the router grants the same bootstrap exception to an explicit init', (t) =
   assert.equal(fs.existsSync(path.join(root, 'okf', 'index.md')), true);
 });
 
-test('the exception is init alone: another setup mutation still needs the marker', (t) => {
+test('the exception is init alone: another setup mutation still needs the manifest', (t) => {
   const root = cleanRepository(t, 'okf-173-narrow-');
 
   const response = runWrapper(wrapper, request('discover', root));

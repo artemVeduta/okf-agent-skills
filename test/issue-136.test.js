@@ -7,7 +7,7 @@ const { runWrapper, spawnWrapper, temporaryRoot } = require('../test-support/sna
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 
-// `report` runs without a valid `.okf-active` marker, like `inspect`/`plan`/
+// `report` runs without a valid manifest, like `inspect`/`plan`/
 // `aggregate` (#133/#135/#138), so this builds a bare Git repository directly.
 function repo(t) {
   return temporaryRoot(t, 'okf-136-repo-');
@@ -181,7 +181,7 @@ test('a green structural report never implies semantic fidelity: no ambiguity, n
 test('semantic_review is required and must be a well-formed object', (t) => {
   const root = repo(t);
   git(root);
-  for (const semantic_review of [undefined, {}, { performed: 'yes' }, null, 'true']) {
+  for (const semantic_review of [undefined, {}, { performed: 'yes' }, { performed: true, sources: [], candidates: [] }, null, 'true']) {
     const payload = { sources: [migrated('docs/a.md', 'decisions/a.md')] };
     if (semantic_review !== undefined) payload.semantic_review = semantic_review;
     const response = run(reportRequest(root, payload));

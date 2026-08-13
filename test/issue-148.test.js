@@ -10,7 +10,12 @@ const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
 function repo(t) {
   const root = temporaryRoot(t, 'okf-148-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: 'okf', okf_version: '0.2', project_mode: 'knowledge-only' }],
+  }));
   return root;
 }
 
@@ -37,12 +42,23 @@ function plan(entries) {
   return { entries, executable: true };
 }
 
+// #203: `migration-validate` now also demands the accepted concept-group
+// packages exactly as `migration-plan` returned them. None of this file's own
+// fixtures stage a group index, so an empty accepted package set -- no
+// packages, no index rows -- is exactly the correct shape to carry: there is
+// nothing here for it to match against.
+const EMPTY_GROUP_PACKAGES = {
+  packages: [],
+  root: { purpose: 'Bundle root', index: { disposition: 'unchanged', title: 'Bundle' }, log: { disposition: 'none' }, children: [] },
+  indexes: [],
+};
+
 function request(root, payload = {}) {
   return {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'migration-validate',
-    payload: { cwd: root, ...payload },
+    payload: { cwd: root, group_packages: EMPTY_GROUP_PACKAGES, ...payload },
   };
 }
 
@@ -71,6 +87,14 @@ test('a clean staged bundle validates: complete, publishable, no findings', (t) 
   assert.equal(response.data.publishable, true);
   assert.deepEqual(response.data.missing_disposition, []);
   assert.deepEqual(response.data.semantic_fidelity, { assessed: true });
+  assert.deepEqual(response.data.semantic_review, {
+    human_assessed: true,
+    candidates: [{
+      path: 'decisions/a.md',
+      identity: `sha256:${require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root, '.okf-staging/okf/decisions/a.md'))).digest('hex')}`,
+    }],
+    sources: [],
+  });
   assert.deepEqual(response.findings, []);
 });
 

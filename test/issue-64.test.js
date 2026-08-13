@@ -4,7 +4,7 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { binding, runWrapper, snapshot } = require('../test-support/snapshot');
+const { binding, runWrapper, snapshot, writeManifest } = require('../test-support/snapshot');
 
 const lifecycleWrapper = path.join(__dirname, '..', 'scripts', 'okf-lifecycle.js');
 const routerWrapper = path.join(__dirname, '..', 'scripts', 'okf.js');
@@ -19,7 +19,7 @@ function bundle(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-64-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\nproject_mode: "knowledge-only"\n---\n# Bundle\n');
   fs.writeFileSync(path.join(root, 'evidence.md'), 'observed evidence\n');
   return root;
@@ -96,7 +96,7 @@ test('sync creates one evidence-backed draft concept', (t) => {
   const draft = fs.readFileSync(path.join(root, 'new.md'), 'utf8');
   assert.match(draft, /status: draft/);
   assert.doesNotMatch(draft, /verified:/);
-  assert.deepEqual(fs.readdirSync(root).sort(), ['.git', '.okf-active', 'evidence.md', 'index.md', 'new.md']);
+  assert.deepEqual(fs.readdirSync(root).sort(), ['.git', '.okf-workspace.json', 'evidence.md', 'index.md', 'new.md']);
 });
 
 test('sync reports a no-op without changing content or creating lifecycle state', (t) => {

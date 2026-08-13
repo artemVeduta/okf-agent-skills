@@ -18,6 +18,7 @@ undecided. Invented here, pending a decision:
 const path = require('node:path');
 const { inside, resolve } = require('./reach');
 const connector = require('./connector');
+const { countWords } = require('./words');
 
 const NON_HUMAN_ACTORS = ['agent:', 'tool:'];
 
@@ -415,26 +416,19 @@ function readTree(file, services) {
   return { tree: parseYAML(extracted.frontmatter), body: extracted.body, text };
 }
 
-// Step 1: the bundle root must declare exactly the string "0.2".
-function checkRoot(bundleRoot, services) {
-  const indexPath = path.join(bundleRoot, 'index.md');
-  if (!services.exists(indexPath)) return rootFinding(undefined);
-  let tree = {};
-  try {
-    tree = readTree(indexPath, services).tree;
-  } catch {
-    tree = {};
-  }
-  return tree.okf_version === '0.2' ? null : rootFinding(tree.okf_version);
+// Step 1: the selected manifest bundle record must declare exactly the string
+// "0.2" (#197). This moved off the bundle root's own `index.md` frontmatter --
+// the root is navigation only now, so the value comes from whichever manifest
+// bundle record the caller resolved (`admission.js`'s admitted candidate), not
+// from the filesystem.
+function checkRoot(okfVersion) {
+  return okfVersion === '0.2' ? null : rootFinding(okfVersion);
 }
 
-function projectMode(bundleRoot, services) {
-  try {
-    const tree = readTree(path.join(bundleRoot, 'index.md'), services).tree;
-    return tree.project_mode === 'code-backed' || tree.project_mode === 'knowledge-only' ? tree.project_mode : null;
-  } catch {
-    return null;
-  }
+// Same relocation for `project_mode` (#197): a pure recognized-value check
+// against the manifest bundle record's own field, no filesystem read.
+function projectMode(mode) {
+  return mode === 'code-backed' || mode === 'knowledge-only' ? mode : null;
 }
 
 // #151: the lexical containment check above is cheap but can be fooled by a symlink
@@ -581,7 +575,7 @@ function evaluate(request, services) {
   const findings = [];
   const done = (result, data) => ({ result, data, findings: sortFindings(findings) });
 
-  const root = checkRoot(bundleRoot, services);
+  const root = checkRoot(request.payload.okf_version);
   if (root) {
     findings.push(root);
     return done('blocked', {});
@@ -644,7 +638,7 @@ function evaluateCreate(request, services) {
   const rel = request.payload.concept;
   const findings = [];
   const done = (result, data) => ({ result, data, findings: sortFindings(findings) });
-  const root = checkRoot(bundleRoot, services);
+  const root = checkRoot(request.payload.okf_version);
   if (root) {
     findings.push(root);
     return done('blocked', { path: rel });
@@ -725,10 +719,11 @@ function nearestExistingDir(dir, services) {
   }
 }
 
-// `init` writes only the bundle root. It is idempotent (a valid root with nothing
-// to add is a no-op, not an error) and repairing (an absent, wrong, or unparseable
-// `okf_version` is overwritten). `project_mode` is optional and merges into an
-// already-valid root on a second call.
+// `init` writes only the bundle root, which is navigation only now (#196/#197):
+// the root carries no `okf_version`/`project_mode` frontmatter -- those moved to
+// the manifest bundle record entirely, `repair`'s to write, never `init`'s. It is
+// idempotent (a parseable root is a no-op) and repairing (an unparseable root is
+// reset to a clean navigational body).
 function evaluateInit(request, services) {
   const bundleRoot = path.resolve(request.payload.bundle);
   const indexPath = path.join(bundleRoot, 'index.md');
@@ -741,46 +736,28 @@ function evaluateInit(request, services) {
   }
 
   let currentText = null;
-  let currentTree = null;
-  let currentBody = null;
   let parseable = false;
   if (services.exists(indexPath)) {
     currentText = services.readFile(indexPath);
     try {
-      const parsed = parseTreeFromText(currentText);
-      currentTree = parsed.tree;
-      currentBody = parsed.body;
+      parseTreeFromText(currentText);
       parseable = true;
     } catch {
       parseable = false;
     }
   }
 
-  const projectMode = request.payload.project_mode;
-  const baseTree = parseable ? currentTree : {};
-  const tree = { ...baseTree, okf_version: '0.2' };
-  if (projectMode !== undefined) tree.project_mode = projectMode;
-
-  const alreadyValid = parseable && currentTree.okf_version === '0.2' &&
-    (projectMode === undefined || currentTree.project_mode === projectMode);
-  if (alreadyValid) return done('ok', { written: false, tree: currentTree });
-
-  const serialized = serializeFrontmatter(tree);
-  const mismatch = roundTripMismatch(tree, serialized);
-  if (mismatch) {
-    findings.push(blocker('PARSE_TREE_MISMATCH', 'suite', { path: 'index.md', ...mismatch }));
-    return done('blocked', {});
-  }
+  if (parseable) return done('ok', { written: false });
 
   // A bundle root that does not exist yet is a new bundle, so it gets the agent
   // connector (#170): a root body linking to `agents/index.md`, and the two connector
-  // files themselves. An existing root keeps its own body and gets the connector
-  // through setup's target-tree proposal instead.
+  // files themselves. An existing-but-unparseable root keeps neither its own body
+  // nor the connector -- it is reset to the same minimal navigational body a
+  // repaired root always got, just without the frontmatter nothing reads anymore.
   const fresh = currentText === null;
-  const body = parseable ? currentBody : (fresh ? connector.ROOT_BODY : '# Bundle\n');
+  const rendered = fresh ? connector.ROOT_BODY : '# Bundle\n';
   return done('ok', {
     written: true,
-    tree,
     // A connector file already on disk is left exactly as it is: `init` never
     // overwrites one, so a bundle root missing only `index.md` is repaired without
     // a partial write and without a `TARGET_CHANGED` refusal for content it does
@@ -790,22 +767,23 @@ function evaluateInit(request, services) {
         .map(([relative, text]) => ({ file: path.join(bundleRoot, relative), rendered: text }))
         .filter((item) => !services.exists(item.file))
       : [],
-    rendered: serialized + body,
+    rendered,
     expected: currentText,
     file: indexPath,
   });
 }
 
-// Post-write for `init` re-reads only the root declaration and confirms the saved
-// parse tree matches what was written; it is not a concept, so `postWrite`'s
-// concept-shaped checks (type, sources, links, upstreams) do not apply.
-function postWriteInit(bundleRoot, services, expectedTree) {
+// Post-write for `init` re-reads only the root and confirms the saved bytes match
+// what was published; it is not a concept, so `postWrite`'s concept-shaped checks
+// (type, sources, links, upstreams) do not apply, and it is not a frontmatter tree
+// anymore (#197) either -- the root carries none, so an exact-bytes comparison is
+// the whole check.
+function postWriteInit(bundleRoot, services, expectedText) {
   const findings = [];
   try {
-    const current = readTree(path.join(bundleRoot, 'index.md'), services);
-    const comparison = parseTreeEqual(expectedTree, current.tree);
-    if (!comparison.equal) {
-      findings.push(blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: 'index.md', construct: comparison.path, reason: 'saved tree mismatch' }));
+    const current = services.readFile(path.join(bundleRoot, 'index.md'));
+    if (current !== expectedText) {
+      findings.push(blocker('POST_WRITE_VALIDATION_FAILED', 'suite', { path: 'index.md', reason: 'saved bytes mismatch' }));
     }
     return { valid: !findings.some((finding) => finding.blocks), findings: sortFindings(findings) };
   } catch (error) {
@@ -815,29 +793,32 @@ function postWriteInit(bundleRoot, services, expectedTree) {
 
 // Read-only counterpart to `evaluateInit`: `/setup`'s inspection report for the
 // bundle root. Reuses the same parser as `evaluateInit` so the two never drift on
-// what counts as parseable or valid; unlike `evaluateInit` it never touches disk.
+// what counts as parseable; unlike `evaluateInit` it never touches disk. #197: the
+// root is navigation only, so there is no `okf_version` left to check here -- only
+// whether the file parses at all.
 function inspectIndex(bundleRoot, services) {
   const indexPath = path.join(bundleRoot, 'index.md');
   if (!services.exists(indexPath)) return { state: 'missing' };
-  let tree;
   try {
-    tree = parseTreeFromText(services.readFile(indexPath)).tree;
+    parseTreeFromText(services.readFile(indexPath));
   } catch (error) {
     return { state: 'invalid', reason: error.reason || 'unparseable_frontmatter' };
   }
-  if (tree.okf_version !== '0.2') return { state: 'invalid', reason: 'missing_or_wrong_okf_version' };
   return { state: 'ok' };
 }
 
+// Root-declaration and project-mode re-checks used to live here (#197), but
+// fix round 2 (Minor) deletes them: `executeBounded` (runtime.js) already
+// validates the same selected manifest bundle record's `okf_version` (through
+// `evaluate`/`evaluateCreate`'s own `checkRoot` call) and `project_mode`
+// (its own `PROJECT_MODE_INVALID` refusal) before the write even starts, off
+// the identical resolved `bundleRecord` this function would have re-tested --
+// a failing value here was structurally unreachable, exactly as
+// `test/issue-78.test.js` already documents.
 function postWrite(bundleRoot, rel, services, expectedTree) {
   const findings = [];
   const file = path.resolve(bundleRoot, rel);
   try {
-    const root = checkRoot(bundleRoot, services);
-    if (root) findings.push(root);
-    if (!projectMode(bundleRoot, services)) {
-      findings.push(blocker('PROJECT_MODE_INVALID', 'suite', { gate: 'project mode' }));
-    }
     const current = readConcept(file, rel, services);
     if (current.finding) {
       findings.push(current.finding);
@@ -909,18 +890,25 @@ function listedPath(bundleRoot, value) {
 }
 
 function readEntries(bundleRoot, services) {
-  const { files } = services.listFiles(bundleRoot);
-  return files
+  let listing;
+  try { listing = services.listFiles(bundleRoot); } catch { listing = { files: [], complete: false }; }
+  const entries = listing.files
     .map((file) => listedPath(bundleRoot, file))
     .filter(Boolean)
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { entries, complete: listing.complete === true };
 }
 
 function readText(value) {
   return Buffer.isBuffer(value) ? value.toString('utf8') : value;
 }
 
-function withoutFencedCode(body) {
+// The one fenced-code scan, line for line: `true` for a fence marker line and
+// for every line inside a fence, `false` everywhere else. `withoutFencedCode`
+// masks from it, and `sections.js` reads it directly, because masking a fenced
+// line to `''` makes it indistinguishable from a real blank line -- which a
+// block-boundary rule that must never cut inside a code block cannot afford.
+function fencedLines(body) {
   let fence = null;
   return body.split('\n').map((raw) => {
     const line = raw.replace(/\r$/, '');
@@ -935,10 +923,15 @@ function withoutFencedCode(body) {
       ) {
         fence = null;
       }
-      return '';
+      return true;
     }
-    return fence ? '' : line;
-  }).join('\n');
+    return fence !== null;
+  });
+}
+
+function withoutFencedCode(body) {
+  const fenced = fencedLines(body);
+  return body.split('\n').map((raw, index) => (fenced[index] ? '' : raw.replace(/\r$/, ''))).join('\n');
 }
 
 function internalResourcePath(bundleRoot, resource) {
@@ -960,19 +953,24 @@ function citationsHeading(body) {
   return false;
 }
 
-function markdownLinks(body) {
-  const visible = withoutFencedCode(body)
-    .split('\n')
-    .map((line) => line.replace(/`[^`\n]*`/g, ''))
-    .join('\n');
+function markdownLinkOccurrences(body) {
+  const visible = withoutFencedCode(body).split('\n');
   const links = [];
-  const pattern = /\[[^\]\n]*\]\(\s*(?:<([^>\n]*)>|([^\s)\n]+))/g;
-  for (const match of visible.matchAll(pattern)) {
-    const previous = visible[match.index - 1];
-    if (previous === '!' || previous === '\\') continue;
-    links.push(match[1] === undefined ? match[2] : match[1]);
+  let occurrence = 0;
+  for (let line = 0; line < visible.length; line++) {
+    const text = visible[line].replace(/`[^`\n]*`/g, '');
+    const pattern = /\[[^\]\n]*\]\(\s*(?:<([^>\n]*)>|([^\s)\n]+))/g;
+    for (const match of text.matchAll(pattern)) {
+      const previous = text[match.index - 1];
+      if (previous === '!' || previous === '\\') continue;
+      links.push({ line: line + 1, occurrence: ++occurrence, resource: match[1] === undefined ? match[2] : match[1] });
+    }
   }
   return links;
+}
+
+function markdownLinks(body) {
+  return markdownLinkOccurrences(body).map((item) => item.resource);
 }
 
 function bodyLinkPath(resource) {
@@ -991,10 +989,19 @@ function linkVerdict(root, target, services) {
   return inside(target, root) && services.exists(target) && services.isFile(target) ? 'resolves' : 'unexpectedly-broken';
 }
 
+// #197 (#200): the file-word target applies to substantive concepts only, never
+// to a navigation-only index (already excluded below as `reserved`, by name,
+// wherever it sits in the bundle) or to a generated connector file -- `init`'s
+// own `connector.FILES` list, reused here rather than a second name for the
+// same paths, so this set can never quietly drift from what `init` writes.
+const GENERATED_CONNECTOR_PATHS = new Set(connector.FILES.map(([relative]) => relative));
+
 function validateRead(bundleRoot, services, options = {}) {
   const root = services.realpath(path.resolve(bundleRoot));
-  const entries = readEntries(root, services);
+  const listing = readEntries(root, services);
+  const entries = listing.entries;
   const findings = [];
+  if (!listing.complete) findings.push(blocker('BUNDLE_SCAN_INCOMPLETE', 'suite', { reason: 'incomplete_listing' }));
   const concepts = [];
   const linkVerdicts = [];
   const today = typeof options.today === 'string' ? options.today : new Date().toISOString().slice(0, 10);
@@ -1074,6 +1081,12 @@ function validateRead(bundleRoot, services, options = {}) {
 
     const concept = { path: entry.path, bytes, findings: sortFindings(conceptFindings) };
     if (Object.hasOwn(tree, 'status')) concept.status = tree.status;
+    // #197 (#200): a substantive concept's own word count, reported purely as
+    // information -- never compared against the effective target here, never a
+    // finding, and never a reason a normal read warns or blocks. A generated
+    // connector file is excluded by path; a navigation-only index never reaches
+    // this line at all (`reserved`, above, already `continue`s past it).
+    if (!GENERATED_CONNECTOR_PATHS.has(entry.path)) concept.word_count = countWords(bytes);
     concepts.push(concept);
     findings.push(...conceptFindings);
   }
@@ -1213,5 +1226,5 @@ module.exports = {
   inspectIndex,
   parseFrontmatter, parseYAML, serializeFrontmatter,
   postWrite, postWriteInit, projectMode, validateRead,
-  withoutFencedCode, markdownLinks, bodyLinkPath,
+  withoutFencedCode, fencedLines, markdownLinks, markdownLinkOccurrences, bodyLinkPath,
 };

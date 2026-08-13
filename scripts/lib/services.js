@@ -105,13 +105,5 @@ module.exports = {
   remove: (file) => fs.rmSync(file, { force: true }),
   readdir: (dir) => fs.readdirSync(dir),
   removeEmptyDir: (dir) => { try { fs.rmdirSync(dir); return true; } catch { return false; } },
-  activationMarker: (root) => {
-    try {
-      const marker = fs.lstatSync(path.join(root, '.okf-active'));
-      return marker.isFile() && marker.size === 0 ? 'valid' : 'invalid';
-    } catch (error) {
-      return error.code === 'ENOENT' ? 'absent' : 'invalid';
-    }
-  },
   gitRootOf,
 };

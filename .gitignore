@@ -2,10 +2,15 @@
 .idea/
 .vscode/
 .worktrees/
+.claude/worktrees/
+.superpowers/
 node_modules/
 dist/
 coverage/
 *.log
 .okf-staging/
+.okf-gh/
 
 .env
+# session state
+.okf-occurrences.json

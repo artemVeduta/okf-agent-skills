@@ -4,7 +4,7 @@ const cp = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { assertEnvelope, treeHash } = require('../test-support/snapshot');
+const { assertEnvelope, treeHash, writeManifest } = require('../test-support/snapshot');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-read.js');
 const fallbackPhrase = 'v0.1 consumed using v0.2 fallback';
@@ -13,7 +13,7 @@ function rootFor(t, prefix = 'okf-49-') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   fs.writeFileSync(path.join(root, 'index.md'), '---\nokf_version: "0.2"\n---\n# Bundle\n');
   return root;
 }
@@ -224,7 +224,19 @@ test('validate allows frontmatter-less reserved files during a read', (t) => {
 });
 
 test('validate reads an admitted symlinked bundle root', (t) => {
-  const root = rootFor(t, 'okf-49-symlinked-bundle-');
+  // #197: `validate` is not exempt from the activation gate the way `admit`
+  // is, so its admission always resolves through the manifest -- the
+  // manifest here must declare the symlinked path itself as the bundle root
+  // rather than relying on `bundle` overriding an unrelated default.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'okf-49-symlinked-bundle-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, '.git'));
+  fs.writeFileSync(path.join(root, '.okf-workspace.json'), JSON.stringify({
+    schema_version: 1,
+    workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
+    repositories: [{ name: 'repo', path: '.', local: true }],
+    bundles: [{ alias: 'repo', owner: 'repo', root: 'linked-bundle', okf_version: '0.2', project_mode: 'knowledge-only' }],
+  }));
   const target = path.join(root, 'real-bundle');
   const link = path.join(root, 'linked-bundle');
   fs.mkdirSync(target);
@@ -267,7 +279,7 @@ test('validate does not expose bundle_root for an unnamed manifest candidate', (
     schema_version: 1,
     workspace_id: '3f8c1b2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b',
     repositories: [{ name: 'app', path: '.', local: true }],
-    bundles: [{ alias: 'docs', owner: 'app', root: 'docs', required: false, mode: 'source' }],
+    bundles: [{ alias: 'docs', owner: 'app', root: 'docs', okf_version: '0.2', project_mode: 'knowledge-only' }],
   }));
 
   const result = validateUnchanged(root, null);
@@ -296,4 +308,38 @@ test('validate reports malformed log and index bytes without refusing safe conce
     });
     assertReport(result, false, false);
   }
+});
+
+// -------------------------------------------------------------- word count (#197)
+
+test('validate reports a substantive concept\'s word_count as continuous letter/number runs -- headings, frontmatter, table cells, and code count, Markdown marks do not -- and omits it for the generated connector file', (t) => {
+  const root = rootFor(t);
+  const content = [
+    '---',
+    'type: Note',
+    '---',
+    '# Heading one',
+    '',
+    'Some **bold** text.',
+    '',
+    '| A | B |',
+    '|---|---|',
+    '| x1 | two words |',
+    '',
+    '```',
+    'code fence text',
+    '```',
+    '',
+  ].join('\n');
+  write(root, 'safe.md', content);
+  fs.mkdirSync(path.join(root, 'agents'));
+  write(root, path.join('agents', 'okf.md'), '---\ntitle: OKF agent connector\ntype: Playbook\n---\n# OKF agent connector\n\nSome prose that would inflate a count if it were reported.\n');
+
+  const result = validateUnchanged(root);
+  assert.equal(result.response.result, 'ok');
+  // type, Note, Heading, one, Some, bold, text, A, B, x1, two, words, code, fence, text
+  assert.equal(concept(result, 'safe.md').word_count, 15);
+  assert.equal(Object.hasOwn(concept(result, 'agents/okf.md'), 'word_count'), false);
+  // The count alone never produces a finding -- it is data, not a warning.
+  assert.deepEqual(result.response.findings, []);
 });

@@ -94,43 +94,31 @@ function inferType(sourcePath, tree, body) {
   return null;
 }
 
-// ------------------------------------------------------------------ type-directory mapping
-
-// #130's own folder model, transcribed, not invented: the canonical directory each
-// producer type gets. A type absent from this table -- `Attested Computation`
-// (#130 names no canonical directory for it), a preserved domain-specific type, or
-// `Glossary` (handled separately below) -- keeps #144's mechanical mirror rather
-// than inventing a directory the data model never specified.
-const TYPE_DIRECTORIES = new Map([
-  ['Decision', 'decisions'],
-  ['Constraint', 'constraints'],
-  ['Research', 'research'],
-  ['Playbook', 'playbooks'],
-  ['Release', 'releases'],
-  ['Reference', 'references'],
-]);
+// ------------------------------------------------------------------ group placement
 
 function stripExtension(sourcePath) {
   const ext = path.posix.extname(sourcePath);
   return ext ? sourcePath.slice(0, -ext.length) : sourcePath;
 }
 
-// The canonical directory for `type` decides the destination directory; the
-// source's own directory is not mirrored (#145's job, replacing #144's mechanical
-// mirror). `Glossary` is the one documented exception: #130's folder model keeps
-// one `glossary.md` per hierarchy level rather than a directory of many, so a
-// Glossary target keeps the source's own directory and only renames the file
-// itself to `glossary` -- which also means two glossary-shaped sources in the same
-// directory collide exactly the way #144's existing target-collision question
-// already handles, never a silent merge.
-function conceptPathFor(sourcePath, type) {
-  if (type === 'Glossary') {
-    const dir = path.posix.dirname(sourcePath);
-    return dir === '.' ? 'glossary' : `${dir}/glossary`;
-  }
-  const dir = TYPE_DIRECTORIES.get(type);
-  if (!dir) return stripExtension(sourcePath);
-  return `${dir}/${path.posix.basename(stripExtension(sourcePath))}`;
+// #203 (#202): the accepted reader-purpose group decides the destination
+// directory, and nothing else does. The type-directory table and the source-path
+// fallback both used to place a concept here; both are gone, because #202 settled
+// that a concept type, a source directory, a file count, and a directory depth are
+// evidence a human may weigh but can never select a group on their own. `group` is
+// always an accepted group key (`migration.js` asks for one rather than inferring
+// it), so a substantive concept can no longer land at the bundle root at all.
+//
+// `Glossary` keeps its own filename rule: #202 gives a group at most one
+// `glossary.md`, so two glossary-shaped sources accepted into one group both map
+// to the same `<group>/glossary`. `migration.js`'s `placed()` only ever checks a
+// candidate path against the bundle already published on disk, never against a
+// sibling entry in the same plan, so both reach `migrate` undetected -- only
+// assembly's `CONCEPT_TARGET_COLLISION` (#147, see `test/issue-147.test.js`)
+// catches them, never a silent merge.
+function conceptPathFor(sourcePath, type, group) {
+  if (type === 'Glossary') return `${group}/glossary`;
+  return `${group}/${path.posix.basename(stripExtension(sourcePath))}`;
 }
 
 // ------------------------------------------------------------------------- provenance
@@ -148,8 +136,8 @@ function extractProvenance(tree) {
 // Retained raw/unsupported evidence keeps its whole original relative path and
 // extension under `references/` -- an archival mirror, not a concept identity, so
 // two files sharing a basename in different source directories never collide here
-// the way concept placement (which does flatten into a type directory) safely
-// asks about instead.
+// the way two concepts accepted into one group can -- a target collision
+// `placed()` asks about or assembly refuses, never a silent overwrite.
 function referencePathFor(sourcePath) {
   return `references/${sourcePath}`;
 }
@@ -158,13 +146,46 @@ function referencePathFor(sourcePath) {
 
 const LINK_PATTERN = /(\[[^\]\n]*\]\()(\s*)(?:<([^>\n]*)>|([^\s)\n]+))/g;
 
-// Rewrites only a link this migration can resolve unambiguously: a parsed,
+// #188: a link target's *project-relative identity* is always resolved against
+// the source file's own directory -- or, for a root-relative `/foo` target,
+// against the repository root directly -- never against the bundle. Shared by
+// `rewriteLinks` below and `migration.js`'s own unresolved-link check, so the two
+// never compute two different answers for what a link "means".
+function resolveLinkTarget(sourcePath, targetPath) {
+  return targetPath.startsWith('/')
+    ? path.posix.normalize(targetPath.slice(1))
+    : path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), targetPath));
+}
+
+function normalizedLinkTarget(sourcePath, resource) {
+  const targetPath = validation.bodyLinkPath(resource);
+  return targetPath ? resolveLinkTarget(sourcePath, targetPath) + resource.slice(targetPath.length) : null;
+}
+
+// Rewrites every link this migration can parse unambiguously: a parsed,
 // non-fenced, non-inline-code, non-image standard Markdown inline link (reusing
 // `validation.js`'s own `withoutFencedCode`/`bodyLinkPath` rather than a second
-// parser) whose target resolves, relative to the source file's own directory, to
-// exactly one other source in `conceptOf`. Anything else -- an external URL, an
-// anchor, a target outside this migration, fenced or inline code, an image -- is
-// left exactly as written, byte for byte.
+// parser). Anything else -- an external URL, an anchor, fenced or inline code, an
+// image -- is left exactly as written, byte for byte.
+//
+// #188: once a link's target identity is resolved (`resolveLinkTarget`, above),
+// it splits two ways:
+//   - the target is itself another source this same call is migrating
+//     (`conceptOf` has it): the link becomes a path to that target's concept,
+//     computed bundle-relative-to-bundle-relative (unaffected by either file's
+//     depth in the project -- this half was never the bug);
+//   - the target is not in `conceptOf` (a project file staying put, or a path
+//     that resolves to nothing at all): the link is re-expressed as a path from
+//     the concept's own new directory -- `bundleDir/ownConceptDir` -- to that
+//     same project-relative identity, so a depth change between the source's old
+//     directory and the concept's new one no longer breaks it.
+//
+// This function never touches disk and never decides whether a target actually
+// exists -- it is a pure string transform. Whether a rewritten link resolves to
+// nothing is `migration.js`'s `deriveUnresolvedLinks`' job (it has the `services`
+// and `gitRoot` this function deliberately does not), surfaced as the
+// `plan_link_unresolved` finding `setup.js` adds to `migration-plan`'s response --
+// before anything is written, per the brief's "report ... before publication".
 //
 // Reference-style link *definitions* (`[label]: target`) are out of scope: neither
 // shared helper parses that syntax, and writing a second link parser to reach it
@@ -174,8 +195,10 @@ const LINK_PATTERN = /(\[[^\]\n]*\]\()(\s*)(?:<([^>\n]*)>|([^\s)\n]+))/g;
 //
 // `conceptOf` is a `Map<sourcePath, conceptPath>` covering every source this same
 // migration call is placing (`disposition: "migrate"`), keyed by the source's own
-// project-relative path -- exactly the identity #22/#131 already use.
-function rewriteLinks(sourcePath, body, conceptOf) {
+// project-relative path -- exactly the identity #22/#131 already use. `bundleDir`
+// is the bundle root's own project-relative path (e.g. `"okf"`), so a concept's
+// project-relative directory is always `bundleDir/dirname(concept.md)`.
+function rewriteLinks(sourcePath, body, conceptOf, bundleDir) {
   const ownConcept = conceptOf.get(sourcePath);
   const lines = body.split('\n');
   const maskLines = validation.withoutFencedCode(body).split('\n');
@@ -191,19 +214,25 @@ function rewriteLinks(sourcePath, body, conceptOf) {
       const targetPath = validation.bodyLinkPath(rawTarget);
       if (!targetPath || !ownConcept) return whole;
 
-      const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), targetPath));
+      const resolved = resolveLinkTarget(sourcePath, targetPath);
       const targetConcept = conceptOf.get(resolved);
-      if (!targetConcept) return whole;
+      const ownConceptDir = path.posix.dirname(`${ownConcept}.md`);
+      const newTargetPath = targetConcept
+        ? path.posix.relative(ownConceptDir, `${targetConcept}.md`)
+        : path.posix.relative(path.posix.join(bundleDir, ownConceptDir), resolved);
 
       // The `?query`/`#fragment` suffix identifies a section of the target, not the
       // target itself: it is carried through untouched (#159). `bodyLinkPath`
       // returns only the path part, so whatever follows it in the raw target is
       // exactly that suffix.
       const suffix = rawTarget.slice(targetPath.length);
-      const newTarget = path.posix.relative(path.posix.dirname(`${ownConcept}.md`), `${targetConcept}.md`) + suffix;
+      const newTarget = newTargetPath + suffix;
       return `${prefix}${ws}${angled !== undefined ? `<${newTarget}>` : newTarget}`;
     });
   }).join('\n');
 }
 
-module.exports = { inferType, conceptPathFor, extractProvenance, referencePathFor, rewriteLinks };
+module.exports = {
+  inferType, conceptPathFor, extractProvenance, referencePathFor,
+  rewriteLinks, resolveLinkTarget, normalizedLinkTarget,
+};

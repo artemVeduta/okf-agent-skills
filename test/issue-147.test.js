@@ -2,14 +2,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runWrapper, spawnWrapper, temporaryRoot } = require('../test-support/snapshot');
+const { runWrapper, spawnWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
+const { planWithGroups } = require('../test-support/groups');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 
 function repo(t) {
   const root = temporaryRoot(t, 'okf-147-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  fs.writeFileSync(path.join(root, '.okf-active'), '');
+  writeManifest(root, '.');
   return root;
 }
 
@@ -27,14 +28,21 @@ function discoverSources(root, payload = {}) {
   return run({ protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'discover', payload: { cwd: root, ...payload } }).data.sources;
 }
 
+function planRequest(root, sources, payload = {}) {
+  return { protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'migration-plan', payload: { cwd: root, sources, ...payload } };
+}
+
 // Runs the real upstream pipeline (#142 -> #144/#145) so this file's own
 // fixtures exercise `assemble` against exactly the shape `migration-plan`
-// actually produces, never a hand-rolled stand-in for it.
-function derivedPlan(root) {
+// actually produces, never a hand-rolled stand-in for it. #203: every typed
+// source now also needs an accepted reader-purpose group before the plan is
+// executable, so `placement` (`{<source path>: <accepted group key>}`) names
+// one for every migrating source this fixture writes.
+function derivedPlan(root, placement) {
   const sources = discoverSources(root);
-  const planned = run({ protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'migration-plan', payload: { cwd: root, sources } });
-  assert.equal(planned.data.plan.executable, true, 'fixture must resolve to an executable plan with no open question');
-  return planned.data;
+  const { response } = planWithGroups(run, (payload) => planRequest(root, sources, payload), { root, placement });
+  assert.equal(response.data.plan.executable, true, 'fixture must resolve to an executable plan with no open question');
+  return response.data;
 }
 
 function partitionCompute(root, planData, options = {}) {
@@ -42,7 +50,10 @@ function partitionCompute(root, planData, options = {}) {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'partition',
-    payload: { cwd: root, plan: planData.plan, mapping: planData.mapping, references: planData.references, ...options },
+    payload: {
+      cwd: root, plan: planData.plan, mapping: planData.mapping, references: planData.references,
+      split_review: planData.split_review, ...options,
+    },
   });
 }
 
@@ -70,7 +81,7 @@ function stageShard(root, shard) {
   return relative;
 }
 
-function assembleRequest(root, partitioned, shardRefs, payload = {}) {
+function assembleRequest(root, partitioned, shardRefs, groupPackages, payload = {}) {
   return {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
@@ -79,6 +90,7 @@ function assembleRequest(root, partitioned, shardRefs, payload = {}) {
       cwd: root,
       partition: { shards: partitioned.data.shards, cross_shard_links: partitioned.data.cross_shard_links },
       shards: shardRefs,
+      group_packages: groupPackages,
       ...payload,
     },
   };
@@ -88,6 +100,9 @@ function assembleRequest(root, partitioned, shardRefs, payload = {}) {
 // each shard's own worker output, then calls `assemble`. `buildShard`
 // receives each shard descriptor (`{shard, sources, brief}`) and must return
 // the shard object to stage; the default author is `wellFormedShard`.
+// #203: `assemble` also demands the accepted concept-group packages exactly
+// as `migration-plan` returned them (`planData.group_packages`), the same
+// artifact `derivedPlan` above already carried out of that call.
 function assembleFixture(root, planData, options = {}) {
   const { partitionOptions = {}, buildShard = (descriptor) => wellFormedShard(descriptor.brief), skip = [] } = options;
   const partitioned = partitionCompute(root, planData, partitionOptions);
@@ -98,12 +113,19 @@ function assembleFixture(root, planData, options = {}) {
     const relative = stageShard(root, shard);
     if (!skip.includes(descriptor.shard)) shardRefs.push({ shard: descriptor.shard, path: relative });
   }
-  const response = run(assembleRequest(root, partitioned, shardRefs));
+  const response = run(assembleRequest(root, partitioned, shardRefs, planData.group_packages));
   return { partitioned, response };
 }
 
 function stagingRoot(root, bundle = 'okf') {
   return path.join(root, '.okf-staging', bundle);
+}
+
+// Every touched group gets its own staged `index.md` alongside its concepts
+// (#203), so a loop that only cares about concept-shaped staged entries reads
+// through this rather than repeating the same `kind !== 'index'` filter.
+function stagedConcepts(response) {
+  return response.data.staged.filter((item) => item.kind !== 'index');
 }
 
 // #174: every staged entry carries the observation binding `publish` cites --
@@ -113,13 +135,13 @@ function stagingRoot(root, bundle = 'okf') {
 test('staged entries bind each concept to its own source file identity', (t) => {
   const root = repo(t);
   write(root, 'docs/payments/refunds.md', '---\ntype: Decision\n---\n# Refunds\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, { 'docs/payments/refunds.md': 'payments' });
 
   const { response } = assembleFixture(root, planData);
   assert.equal(response.result, 'ok');
   assert.ok(response.data.staged.length > 0);
 
-  for (const item of response.data.staged) {
+  for (const item of stagedConcepts(response)) {
     const digest = require('node:crypto').createHash('sha256')
       .update(fs.readFileSync(path.join(root, item.path))).digest('hex');
     assert.deepEqual(item.sources, [{ path: item.path, sha256: digest }], item.concept);
@@ -133,18 +155,25 @@ test('N shards assemble cleanly into one staged file per concept', (t) => {
   write(root, 'docs/payments/refunds.md', '---\ntype: Decision\n---\n# Refunds\n');
   write(root, 'docs/auth/sso.md', '---\ntype: Decision\n---\n# SSO\n');
   write(root, 'research/spike.md', '# Spike\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, {
+    'docs/payments/refunds.md': 'library', 'docs/auth/sso.md': 'library', 'research/spike.md': 'library',
+  });
 
   const { partitioned, response } = assembleFixture(root, planData, { partitionOptions: { max_sources_per_shard: 1 } });
   assert.equal(partitioned.data.shards.length, 3, 'fixture must actually exercise more than one shard');
   assert.equal(response.result, 'ok');
   assert.equal(response.data.status, 'complete');
   assert.equal(response.data.publishable, true);
-  assert.equal(response.data.staged.length, 3);
+  const concepts = stagedConcepts(response);
+  assert.equal(concepts.length, 3);
+  // One shared group across all three concepts, so exactly its own one
+  // `index.md` is staged alongside them, plus the derived root index the
+  // accepted root package names (#203: the root gains that group).
+  assert.equal(response.data.staged.length, 5);
   assert.deepEqual(response.data.blockers, []);
   assert.deepEqual(response.data.duplicates, []);
 
-  for (const item of response.data.staged) {
+  for (const item of concepts) {
     const text = fs.readFileSync(path.join(root, item.file), 'utf8');
     assert.match(text, /^---\n/);
     assert.match(text, new RegExp(`type: ${item.type}\\n`));
@@ -164,15 +193,17 @@ test('N shards assemble cleanly into one staged file per concept', (t) => {
 test('two shards claiming the same concept path block, never silently renamed or overwritten', (t) => {
   const root = repo(t);
   // Both are inferred `Decision` by directory alone and both strip down to
-  // the same basename-only target (#145's own `conceptPathFor`), a collision
-  // `migration-plan`'s own check cannot see: it only ever compares a
-  // candidate path against the bundle already published on disk, never
-  // against a sibling entry in the very same plan.
+  // the same basename-only target within the same accepted group (#203's own
+  // `conceptPathFor`), a collision `migration-plan`'s own check cannot see:
+  // it only ever compares a candidate path against the bundle already
+  // published on disk, never against a sibling entry in the very same plan.
   write(root, 'docs/team-a/decisions/postgres.md', '# Use Postgres (team A)\n');
   write(root, 'docs/team-b/decisions/postgres.md', '# Use Postgres (team B)\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, {
+    'docs/team-a/decisions/postgres.md': 'library', 'docs/team-b/decisions/postgres.md': 'library',
+  });
   assert.equal(
-    planData.mapping.filter((item) => item.concept === 'decisions/postgres').length,
+    planData.mapping.filter((item) => item.concept === 'library/postgres').length,
     2,
     'fixture must actually produce a same-target collision migration-plan alone does not catch',
   );
@@ -182,7 +213,7 @@ test('two shards claiming the same concept path block, never silently renamed or
   assert.equal(response.result, 'blocked');
   assert.equal(response.data.code, 'CONCEPT_TARGET_COLLISION');
   assert.equal(response.data.collisions.length, 1);
-  assert.equal(response.data.collisions[0].concept, 'decisions/postgres');
+  assert.equal(response.data.collisions[0].concept, 'library/postgres');
   assert.deepEqual(
     response.data.collisions[0].claims.map((claim) => claim.path).sort(),
     ['docs/team-a/decisions/postgres.md', 'docs/team-b/decisions/postgres.md'],
@@ -201,7 +232,9 @@ test('an exact cross-shard duplicate is surfaced as a candidate, never merged', 
   const root = repo(t);
   write(root, 'docs/team-a/decisions/one.md', '# One\n');
   write(root, 'docs/team-b/decisions/two.md', '# Two\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, {
+    'docs/team-a/decisions/one.md': 'library', 'docs/team-b/decisions/two.md': 'library',
+  });
 
   const { response } = assembleFixture(root, planData, {
     partitionOptions: { max_sources_per_shard: 1 },
@@ -214,21 +247,23 @@ test('an exact cross-shard duplicate is surfaced as a candidate, never merged', 
 
   assert.equal(response.result, 'ok');
   assert.equal(response.data.duplicates.length, 1);
-  assert.deepEqual(response.data.duplicates[0].concepts, ['decisions/one', 'decisions/two']);
+  assert.deepEqual(response.data.duplicates[0].concepts, ['library/one', 'library/two']);
   assert.equal(response.data.duplicates[0].shards.length, 2);
   const finding = response.findings.find((item) => item.code === 'ASSEMBLY_DUPLICATE_CANDIDATE');
   assert.ok(finding);
   assert.equal(finding.blocks, false);
 
   // Surfacing is as far as it goes: both concepts still stage, distinct.
-  assert.deepEqual(response.data.staged.map((item) => item.concept).sort(), ['decisions/one', 'decisions/two']);
+  assert.deepEqual(stagedConcepts(response).map((item) => item.concept).sort(), ['library/one', 'library/two']);
 });
 
 test('a near duplicate is never merged, and neither concept is dropped', (t) => {
   const root = repo(t);
   write(root, 'docs/team-a/decisions/one.md', '# One\n');
   write(root, 'docs/team-b/decisions/two.md', '# Two\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, {
+    'docs/team-a/decisions/one.md': 'library', 'docs/team-b/decisions/two.md': 'library',
+  });
 
   const { response } = assembleFixture(root, planData, {
     partitionOptions: { max_sources_per_shard: 1 },
@@ -236,7 +271,7 @@ test('a near duplicate is never merged, and neither concept is dropped', (t) => 
       const shard = wellFormedShard(descriptor.brief);
       shard.concepts = shard.concepts.map((item) => ({
         ...item,
-        body: item.concept === 'decisions/one' ? '# Nearly identical, version A\n' : '# Nearly identical, version B\n',
+        body: item.concept === 'library/one' ? '# Nearly identical, version A\n' : '# Nearly identical, version B\n',
       }));
       return shard;
     },
@@ -244,8 +279,8 @@ test('a near duplicate is never merged, and neither concept is dropped', (t) => 
 
   assert.equal(response.result, 'ok');
   assert.deepEqual(response.data.duplicates, []);
-  assert.deepEqual(response.data.staged.map((item) => item.concept).sort(), ['decisions/one', 'decisions/two']);
-  const bodies = response.data.staged.map((item) => fs.readFileSync(path.join(root, item.file), 'utf8'));
+  assert.deepEqual(stagedConcepts(response).map((item) => item.concept).sort(), ['library/one', 'library/two']);
+  const bodies = stagedConcepts(response).map((item) => fs.readFileSync(path.join(root, item.file), 'utf8'));
   assert.notEqual(bodies[0], bodies[1]);
 });
 
@@ -255,7 +290,9 @@ test('a shard carrying a blocker marks the result partial and unpublishable, wit
   const root = repo(t);
   write(root, 'docs/team-a/decisions/one.md', '# One\n');
   write(root, 'docs/team-b/decisions/two.md', '# Two\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, {
+    'docs/team-a/decisions/one.md': 'library', 'docs/team-b/decisions/two.md': 'library',
+  });
 
   const { response } = assembleFixture(root, planData, {
     partitionOptions: { max_sources_per_shard: 1 },
@@ -280,7 +317,7 @@ test('a shard carrying a blocker marks the result partial and unpublishable, wit
   assert.equal(warning.blocks, false);
 
   // The other source's own shard still resolved and still stages.
-  assert.deepEqual(response.data.staged.map((item) => item.concept), ['decisions/two']);
+  assert.deepEqual(stagedConcepts(response).map((item) => item.concept), ['library/two']);
 });
 
 // ---------------------------------------------------------- nothing disappears
@@ -289,7 +326,7 @@ test('every partitioned source is accounted for in the result', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/postgres.md', '# Use Postgres\n');
   write(root, 'assets/legacy.html', '<!DOCTYPE html>\n<html><body>legacy</body></html>\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, { 'docs/decisions/postgres.md': 'library' });
   const migrating = planData.plan.entries.filter((entry) => entry.disposition === 'migrate').map((entry) => entry.path);
   const residue = planData.plan.entries.filter((entry) => entry.disposition === 'residue').map((entry) => entry.path);
   assert.ok(migrating.length > 0 && residue.length > 0, 'fixture must exercise both a migrate and a residue source');
@@ -298,7 +335,7 @@ test('every partitioned source is accounted for in the result', (t) => {
   assert.equal(response.result, 'ok');
 
   const accounted = [
-    ...response.data.staged.map((item) => item.path),
+    ...stagedConcepts(response).map((item) => item.path),
     ...response.data.references.map((item) => item.path),
     ...response.data.blockers.map((item) => item.path),
   ].sort();
@@ -311,7 +348,9 @@ test('a shard missing from the set is refused rather than assembled partially', 
   const root = repo(t);
   write(root, 'docs/team-a/decisions/one.md', '# One\n');
   write(root, 'docs/team-b/decisions/two.md', '# Two\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, {
+    'docs/team-a/decisions/one.md': 'library', 'docs/team-b/decisions/two.md': 'library',
+  });
 
   const { partitioned, response } = assembleFixture(root, planData, {
     partitionOptions: { max_sources_per_shard: 1 },
@@ -339,12 +378,12 @@ test('a cross-shard link resolves once both shards return, and is carried as a n
   const root = repo(t);
   write(root, 'docs/payments/a.md', '---\ntype: Decision\n---\n# A\n\nSee [the auth policy](../auth/b.md) for details.\n');
   write(root, 'docs/auth/b.md', '---\ntype: Decision\n---\n# B\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, { 'docs/payments/a.md': 'payments', 'docs/auth/b.md': 'auth' });
 
   const resolved = assembleFixture(root, planData, { partitionOptions: { max_sources_per_shard: 1 } });
   assert.equal(resolved.partitioned.data.cross_shard_links.length, 1, 'fixture must actually split the linked pair across shards');
   assert.equal(resolved.response.result, 'ok');
-  assert.deepEqual(resolved.response.data.links.resolved, [{ from: 'decisions/a', to: 'decisions/b' }]);
+  assert.deepEqual(resolved.response.data.links.resolved, [{ from: 'payments/a', to: 'auth/b' }]);
   assert.deepEqual(resolved.response.data.links.lost, []);
 
   const lost = assembleFixture(root, planData, {
@@ -361,14 +400,14 @@ test('a cross-shard link resolves once both shards return, and is carried as a n
   assert.equal(lost.response.result, 'ok');
   assert.deepEqual(lost.response.data.links.resolved, []);
   assert.equal(lost.response.data.links.lost.length, 1);
-  assert.equal(lost.response.data.links.lost[0].from, 'decisions/a');
-  assert.equal(lost.response.data.links.lost[0].to, 'decisions/b');
+  assert.equal(lost.response.data.links.lost[0].from, 'payments/a');
+  assert.equal(lost.response.data.links.lost[0].to, 'auth/b');
   const finding = lost.response.findings.find((item) => item.code === 'MIGRATION_LINK_LOST');
   assert.ok(finding, 'a lost cross-shard link must name the relationship loss, distinct from an ordinary broken-link warning');
   assert.equal(finding.blocks, false);
   assert.equal(finding.severity, 'warning');
-  assert.equal(finding.detail.from, 'decisions/a');
-  assert.equal(finding.detail.to, 'decisions/b');
+  assert.equal(finding.detail.from, 'payments/a');
+  assert.equal(finding.detail.to, 'auth/b');
 });
 
 // ---------------------------------------------------------------- wrapper wiring
@@ -379,7 +418,12 @@ test('assemble reports not-configured outside a Git repository and is silent on 
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'assemble',
-    payload: { cwd: outside, partition: { shards: [{ shard: 'x', sources: ['x.md'], brief: { shard: 'x', mapping: [], references: [], sources: ['x.md'] } }] }, shards: [{ shard: 'x', path: 'x.json' }] },
+    payload: {
+      cwd: outside,
+      partition: { shards: [{ shard: 'x', sources: ['x.md'], brief: { shard: 'x', mapping: [], references: [], split_review: [], sources: ['x.md'] } }] },
+      shards: [{ shard: 'x', path: 'x.json' }],
+      group_packages: { packages: [], root: { purpose: 'Bundle root', index: { disposition: 'unchanged', title: 'Bundle' }, log: { disposition: 'none' }, children: [] }, indexes: [] },
+    },
   };
   assert.equal(run(emptyRequest).result, 'not-configured');
 
