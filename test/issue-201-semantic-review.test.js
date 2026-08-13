@@ -291,6 +291,26 @@ test('accepted whole-source routes require exact existing targets at every later
   }
 });
 
+test('accepted whole-source routes require a null or accepted origin at every later boundary', (t) => {
+  for (const [name, origin] of [['unknown output', 'missing'], ['group key', 'guides']]) {
+    const { root, plan } = fixture(t);
+    const splitReview = structuredClone(plan.split_review);
+    splitReview[0].proposal.whole_source_link_routes = [{
+      from: 'README.md',
+      line: 1,
+      occurrence: 1,
+      resource: 'docs/guide.md',
+      origin,
+      target: { kind: 'output', output: splitReview[0].proposal.outputs[0].output },
+    }];
+    const response = validateWith(root, plan, semanticReview(root, plan), splitReview, {});
+
+    assert.equal(response.result, 'blocked', name);
+    assert.equal(response.findings[0].code, 'SPLIT_WORKER_REVIEW_INVALID', name);
+    assert.equal(response.findings[0].detail.reason, 'proposal_shape', name);
+  }
+});
+
 test('null, malformed, and duplicate accepted review rows and ranges are refused before evidence comparison', (t) => {
   const cases = [
     ['null row', (rows) => rows.push(null), 'SPLIT_WORKER_REVIEW_SET_MISMATCH'],

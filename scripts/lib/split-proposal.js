@@ -159,6 +159,8 @@ function validAccepted(value) {
       'line', 'source_heading', 'action', 'output', 'target_heading', 'target_level', 'target_anchor',
     ]))
     && value.whole_source_link_routes.every((row) => only(row, ['from', 'line', 'occurrence', 'resource', 'origin', 'target']))
+    && value.whole_source_link_routes.every((row) => row.origin === null
+      || value.outputs.some((item) => item.output === row.origin))
     && value.whole_source_link_routes.every((row) => row.target !== null
       && (row.target.kind === 'output'
         ? value.outputs.some((item) => item.output === row.target.output)

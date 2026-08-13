@@ -458,6 +458,27 @@ test('malformed accepted route rows fail closed at publication without throwing'
   assert.deepEqual(snapshot(path.join(value.root, 'okf')), before);
 });
 
+test('an accepted whole-source route with an unknown origin fails closed at publication without writing', (t) => {
+  const value = fixture(t);
+  acceptedSource(value).proposal.whole_source_link_routes.push({
+    from: 'README.md',
+    line: 1,
+    occurrence: 1,
+    resource: 'docs/guide.md',
+    origin: 'missing',
+    target: { kind: 'output', output: 'install' },
+  });
+  bindAcceptedReview(value);
+  const before = snapshot(path.join(value.root, 'okf'));
+
+  const response = publish(value);
+
+  assert.equal(response.result, 'blocked');
+  assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
+  assert.equal(response.findings[0].code, 'SPLIT_WORKER_REVIEW_INVALID');
+  assert.deepEqual(snapshot(path.join(value.root, 'okf')), before);
+});
+
 test('a later write failure reports successful, failed, and unattempted writes exactly', (t) => {
   const value = fixture(t);
   value.staged.sort((left, right) => ['install', 'operate', 'decisions/decision'].indexOf(left.concept)
