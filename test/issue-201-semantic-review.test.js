@@ -4,11 +4,17 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { runWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
+const { packagesFor, planWithGroups } = require('../test-support/groups');
 const runtime = require('../scripts/lib/runtime');
 const defaultServices = require('../scripts/lib/services');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const SOURCE = 'docs/guide.md';
+// #203 (#202): every substantive output belongs to an accepted reader-purpose
+// group, and `migration-plan` asks for that group rather than deriving it, so
+// every fixture below drives its plan through `planWithGroups` with one accepted
+// group for both split outputs.
+const GROUP = 'content';
 const CONTENT = [
   '---',
   'type: Note',
@@ -28,6 +34,11 @@ function repo(t) {
   writeManifest(root, '.');
   fs.mkdirSync(path.join(root, 'docs'));
   fs.writeFileSync(path.join(root, SOURCE), CONTENT);
+  // The accepted root package's derived index disposition names the root index
+  // (`updated`: the bundle carries one and the root gains the accepted group),
+  // so the bundle root must actually carry one.
+  fs.mkdirSync(path.join(root, 'okf'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '# Bundle\n');
   return root;
 }
 
@@ -37,15 +48,30 @@ function run(operation, root, payload) {
   });
 }
 
-function proposalOutput(output, title) {
+// Both outputs of one proposal claim the same group, so they must carry the
+// same group definition -- one shared index row for the group they share.
+const GROUP_PURPOSE = 'How people use the tool.';
+const GROUP_INDEX = { path: `${GROUP}/index.md`, title: `${GROUP} index` };
+
+function navigationFor(conceptId, title, order) {
+  return {
+    key: GROUP,
+    purpose: GROUP_PURPOSE,
+    index_entry: GROUP_INDEX,
+    child_entry: { concept_id: conceptId, path: `${conceptId}.md`, title, order },
+  };
+}
+
+function proposalOutput(output, title, order) {
+  const conceptId = `${GROUP}/${output}`;
   return {
     output,
-    concept_id: output,
-    path: `${output}.md`,
+    concept_id: conceptId,
+    path: `${conceptId}.md`,
     type: 'Playbook',
     title,
     heading_outline: [{ level: 1, text: title }],
-    reader_purpose_group: null,
+    reader_purpose_group: navigationFor(conceptId, title, order),
     provenance_assignments: [],
     link_routes: [],
     anchor_routes: [],
@@ -54,27 +80,40 @@ function proposalOutput(output, title) {
 
 function acceptedPlan(root) {
   const sources = run('discover', root, {}).data.sources.filter((item) => item.path === SOURCE);
-  const response = run('migration-plan', root, {
-    sources,
-    split_requested: [SOURCE],
-    split_sections: [{
-      path: SOURCE,
-      sections: [
-        { line_start: 1, line_end: 3, disposition: 'residue' },
-        { line_start: 4, line_end: 7, disposition: 'assigned', output: 'install' },
-        { line_start: 8, line_end: 10, disposition: 'assigned', output: 'operate' },
-      ],
-    }],
-    split_proposals: [{
-      path: SOURCE,
-      result: 'split',
-      keep_as_one_reason: null,
-      accepted: true,
-      outputs: [proposalOutput('install', 'Install'), proposalOutput('operate', 'Operate')],
-      provenance_exclusions: [],
-      heading_changes: [],
-      whole_source_link_routes: [],
-    }],
+  // The accepted package set names the two split outputs as the group's own
+  // children -- the same rows the conformance gate later proves the staged
+  // tree against.
+  const packages = packagesFor(root, 'okf', { [SOURCE]: GROUP }, [`${GROUP}/install`, `${GROUP}/operate`], {});
+  const { response } = planWithGroups((value) => runWrapper(wrapper, value), (extra) => ({
+    protocol: 'okf-wrapper/1',
+    skill: 'okf-setup',
+    operation: 'migration-plan',
+    payload: { cwd: root, sources, ...extra },
+  }), {
+    root,
+    placement: { [SOURCE]: GROUP },
+    payload: {
+      split_requested: [SOURCE],
+      split_sections: [{
+        path: SOURCE,
+        sections: [
+          { line_start: 1, line_end: 3, disposition: 'residue' },
+          { line_start: 4, line_end: 7, disposition: 'assigned', output: 'install' },
+          { line_start: 8, line_end: 10, disposition: 'assigned', output: 'operate' },
+        ],
+      }],
+      split_proposals: [{
+        path: SOURCE,
+        result: 'split',
+        keep_as_one_reason: null,
+        accepted: true,
+        outputs: [proposalOutput('install', 'Install', 1), proposalOutput('operate', 'Operate', 2)],
+        provenance_exclusions: [],
+        heading_changes: [],
+        whole_source_link_routes: [],
+      }],
+      ...packages,
+    },
   });
   assert.equal(response.data.split_review[0].proposal.status, 'accepted', 'fixture proposal must be accepted');
   return response.data;
@@ -112,6 +151,7 @@ function assemble(root, plan) {
       cross_shard_links: partitioned.data.cross_shard_links,
     },
     shards: [{ shard: shard.shard, path: shardPath }],
+    group_packages: plan.group_packages,
   });
   assert.equal(response.result, 'ok', 'fixture assembly must pass');
 }
@@ -129,10 +169,15 @@ function accepted(review) {
 }
 
 function candidateBindings(root) {
-  return ['install.md', 'operate.md'].map((candidatePath) => ({
-    path: candidatePath,
-    identity: identity(fs.readFileSync(path.join(root, '.okf-staging', 'okf', candidatePath))),
-  }));
+  // The staged tree is the two split concepts, the group's own navigation
+  // index, and the derived root index, in the sorted order the canonical
+  // candidate scan reports.
+  return ['index.md', `${GROUP}/index.md`, `${GROUP}/install.md`, `${GROUP}/operate.md`]
+    .sort()
+    .map((candidatePath) => ({
+      path: candidatePath,
+      identity: identity(fs.readFileSync(path.join(root, '.okf-staging', 'okf', candidatePath))),
+    }));
 }
 
 function semanticReview(root, plan, verdict = 'preserved', performed = false) {
@@ -159,6 +204,7 @@ function validate(root, plan, semantic_review) {
     plan: plan.plan,
     split_review: plan.split_review,
     semantic_review,
+    group_packages: plan.group_packages,
   });
 }
 
@@ -173,6 +219,7 @@ function validateWith(root, plan, semantic_review, split_review, services) {
       plan: plan.plan,
       split_review,
       semantic_review,
+      group_packages: plan.group_packages,
     },
   }, { ...defaultServices, ...services });
 }
@@ -205,7 +252,7 @@ for (const [verdict, passed] of [
 
 test('structural coverage, agent review, and human fidelity are reported separately', (t) => {
   const { root, plan } = fixture(t);
-  fs.writeFileSync(path.join(root, '.okf-staging', 'okf', 'install.md'), '---\ntitle: no type\n---\n# Install\n');
+  fs.writeFileSync(path.join(root, '.okf-staging', 'okf', `${GROUP}/install.md`), '---\ntitle: no type\n---\n# Install\n');
   const response = validate(root, plan, semanticReview(root, plan, 'preserved', false));
 
   assert.deepEqual(response.data.structural_coverage, { passed: false });
@@ -263,6 +310,7 @@ test('a malformed accepted review is refused instead of causing a runtime failur
   delete split_review[0].proposal.outputs;
   const response = run('migration-validate', root, {
     selected: [SOURCE], plan: plan.plan, split_review, semantic_review: semanticReview(root, plan),
+    group_packages: plan.group_packages,
   });
 
   assert.equal(response.result, 'blocked');
@@ -410,7 +458,7 @@ test('an incomplete structural scan blocks structural coverage even when the can
 
 test('a candidate read failure is refused explicitly', (t) => {
   const { root, plan } = fixture(t);
-  const failed = path.join(root, '.okf-staging', 'okf', 'install.md');
+  const failed = path.join(root, '.okf-staging', 'okf', `${GROUP}/install.md`);
   const response = validateWith(root, plan, semanticReview(root, plan), plan.split_review, {
     readBuffer(file) {
       if (path.resolve(file) === failed) throw new Error('unreadable candidate');
@@ -420,7 +468,7 @@ test('a candidate read failure is refused explicitly', (t) => {
 
   assert.equal(response.result, 'blocked');
   assert.equal(response.findings[0].code, 'SEMANTIC_REVIEW_CANDIDATE_READ_FAILED');
-  assert.deepEqual(response.findings[0].detail, { path: 'install.md' });
+  assert.deepEqual(response.findings[0].detail, { path: `${GROUP}/install.md` });
 });
 
 test('freshness refuses changed source, accepted mapping, candidate content, or candidate set bindings', (t) => {

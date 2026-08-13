@@ -20,6 +20,7 @@ const assembly = require('./assembly');
 const publication = require('./publication');
 const canonicalReview = require('./semantic-review');
 const acceptedGroups = require('./accepted-groups');
+const groupPackages = require('./group-packages');
 const lifecycle = require('./lifecycle');
 const { inside } = require('./paths');
 const {
@@ -648,7 +649,7 @@ function publicationReceipt(request, migrationReport, publicationResult, gitRoot
   }
   if (!exactFields(receipt, ['protocol', 'artifacts', 'candidate_conformance', 'checked_candidates', 'results', 'classification'])
     || receipt.protocol !== 'okf-publication-receipt/1'
-    || !exactFields(receipt.artifacts, ['plan', 'mapping', 'split_review', 'semantic_review'])
+    || !exactFields(receipt.artifacts, ['plan', 'mapping', 'split_review', 'group_packages', 'semantic_review'])
     || Object.values(receipt.artifacts).some((item) => !/^sha256:[0-9a-f]{64}$/.test(item))
     || !Array.isArray(receipt.checked_candidates)
     || receipt.checked_candidates.some((item) => {
@@ -669,6 +670,7 @@ function publicationReceipt(request, migrationReport, publicationResult, gitRoot
     plan: publication.artifactIdentity(migrationReport.plan),
     mapping: publication.artifactIdentity(migrationReport.mapping),
     split_review: publication.artifactIdentity(migrationReport.split_review),
+    group_packages: publication.artifactIdentity(migrationReport.group_packages),
     semantic_review: publication.artifactIdentity(migrationReport.validation.semantic_review),
   };
   if (!isDeepStrictEqual(receipt.artifacts, artifacts)) {
@@ -699,16 +701,67 @@ function publicationReceipt(request, migrationReport, publicationResult, gitRoot
   return { receipt };
 }
 
+// #203 (#202): one row per touched concept group, naming every planned effect and
+// what actually happened to it. A group is reported as needing repair whenever any
+// of its own effects failed or was never attempted -- #202's own failure rule:
+// each write is independent, nothing retries or rolls back, and the next mutation
+// of that group must carry the repair.
+function groupPackageEffects(accepted, publicationData) {
+  const published = new Set(publicationData.published);
+  const failed = new Map(publicationData.failed.map((item) => [item.concept, item]));
+  const skipped = new Map(publicationData.skipped.map((item) => [item.concept, item]));
+  const outcome = (target) => {
+    if (target === null) return 'not-planned';
+    if (published.has(target)) return 'applied';
+    if (failed.has(target)) return 'failed';
+    if (skipped.has(target)) return 'not-attempted';
+    return 'not-planned';
+  };
+  const indexOf = new Map(accepted.indexes.map((item) => [item.key, item]));
+  const rows = accepted.packages.map((item) => {
+    const index = indexOf.get(item.group);
+    const effects = {
+      index: { disposition: item.index.disposition, target: index ? index.index_entry.path : null },
+      glossary: { disposition: item.glossary.disposition, target: item.glossary.disposition === 'created' ? `${item.group}/glossary` : null },
+      guidance: { disposition: item.guidance.disposition, target: item.guidance.disposition === 'created' ? item.guidance.concept_id : null },
+      log: { disposition: item.log.disposition, target: null },
+    };
+    // The group's own accepted direct concepts -- the package's accepted
+    // children, never the derived index rows: a group whose index disposition
+    // is `unchanged` derives no index row at all, and its concepts must still
+    // be reported rather than degrading to an empty, never-repaired row.
+    const concepts = item.children
+      .filter((child) => child.kind === 'concept')
+      .map((child) => child.concept_id);
+    for (const effect of Object.values(effects)) effect.result = outcome(effect.target);
+    const conceptEffects = {
+      applied: concepts.filter((concept) => published.has(concept)),
+      failed: concepts.filter((concept) => failed.has(concept)).map((concept) => failed.get(concept)),
+      not_attempted: concepts.filter((concept) => skipped.has(concept)).map((concept) => skipped.get(concept)),
+    };
+    const unrepaired = Object.values(effects).some((effect) => effect.result === 'failed' || effect.result === 'not-attempted');
+    return {
+      group: item.group,
+      purpose: item.purpose,
+      ...effects,
+      concepts: conceptEffects,
+      needs_repair: unrepaired || conceptEffects.failed.length > 0 || conceptEffects.not_attempted.length > 0,
+    };
+  });
+  return rows;
+}
+
 function executeMigrationReport(request, migrationReport, gitRoot, services) {
   const splitReviewFields = [
     'path', 'word_count', 'review_required', 'review_reason', 'source_identity', 'line_count',
     'sections', 'outputs', 'accounting_status', 'proposal',
   ];
-  if (!exactFields(migrationReport, ['settings', 'plan', 'mapping', 'split_review', 'validation', 'publication'])
+  if (!exactFields(migrationReport, ['settings', 'plan', 'mapping', 'split_review', 'group_packages', 'validation', 'publication'])
     || !exactFields(migrationReport.settings, ['max_words_per_file'])
     || !Number.isInteger(migrationReport.settings.max_words_per_file)
     || migrationReport.settings.max_words_per_file < 1
     || !publication.validPlan(migrationReport.plan) || !publication.validMapping(migrationReport.mapping)
+    || !groupPackages.validAccepted(migrationReport.group_packages)
     || !Array.isArray(migrationReport.split_review)) {
     return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'migration', 'shape');
   }
@@ -768,11 +821,8 @@ function executeMigrationReport(request, migrationReport, gitRoot, services) {
   }
   const durable = publicationReceipt(request, migrationReport, publicationResult, gitRoot, services);
   if (durable.refusal) return durable.refusal;
-  const accepted = acceptedGroups.collect(migrationReport.split_review);
-  if (!accepted.ok) {
-    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'split_review', 'groups');
-  }
-  const expectedIndexes = accepted.groups.map((group) => ({ path: group.index_entry.path }));
+  const expectedIndexes = migrationReport.group_packages.indexes
+    .map((group) => ({ path: group.index_entry.path }));
   const planned = migrationReport.split_review.filter((item) => item.proposal !== null)
     .flatMap((review) => review.proposal.outputs.map((output) => ({
       source: review.path, concept: output.concept_id, path: output.path,
@@ -855,6 +905,7 @@ function executeMigrationReport(request, migrationReport, gitRoot, services) {
       failed: migrationReport.publication.failed.filter((item) => indexIds.has(item.concept)),
       skipped: migrationReport.publication.skipped.filter((item) => indexIds.has(item.concept)),
     },
+    group_packages: groupPackageEffects(migrationReport.group_packages, migrationReport.publication),
     structural_coverage: checked.structural_coverage,
     agent_semantic_review: checked.agent_semantic_review,
     semantic_fidelity: checked.semantic_fidelity,
@@ -1173,6 +1224,23 @@ function applySplitProposals(reviews, payload, mapped, entries, gitRoot, bundleR
   return { reviews: records.map((item) => item.review), findings };
 }
 
+// #203: the derivation of "every accepted substantive output of this
+// migration", shared by `migration-plan`'s own group-package check and by the
+// conformance gate `migration-validate` runs later. `publish` derives its own
+// candidate set separately (`publication.expectedCandidates`) from the same
+// mapping and accepted split review, so the three never disagree about which
+// concepts the accepted tree has to account for.
+function acceptedOutputs(entries, splitReview) {
+  const reviews = new Map(splitReview.map((item) => [item.path, item]));
+  return entries.filter((item) => item.disposition === 'migrate').flatMap((item) => {
+    const proposal = reviews.get(item.path)?.proposal;
+    if (!proposal || proposal.status !== 'accepted') {
+      return [{ concept_id: item.concept, path: `${item.concept}.md` }];
+    }
+    return proposal.outputs.map((output) => ({ concept_id: output.concept_id, path: output.path }));
+  });
+}
+
 function validPlanSource(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
   if (typeof item.path !== 'string' || item.path === '') return false;
@@ -1183,13 +1251,35 @@ function validPlanSource(item) {
   return item.question === undefined;
 }
 
+// #203 (#202): the root package a caller may omit from `migration-plan`.
+// Derived from the accepted packages themselves, so the fabricated default is a
+// valid accepted root (a non-empty purpose and title) and its index disposition
+// is always truthful under the unchanged-index staleness rule: the root gains
+// the accepted top-level groups this migration, so it is never left claiming
+// `unchanged` while they appear -- it is `updated` or `created` with them, and
+// only says `unchanged` when it actually gains nothing and the file is there.
+function defaultRootPackage(packages, bundleRoot, services) {
+  const topLevel = [...new Set(packages.filter((item) => !item.group.includes('/')).map((item) => item.group))].sort();
+  const exists = services.exists(path.join(bundleRoot, 'index.md'));
+  return {
+    purpose: 'Bundle root',
+    index: {
+      disposition: topLevel.length > 0 ? (exists ? 'updated' : 'created') : (exists ? 'unchanged' : 'created'),
+      title: 'Bundle',
+    },
+    log: { disposition: 'none' },
+    children: topLevel.map((group, index) => ({ kind: 'group', group, title: group, order: index + 1 })),
+  };
+}
+
 // `/setup`'s migration plan derivation and batched-question round (#144), plus the
 // source-to-concept mapping engine, provenance extraction, reference-path
 // derivation, and link rewriting (#145). Turns `discover`'s (#142) source inventory
 // into a fully-determined migration plan: every source gets an intentional
 // disposition -- `migrate`, `skip`, `residue`, or `blocked_pending_decision` -- a
-// concept path derived from its type's own canonical directory (not a mechanical
-// mirror of the source path), and `data.plan.executable` is `false` whenever any
+// concept path derived from the accepted reader-purpose group (#203, never a
+// type directory or a mechanical mirror of the source path), and
+// `data.plan.executable` is `false` whenever any
 // entry is still `blocked_pending_decision`, so an executor cannot run a
 // half-decided plan by accident. `data.mapping` carries, for every `migrate` entry,
 // the provenance its own frontmatter already declared (verbatim, never fabricated)
@@ -1246,8 +1336,24 @@ function executeMigrationPlan(request, services) {
   if (payload.split_proposals !== undefined && !splitProposal.validPayload(payload.split_proposals)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  // #203 (#202): the accepted concept-group half of the target-bundle proposal.
+  // Shape first, exactly like every other accepted value this operation takes.
+  if (!groupPackages.validPayload(payload.group_packages, payload.root_package)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+  const packages = payload.group_packages || [];
+  // A group key becomes part of a concept path the moment `derivePlan` answers a
+  // placement: `placed()` builds `${group}/${name}` and probes the bundle for
+  // it. Validate every key before that first filesystem use, so a key like
+  // `../evil` is refused here rather than after an out-of-bundle probe.
+  const keyProblems = packages.flatMap((item) => groupPackages.keyFindings(item.group));
+  if (keyProblems.length > 0) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, keyProblems.map((item) => suiteFinding(item.code, item.detail)));
+  }
+  const rootPackage = payload.root_package || defaultRootPackage(packages, bundleRoot, services);
+  const groupKeys = packages.map((item) => item.group);
 
-  const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers);
+  const outcome = migration.derivePlan(payload.sources, gitRoot, bundleRoot, services, payload.answers, groupKeys);
   if (outcome.invalid) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   const migratePaths = new Set(outcome.entries.filter((item) => item.disposition === 'migrate').map((item) => item.path));
   if ((payload.semantic_boundary_sources || []).some((item) => !migratePaths.has(item))) {
@@ -1269,7 +1375,22 @@ function executeMigrationPlan(request, services) {
     split.reviews, payload, outcome.mapping, outcome.entries, gitRoot, bundleRoot, services,
   );
 
+  // #203 (#202): every accepted substantive output of this migration, whatever
+  // produced it -- one concept for an unsplit `migrate` entry, one per accepted
+  // output for a reviewed source. This is the single set the accepted group
+  // packages are proved against, and the same set the later conformance gate
+  // reuses, so an index a reader navigates and the candidate set publication
+  // enforces can never describe two different trees.
+  const groups = groupPackages.evaluate({
+    packages,
+    rootPackage,
+    concepts: acceptedOutputs(outcome.entries, proposed.reviews),
+    bundleRoot,
+    services,
+  });
+
   const findings = [
+    ...groups.findings.map((item) => suiteFinding(item.code, item.detail)),
     ...outcome.questions.map((q) => ({
       code: 'plan_question_open',
       origin: 'suite',
@@ -1314,6 +1435,7 @@ function executeMigrationPlan(request, services) {
     settings: settingsReport.settings,
     settings_findings: settingsReport.settings_findings,
     split_review: proposed.reviews,
+    group_packages: { packages, root: rootPackage, indexes: groups.indexes },
   }, findings);
 }
 
@@ -1551,6 +1673,12 @@ function executeAssemble(request, services) {
   if (!Array.isArray(payload.shards) || payload.shards.length === 0 || !payload.shards.every(validAssemblyShardRef)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  // #203: the accepted concept-group packages, exactly as `migration-plan`
+  // returned them. Assembly derives every staged navigation index from them and
+  // never from what a shard happened to produce.
+  if (!groupPackages.validAccepted(payload.group_packages)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
   const gatheredIds = new Set(payload.shards.map((item) => item.shard));
   if (gatheredIds.size !== payload.shards.length) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
@@ -1587,7 +1715,7 @@ function executeAssemble(request, services) {
     shardContents.set(shard.shard, content);
   }
 
-  const outcome = assembly.computeAssembly(partitionShards, shardContents);
+  const outcome = assembly.computeAssembly(partitionShards, shardContents, payload.group_packages);
   if (!outcome.ok) {
     if (outcome.code === 'CONCEPT_TARGET_COLLISION') {
       return respond(request, 'blocked', { code: 'CONCEPT_TARGET_COLLISION', collisions: outcome.collisions },
@@ -1604,6 +1732,24 @@ function executeAssemble(request, services) {
     ...links.lost.map((link) => partitionFinding('MIGRATION_LINK_LOST', false, link)),
     ...outcome.blockers.map((blocker) => partitionFinding('ASSEMBLY_SOURCE_BLOCKED', false, { path: blocker.path, reason: blocker.reason, shard: blocker.shard })),
   ];
+
+  // A concept file and an accepted navigation index sharing one path would let
+  // the write loop below stage the concept, then silently overwrite its bytes
+  // with the index. Refuse it here, at the staging boundary, before anything
+  // is written.
+  const indexPaths = new Set(outcome.indexes.map((item) => item.path));
+  const indexCollisions = outcome.concepts
+    .filter((item) => indexPaths.has(`${item.concept}.md`))
+    .map((item) => ({
+      concept: item.concept,
+      index_path: `${item.concept}.md`,
+      source: item.path,
+      shard: item.shard,
+    }));
+  if (indexCollisions.length > 0) {
+    return respond(request, 'blocked', { code: 'ASSEMBLY_INDEX_COLLISION', collisions: indexCollisions },
+      indexCollisions.map((collision) => partitionFinding('ASSEMBLY_INDEX_COLLISION', true, collision)));
+  }
 
   const stagingRoot = path.join(gitRoot, '.okf-staging', bundleName);
   const identities = new Map();
@@ -1848,6 +1994,9 @@ function executeMigrationValidate(request, services) {
   if (payload.split_review !== undefined && !Array.isArray(payload.split_review)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
+  if (!groupPackages.validAccepted(payload.group_packages)) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
   if (payload.split_review !== undefined) {
     const splitReview = partition.validateSplitReviews(
       payload.plan.entries.filter((item) => item.disposition === 'migrate').map((item) => ({ path: item.path })),
@@ -1886,6 +2035,25 @@ function executeMigrationValidate(request, services) {
     }, [semantic.finding]);
   }
   findings.push(...semantic.findings);
+
+  // #203 (#202): the staged tree must already be exactly the accepted
+  // concept-group package set -- every accepted substantive output, every accepted
+  // group index, nothing else -- and must carry no substantive concept at the
+  // direct bundle root. `publish` reruns the identical proof against current bytes
+  // before its first write; this is the same gate one seam earlier, so a
+  // non-conforming tree is named while it is still only staged.
+  const accepted = acceptedOutputs(payload.plan.entries, payload.split_review || []);
+  for (const output of accepted.filter((item) => !item.path.includes('/'))) {
+    findings.push(suiteFinding('GROUP_PACKAGE_ROOT_OUTPUT', { path: output.path }));
+  }
+  const acceptedPaths = [
+    ...accepted.map((item) => item.path),
+    ...payload.group_packages.indexes.map((item) => item.index_entry.path),
+  ].sort();
+  const conformance = canonicalReview.exactSet(acceptedPaths, semantic.result.candidates.map((item) => item.path));
+  if (canonicalReview.differs(conformance)) {
+    findings.push(suiteFinding('CANDIDATE_GROUP_PACKAGE_MISMATCH', conformance));
+  }
 
   const assessed = payload.semantic_review.performed === true;
   if (!assessed) findings.push(reportFinding('semantic_fidelity_not_assessed', 'warning', { scope: 'bundle' }));
@@ -2040,6 +2208,7 @@ function executePublish(request, services) {
   }
   if (!publication.validPlan(payload.plan) || !publication.validMapping(payload.mapping)
     || !Array.isArray(payload.split_review)
+    || !groupPackages.validAccepted(payload.group_packages)
     || !publication.validCanonicalReview(payload.semantic_review)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
@@ -2065,6 +2234,7 @@ function executePublish(request, services) {
 
   const checked = publication.evaluate({
     gitRoot, bundleRoot, stagingRoot, plan: payload.plan, mapping: payload.mapping, splitReview: payload.split_review,
+    groupPackages: payload.group_packages,
     staged: payload.staged, semanticReview: payload.semantic_review, services,
   });
   if (!checked.ok) {
@@ -2086,7 +2256,12 @@ function executePublish(request, services) {
     }
     if (item.kind === 'index') {
       try {
-        services.publishFile(target, item.text, null);
+        // A `created` index target must still be absent; an `updated` index
+        // replaces the file already there, so that file's current bytes are
+        // the compare-and-swap baseline (the same CAS discipline `init`'s own
+        // index repair uses), refusing a concurrent change in between.
+        const expected = services.exists(target) ? services.readFile(target) : null;
+        services.publishFile(target, item.text, expected);
         results.push({ concept: item.path, status: 'clean', findings: [] });
       } catch (error) {
         results.push({ concept: item.path, status: 'failed', findings: [suiteFinding('PUBLISH_INDEX_WRITE_FAILED', {
@@ -2120,7 +2295,8 @@ function executePublish(request, services) {
     skipped,
   };
   const receipt = publication.buildReceipt(checked.checked, {
-    plan: payload.plan, mapping: payload.mapping, splitReview: payload.split_review, semanticReview: payload.semantic_review,
+    plan: payload.plan, mapping: payload.mapping, splitReview: payload.split_review,
+    groupPackages: payload.group_packages, semanticReview: payload.semantic_review,
   }, [...results, ...skipped.map((item) => ({ ...item, findings: [] }))], classification);
   const receiptText = `${JSON.stringify(receipt, null, 2)}\n`;
   try { services.writeFile(receiptFile, receiptText); } catch (error) {

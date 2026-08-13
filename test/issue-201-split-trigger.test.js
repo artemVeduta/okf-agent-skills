@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { runWrapper, temporaryRoot, writeManifest, TEST_WORKSPACE_ID } = require('../test-support/snapshot');
+const { planWithGroups } = require('../test-support/groups');
 const { countWords } = require('../scripts/lib/words');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
@@ -61,6 +62,21 @@ function reviewFor(response, sourcePath) {
   return response.data.split_review.find((item) => item.path === sourcePath);
 }
 
+// #203: every migrate source now needs an accepted reader-purpose group before
+// `migration-plan` derives anything for it, including its split review -- so
+// every fixture below places its sources in one shared accepted group. Which
+// group they land in is orthogonal to the word-target trigger these tests
+// actually exercise.
+function placeAll(sources, group = 'content') {
+  return Object.fromEntries(sources.map((item) => [item.path, group]));
+}
+
+function planned(root, sources, payload = {}) {
+  return planWithGroups(run, (extra) => planRequest(root, sources, extra), {
+    root, placement: placeAll(sources), payload,
+  }).response;
+}
+
 // An explicit `type` keeps every fixture's disposition deterministically
 // `migrate` with no open question, whatever its size -- split review is
 // entirely orthogonal to #145's type inference.
@@ -76,7 +92,7 @@ test('a source above the effective target must receive split review, reason abov
   const content = markdownSource(1200);
   write(root, 'docs/big.md', content);
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planned(root, sources);
 
   assert.deepEqual(response.data.settings, { max_words_per_file: 1000 });
   const review = reviewFor(response, 'docs/big.md');
@@ -92,7 +108,7 @@ test('a source at or below the target, with no boundaries found and no user requ
   const root = repo(t);
   write(root, 'docs/small.md', markdownSource(10));
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planned(root, sources);
 
   const review = reviewFor(response, 'docs/small.md');
   assert.ok(review.word_count <= 1000, review.word_count);
@@ -106,7 +122,7 @@ test('a source at or below the target with an explicit user request gets a permi
   const root = repo(t);
   write(root, 'docs/small.md', markdownSource(10));
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources, { split_requested: ['docs/small.md'] }));
+  const response = planned(root, sources, { split_requested: ['docs/small.md'] });
 
   const review = reviewFor(response, 'docs/small.md');
   assert.equal(review.review_required, false);
@@ -118,7 +134,7 @@ test('split_requested naming a source that stays at or below the target never up
   write(root, 'docs/small.md', markdownSource(10));
   write(root, 'docs/other.md', markdownSource(10));
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources, { split_requested: ['docs/small.md'] }));
+  const response = planned(root, sources, { split_requested: ['docs/small.md'] });
 
   assert.equal(reviewFor(response, 'docs/other.md').review_reason, null);
 });
@@ -127,7 +143,7 @@ test('setup-derived semantic boundaries open review without becoming a user requ
   const root = repo(t);
   write(root, 'docs/small.md', markdownSource(10));
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources, { semantic_boundary_sources: ['docs/small.md'] }));
+  const response = planned(root, sources, { semantic_boundary_sources: ['docs/small.md'] });
 
   const review = reviewFor(response, 'docs/small.md');
   assert.equal(review.review_required, false);
@@ -139,10 +155,10 @@ test('above-target and user-request reasons take precedence over derived semanti
   write(root, 'docs/small.md', markdownSource(10));
   write(root, 'docs/big.md', markdownSource(1200));
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources, {
+  const response = planned(root, sources, {
     split_requested: ['docs/small.md'],
     semantic_boundary_sources: ['docs/small.md', 'docs/big.md'],
-  }));
+  });
 
   assert.equal(reviewFor(response, 'docs/small.md').review_reason, 'user_requested');
   assert.equal(reviewFor(response, 'docs/big.md').review_reason, 'above_target');
@@ -172,7 +188,7 @@ test('an invalid max_words_per_file override leaves the built-in default (1000) 
   const content = markdownSource(1200);
   write(root, 'docs/big.md', content);
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planned(root, sources);
 
   assert.deepEqual(response.data.settings, { max_words_per_file: 1000 });
   const review = reviewFor(response, 'docs/big.md');
@@ -187,7 +203,7 @@ test('a source above the target still migrates, executable stays true, and nothi
   const root = repo(t);
   write(root, 'docs/big.md', markdownSource(1200));
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planned(root, sources);
 
   assert.equal(response.result, 'ok');
   assert.equal(response.data.plan.executable, true);

@@ -4,8 +4,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { runWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
+const { planWithGroups } = require('../test-support/groups');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
+// #203: `migration-plan` derives a split review only for a source with an
+// accepted reader-purpose group, so every fixture below places the one
+// fixture source here -- which accepted group it lands in is orthogonal to
+// the section-accounting subject these tests exercise.
+const GROUP = 'content';
 
 // Same fixture shape as #144/#145's own migration-plan tests and
 // `test/issue-201-split-trigger.test.js`: `migration-plan` is not bypass-gated,
@@ -99,7 +105,9 @@ function fixtureRepo(t, content = FIXTURE) {
 // the user's own explicit request is the trigger (#200's third condition).
 function plan(root, extra = {}) {
   const sources = discoverSources(root);
-  return run(planRequest(root, sources, { split_requested: [SOURCE], ...extra }));
+  return planWithGroups(run, (payload) => planRequest(root, sources, payload), {
+    root, placement: { [SOURCE]: GROUP }, payload: { split_requested: [SOURCE], ...extra },
+  }).response;
 }
 
 function residue(lineStart, lineEnd) {

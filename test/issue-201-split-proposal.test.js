@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { runWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
+const { planWithGroups } = require('../test-support/groups');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const SOURCE = 'docs/guide.md';
@@ -25,6 +26,15 @@ const CONTENT = [
 const README = '[Guide](docs/guide.md) and [operations](docs/guide.md#operate).\n';
 const OTHER = '---\ntype: Note\n---\n# Other\n';
 
+// #203 (#202): a split output's own `reader_purpose_group` can no longer be
+// `null` -- a substantive output can no longer land at the bundle root, whatever
+// its type -- and the source itself now needs its own accepted group before
+// `migration-plan` computes a split review for it at all. Every fixture below
+// that does not deliberately exercise a different group placement uses this one
+// shared accepted group, for the source-level placement answer and for a
+// single-output proposal's own `reader_purpose_group` alike.
+const GROUP = 'content';
+
 function repo(t) {
   const root = temporaryRoot(t, 'okf-201-proposal-');
   fs.mkdirSync(path.join(root, '.git'));
@@ -46,22 +56,26 @@ function sources(root, paths = [SOURCE]) {
   }).data.sources.filter((item) => paths.includes(item.path));
 }
 
-function request(root, extra = {}) {
-  return {
+// Every request below carries an accepted reader-purpose-group placement for
+// every source it names -- `migration-plan` asks for one before it will derive
+// anything else for a source, split review included -- so this one helper
+// wraps `planWithGroups` (the required test seam for that) rather than every
+// test rebuilding the same two-call dance. `boundSources` lets a fixture that
+// needs its `discover` call to happen before some later filesystem change
+// (an unreadable file, say) supply that frozen list directly.
+function plannedFrom(root, boundSources, payload = {}, bundle = 'okf') {
+  return planWithGroups(run, (extra) => ({
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'migration-plan',
-    payload: { cwd: root, sources: sources(root), split_requested: [SOURCE], ...extra },
-  };
+    payload: { cwd: root, sources: boundSources, split_requested: [SOURCE], ...extra },
+  }), {
+    root, bundle, placement: Object.fromEntries(boundSources.map((item) => [item.path, GROUP])), payload,
+  }).response;
 }
 
-function requestFor(root, paths, extra = {}) {
-  return {
-    protocol: 'okf-wrapper/1',
-    skill: 'okf-setup',
-    operation: 'migration-plan',
-    payload: { cwd: root, sources: sources(root, paths), split_requested: [SOURCE], ...extra },
-  };
+function planned(root, paths, payload = {}, bundle = '.') {
+  return plannedFrom(root, sources(root, paths), payload, bundle);
 }
 
 function accounting(outputs) {
@@ -84,7 +98,14 @@ function navigation(key, purpose, conceptId, title, order) {
   };
 }
 
-function output(key, conceptId, title, group = null, provenance = []) {
+// The one accepted group most fixtures below place their single output in --
+// `conceptId` must already carry the `${GROUP}/` prefix `navigation` needs to
+// agree with `output`'s own `concept_id`.
+function groupFor(conceptId, title, order = 1) {
+  return navigation(GROUP, `Reader purpose for ${GROUP}.`, conceptId, title, order);
+}
+
+function output(key, conceptId, title, group, provenance = []) {
   return {
     output: key,
     concept_id: conceptId,
@@ -129,11 +150,11 @@ function splitFindings(response) {
 
 test('an accepted keep-as-one proposal carries the complete output shape and its reason', (t) => {
   const root = repo(t);
-  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
-  const response = run(request(root, {
+  const outputs = [output('guide', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'supported' }])];
+  const response = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', outputs),
-  }));
+  });
 
   assert.deepEqual(splitFindings(response), []);
   assert.equal(review(response).accounting_status, 'complete');
@@ -167,7 +188,15 @@ test('an accepted keep-as-one proposal carries the complete output shape and its
       { line: 6, level: 1, text: 'Install', anchor: 'install', line_start: 6, line_end: 9, output: 'guide' },
       { line: 10, level: 2, text: 'Operate', anchor: 'operate', line_start: 10, line_end: 12, output: 'guide' },
     ],
-    tree: { root: [{ concept_id: 'guide', path: 'guide.md', title: 'Guide' }], groups: [], unresolved: [] },
+    tree: {
+      root: [],
+      groups: [{
+        key: GROUP, purpose: `Reader purpose for ${GROUP}.`,
+        index_entry: { path: `${GROUP}/index.md`, title: 'Guide index' },
+        child_entries: [{ concept_id: `${GROUP}/guide`, path: `${GROUP}/guide.md`, title: 'Guide', order: 1 }],
+      }],
+      unresolved: [],
+    },
   });
 });
 
@@ -191,10 +220,10 @@ test('an accepted one-to-many proposal binds accounting outputs and derives diff
     line: 10, source_heading: 'Operate', action: 'changed', output: 'operate',
     target_heading: 'Operations', target_level: 1, target_anchor: 'operations',
   }];
-  const response = run(request(root, {
+  const response = planned(root, [SOURCE], {
     split_sections: accounting(['install', 'operate']),
     split_proposals: proposal('split', [install, operate], { heading_changes: headingChanges }),
-  }));
+  });
 
   assert.deepEqual(splitFindings(response), []);
   assert.equal(review(response).proposal.status, 'accepted');
@@ -219,15 +248,15 @@ test('an accepted one-to-many proposal binds accounting outputs and derives diff
 
 test('an ambiguous whole-source link route blocks acceptance until it names an output or group index', (t) => {
   const root = repo(t);
-  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
-  const response = run(request(root, {
+  const outputs = [output('guide', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'supported' }])];
+  const response = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', outputs, {
       whole_source_link_routes: [{
         from: 'README.md', line: 1, occurrence: 1, resource: 'docs/guide.md', origin: null, target: null,
       }],
     }),
-  }));
+  });
 
   assert.equal(review(response).proposal.status, 'refused');
   assert.deepEqual(splitFindings(response).map((item) => [item.code, item.detail]), [[
@@ -237,15 +266,15 @@ test('an ambiguous whole-source link route blocks acceptance until it names an o
 
 test('complete accounting derives the first complete refused proposal view without a caller proposal', (t) => {
   const root = repo(t);
-  const response = run(request(root, { split_sections: accounting(['guide']) }));
+  const response = planned(root, [SOURCE], { split_sections: accounting(['guide']) });
   const proposed = review(response).proposal;
 
   assert.equal(proposed.status, 'refused');
   assert.equal(proposed.accepted, false);
   assert.equal(proposed.result, 'keep_as_one');
   assert.equal(proposed.outputs[0].output, 'guide');
-  assert.equal(proposed.outputs[0].concept_id, 'docs/guide');
-  assert.equal(proposed.outputs[0].path, 'docs/guide.md');
+  assert.equal(proposed.outputs[0].concept_id, `${GROUP}/guide`);
+  assert.equal(proposed.outputs[0].path, `${GROUP}/guide.md`);
   assert.equal(proposed.outputs[0].type, 'Note');
   assert.equal(proposed.outputs[0].title, null);
   assert.deepEqual(proposed.outputs[0].heading_outline, []);
@@ -281,7 +310,7 @@ test('route inventory includes local anchors and links from the bundle root', (t
     'Install the [tool](other.md) and see [operations](#operate).',
   ));
 
-  const response = run(request(root, { split_sections: accounting(['guide']) }));
+  const response = planned(root, [SOURCE], { split_sections: accounting(['guide']) }, 'okf');
 
   assert.deepEqual(review(response).proposal.known_routes, {
     whole_source: [
@@ -305,19 +334,19 @@ test('route inventory includes local anchors and links from the bundle root', (t
 test('a case-variant Markdown extension contributes a required route', (t) => {
   const root = repo(t);
   fs.writeFileSync(path.join(root, 'inbound.MARKDOWN'), '[Guide](docs/guide.md).\n');
-  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
+  const outputs = [output('guide', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'supported' }])];
   const complete = proposal('keep_as_one', outputs);
   complete[0].whole_source_link_routes.push({
     from: 'inbound.MARKDOWN', line: 1, occurrence: 1, resource: 'docs/guide.md',
     origin: null, target: { kind: 'output', output: 'guide' },
   });
 
-  const accepted = run(request(root, {
+  const accepted = planned(root, [SOURCE], {
     split_sections: accounting(['guide']), split_proposals: complete,
-  }));
-  const omitted = run(request(root, {
+  });
+  const omitted = planned(root, [SOURCE], {
     split_sections: accounting(['guide']), split_proposals: proposal('keep_as_one', outputs),
-  }));
+  });
 
   assert.equal(review(accepted).proposal.status, 'accepted');
   assert.deepEqual(review(accepted).proposal.known_routes.whole_source, [
@@ -332,7 +361,7 @@ test('an incomplete route inventory walk blocks the proposal with one exact find
   const root = repo(t);
   fs.symlinkSync(path.join(root, 'README.md'), path.join(root, 'linked.md'));
 
-  const response = run(request(root, { split_sections: accounting(['guide']) }));
+  const response = planned(root, [SOURCE], { split_sections: accounting(['guide']) });
 
   assert.equal(review(response).proposal.status, 'refused');
   assert.deepEqual(splitFindings(response).filter((item) => item.code === 'SPLIT_PROPOSAL_ROUTE_INVENTORY_INCOMPLETE'), [{
@@ -348,11 +377,11 @@ test('an unreadable Markdown file blocks route inventory instead of being skippe
   const root = repo(t);
   const unreadable = path.join(root, 'inbound.md');
   fs.writeFileSync(unreadable, '[Guide](docs/guide.md).\n');
-  const boundRequest = request(root, { split_sections: accounting(['guide']) });
+  const boundSources = sources(root, [SOURCE]);
   fs.chmodSync(unreadable, 0o000);
   let response;
   try {
-    response = run(boundRequest);
+    response = plannedFrom(root, boundSources, { split_sections: accounting(['guide']) });
   } finally {
     fs.chmodSync(unreadable, 0o644);
   }
@@ -382,7 +411,7 @@ test('duplicate source heading anchors stay visible and block ambiguous routing'
     ],
   }];
 
-  const response = run(request(root, { split_sections: splitSections }));
+  const response = planned(root, [SOURCE], { split_sections: splitSections });
   const proposed = review(response).proposal;
 
   assert.deepEqual(proposed.known_headings.map((item) => ({ line: item.line, text: item.text, anchor: item.anchor })), [
@@ -420,7 +449,7 @@ test('a block fragment starting #not-a-heading does not invent a heading row', (
     ],
   }];
 
-  const response = run(request(root, { split_sections: splitSections }));
+  const response = planned(root, [SOURCE], { split_sections: splitSections });
 
   assert.deepEqual(review(response).sections.slice(1).map((item) => [item.kind, item.heading_path]), [
     ['heading', ['Operate']], ['heading', ['Operate']],
@@ -433,10 +462,10 @@ test('a block fragment starting #not-a-heading does not invent a heading row', (
 
 test('missing, extra, and duplicate routes refuse acceptance against the known route inventory', (t) => {
   const root = repo(t);
-  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
+  const outputs = [output('guide', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'supported' }])];
   outputs[0].link_routes = [];
   outputs[0].anchor_routes.push(outputs[0].anchor_routes[0]);
-  const response = run(request(root, {
+  const response = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', outputs, {
       whole_source_link_routes: [
@@ -450,7 +479,7 @@ test('missing, extra, and duplicate routes refuse acceptance against the known r
         },
       ],
     }),
-  }));
+  });
 
   assert.equal(review(response).proposal.status, 'refused');
   assert.equal(review(response).proposal.accepted, false);
@@ -461,18 +490,18 @@ test('missing, extra, and duplicate routes refuse acceptance against the known r
 
 test('omitted changed and removed source headings refuse acceptance', (t) => {
   const root = repo(t);
-  const changed = output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }]);
+  const changed = output('guide', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'supported' }]);
   changed.heading_outline = [{ level: 1, text: 'Installation' }, { level: 2, text: 'Operate' }];
-  const changedResponse = run(request(root, {
+  const changedResponse = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', [changed]),
-  }));
-  const removed = output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }]);
+  });
+  const removed = output('guide', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'supported' }]);
   removed.heading_outline = [{ level: 1, text: 'Install' }];
-  const removedResponse = run(request(root, {
+  const removedResponse = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', [removed]),
-  }));
+  });
 
   for (const response of [changedResponse, removedResponse]) {
     assert.equal(review(response).proposal.status, 'refused');
@@ -483,11 +512,11 @@ test('omitted changed and removed source headings refuse acceptance', (t) => {
 
 test('a refused proposal reports accepted false even when the input says true', (t) => {
   const root = repo(t);
-  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'unclear' }])];
-  const response = run(request(root, {
+  const outputs = [output('guide', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'unclear' }])];
+  const response = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', outputs),
-  }));
+  });
 
   assert.equal(review(response).proposal.status, 'refused');
   assert.equal(review(response).proposal.accepted, false);
@@ -496,21 +525,21 @@ test('a refused proposal reports accepted false even when the input says true', 
 test('two source proposals cannot claim the same target in one call', (t) => {
   const root = repo(t);
   fs.writeFileSync(path.join(root, 'docs/second.md'), CONTENT.replace('Guide', 'Second'));
-  const first = output('guide', 'shared', 'Guide', null, [{ source_index: 0, support: 'supported' }]);
-  const second = output('second', 'shared', 'Second', null, [{ source_index: 0, support: 'supported' }]);
+  const first = output('guide', `${GROUP}/shared`, 'Guide', groupFor(`${GROUP}/shared`, 'Guide'), [{ source_index: 0, support: 'supported' }]);
+  const second = output('second', `${GROUP}/shared`, 'Second', groupFor(`${GROUP}/shared`, 'Second'), [{ source_index: 0, support: 'supported' }]);
   const secondProposal = proposal('keep_as_one', [second])[0];
   secondProposal.path = 'docs/second.md';
   secondProposal.whole_source_link_routes = [];
   second.anchor_routes = [];
   second.link_routes[0].from = 'docs/second.md';
-  const response = run(requestFor(root, [SOURCE, 'docs/second.md'], {
+  const response = planned(root, [SOURCE, 'docs/second.md'], {
     split_requested: [SOURCE, 'docs/second.md'],
     split_sections: [
       ...accounting(['guide']),
       { ...accounting(['second'])[0], path: 'docs/second.md' },
     ],
     split_proposals: [...proposal('keep_as_one', [first]), secondProposal],
-  }));
+  });
 
   assert.ok(splitFindings(response).some((item) => item.code === 'SPLIT_PROPOSAL_TARGET_COLLISION'));
   assert.equal(response.data.split_review.every((item) => item.proposal.accepted === false), true);
@@ -528,7 +557,7 @@ test('a shared group conflict refuses only proposals that claim that group', (t)
   const second = output('second', 'shared/second', 'Second', navigation(
     'shared', 'Conflicting purpose.', 'shared/second', 'Second', 2,
   ), [{ source_index: 0, support: 'supported' }]);
-  const third = output('third', 'unrelated', 'Third', null, [{ source_index: 0, support: 'supported' }]);
+  const third = output('third', `${GROUP}/third`, 'Third', groupFor(`${GROUP}/third`, 'Third'), [{ source_index: 0, support: 'supported' }]);
   const proposals = proposal('keep_as_one', [first]);
   for (const [sourcePath, item] of [[paths[1], second], [paths[2], third]]) {
     item.link_routes[0].from = sourcePath;
@@ -538,13 +567,13 @@ test('a shared group conflict refuses only proposals that claim that group', (t)
     row.whole_source_link_routes = [];
     proposals.push(row);
   }
-  const response = run(requestFor(root, paths, {
+  const response = planned(root, paths, {
     split_requested: paths,
     split_sections: paths.map((sourcePath, index) => ({
       ...accounting([[first, second, third][index].output])[0], path: sourcePath,
     })),
     split_proposals: proposals,
-  }));
+  });
 
   assert.equal(splitFindings(response).every((item) => item.blocks === true), true);
   assert.deepEqual(splitFindings(response).map((item) => [item.code, item.detail]), [
@@ -562,16 +591,18 @@ test('a shared group conflict refuses only proposals that claim that group', (t)
 
 test('a proposal cannot claim an unsplit migration target or an existing bundle file', (t) => {
   const root = repo(t);
-  fs.mkdirSync(path.join(root, 'okf'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'okf/existing.md'), '---\ntype: Note\n---\n# Existing\n');
-  const unsplit = output('guide', 'docs/other', 'Guide', null, [{ source_index: 0, support: 'supported' }]);
-  const disk = output('guide', 'existing', 'Guide', null, [{ source_index: 0, support: 'supported' }]);
-  const forUnsplit = run(requestFor(root, [SOURCE, 'docs/other.md'], {
+  // #144's own default bundle directory ("okf") applies here exactly as it does
+  // everywhere else `migration-plan` runs without an explicit `bundle` override.
+  fs.mkdirSync(path.join(root, 'okf', GROUP), { recursive: true });
+  fs.writeFileSync(path.join(root, 'okf', GROUP, 'existing.md'), '---\ntype: Note\n---\n# Existing\n');
+  const unsplit = output('guide', `${GROUP}/other`, 'Guide', groupFor(`${GROUP}/other`, 'Guide'), [{ source_index: 0, support: 'supported' }]);
+  const disk = output('guide', `${GROUP}/existing`, 'Guide', groupFor(`${GROUP}/existing`, 'Guide'), [{ source_index: 0, support: 'supported' }]);
+  const forUnsplit = planned(root, [SOURCE, 'docs/other.md'], {
     split_sections: accounting(['guide']), split_proposals: proposal('keep_as_one', [unsplit]),
-  }));
-  const forDisk = run(request(root, {
+  });
+  const forDisk = planned(root, [SOURCE], {
     split_sections: accounting(['guide']), split_proposals: proposal('keep_as_one', [disk]),
-  }));
+  });
 
   assert.ok(splitFindings(forUnsplit).some((item) => item.code === 'SPLIT_PROPOSAL_TARGET_COLLISION'));
   assert.ok(splitFindings(forDisk).some((item) => item.code === 'SPLIT_PROPOSAL_TARGET_COLLISION'));
@@ -579,12 +610,12 @@ test('a proposal cannot claim an unsplit migration target or an existing bundle 
 
 test('a reversed anchor route range is UNSUPPORTED_INPUT', (t) => {
   const root = repo(t);
-  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
+  const outputs = [output('guide', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'supported' }])];
   outputs[0].anchor_routes[0].line_start = 12;
   outputs[0].anchor_routes[0].line_end = 10;
-  const response = run(request(root, {
+  const response = planned(root, [SOURCE], {
     split_sections: accounting(['guide']), split_proposals: proposal('keep_as_one', outputs),
-  }));
+  });
 
   assert.equal(response.result, 'blocked');
   assert.equal(response.data.code, 'UNSUPPORTED_INPUT');
@@ -592,11 +623,11 @@ test('a reversed anchor route range is UNSUPPORTED_INPUT', (t) => {
 
 test('an unclear authored provenance assignment blocks acceptance', (t) => {
   const root = repo(t);
-  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'unclear' }])];
-  const response = run(request(root, {
+  const outputs = [output('guide', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'unclear' }])];
+  const response = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', outputs),
-  }));
+  });
 
   assert.equal(review(response).proposal.status, 'refused');
   assert.deepEqual(splitFindings(response).map((item) => [item.code, item.detail]), [[
@@ -606,11 +637,11 @@ test('an unclear authored provenance assignment blocks acceptance', (t) => {
 
 test('a proposal must bind the exact opaque output keys from complete source accounting', (t) => {
   const root = repo(t);
-  const outputs = [output('other', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
-  const response = run(request(root, {
+  const outputs = [output('other', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'supported' }])];
+  const response = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', outputs),
-  }));
+  });
 
   assert.equal(review(response).proposal.status, 'refused');
   assert.equal(splitFindings(response).some((item) => item.code === 'SPLIT_PROPOSAL_OUTPUT_MISMATCH'), true);
@@ -618,16 +649,19 @@ test('a proposal must bind the exact opaque output keys from complete source acc
 
 test('proposal output order becomes canonical without alphabetical reordering', (t) => {
   const root = repo(t);
-  const zeta = output('zeta', 'zeta', 'Zeta', null, [{ source_index: 0, support: 'supported' }]);
+  const zeta = output('zeta', `${GROUP}/zeta`, 'Zeta', groupFor(`${GROUP}/zeta`, 'Zeta', 1), [{ source_index: 0, support: 'supported' }]);
   zeta.heading_outline = [{ level: 1, text: 'Install' }];
   zeta.anchor_routes = [];
-  const alpha = output('alpha', 'alpha', 'Alpha');
+  const alpha = output('alpha', `${GROUP}/alpha`, 'Alpha', groupFor(`${GROUP}/alpha`, 'Alpha', 2));
   alpha.heading_outline = [{ level: 2, text: 'Operate' }];
   alpha.link_routes = [];
-  const response = run(request(root, {
+  // Two outputs of one proposal claim the same group, so they must carry the
+  // same group definition -- one shared index row for the group they share.
+  alpha.reader_purpose_group.index_entry = zeta.reader_purpose_group.index_entry = { path: `${GROUP}/index.md`, title: `${GROUP} index` };
+  const response = planned(root, [SOURCE], {
     split_sections: accounting(['zeta', 'alpha']),
     split_proposals: proposal('split', [zeta, alpha]),
-  }));
+  });
 
   assert.equal(review(response).proposal.status, 'accepted', JSON.stringify(response));
   assert.deepEqual(review(response).outputs.map((item) => item.output), ['zeta', 'alpha']);
@@ -636,21 +670,21 @@ test('proposal output order becomes canonical without alphabetical reordering', 
 
 test('a proposal refuses a reserved concept path instead of accepting it as an output', (t) => {
   const root = repo(t);
-  const outputs = [output('guide', 'index', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
-  const response = run(request(root, {
+  const outputs = [output('guide', `${GROUP}/log`, 'Guide', groupFor(`${GROUP}/log`, 'Guide'), [{ source_index: 0, support: 'supported' }])];
+  const response = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', outputs),
-  }));
+  });
 
   assert.equal(review(response).proposal.status, 'refused');
   assert.deepEqual(splitFindings(response).map((item) => [item.code, item.detail]), [[
-    'SPLIT_PROPOSAL_TARGET_INVALID', { path: SOURCE, output: 'guide', target_path: 'index.md' },
+    'SPLIT_PROPOSAL_TARGET_INVALID', { path: SOURCE, output: 'guide', target_path: `${GROUP}/log.md` },
   ]]);
 });
 
 test('section rows carry deterministic short boundary excerpts for the split-review view', (t) => {
   const root = repo(t);
-  const response = run(request(root));
+  const response = planned(root, [SOURCE]);
 
   assert.deepEqual(review(response).sections.map((item) => item.boundary_excerpt), [
     { first: '---', last: '---' },
@@ -661,17 +695,17 @@ test('section rows carry deterministic short boundary excerpts for the split-rev
 
 test('a user adjustment is one new complete proposal, not a partial patch of a prior call', (t) => {
   const root = repo(t);
-  const outputs = [output('guide', 'guide', 'Guide', null, [{ source_index: 0, support: 'supported' }])];
-  const accepted = run(request(root, {
+  const outputs = [output('guide', `${GROUP}/guide`, 'Guide', groupFor(`${GROUP}/guide`, 'Guide'), [{ source_index: 0, support: 'supported' }])];
+  const accepted = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: proposal('keep_as_one', outputs),
-  }));
+  });
   assert.equal(review(accepted).proposal.status, 'accepted');
 
-  const partial = run(request(root, {
+  const partial = planned(root, [SOURCE], {
     split_sections: accounting(['guide']),
     split_proposals: [{ path: SOURCE, accepted: true, outputs: [{ output: 'guide', title: 'Renamed' }] }],
-  }));
+  });
   assert.equal(partial.result, 'blocked');
   assert.equal(partial.data.code, 'UNSUPPORTED_INPUT');
 });

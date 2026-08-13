@@ -53,7 +53,6 @@
 
 const validation = require('./validation');
 const partition = require('./partition');
-const acceptedGroups = require('./accepted-groups');
 
 // A concept file's own frontmatter is exactly its approved `type` and the
 // provenance its own source's frontmatter already declared (verbatim, or
@@ -81,7 +80,7 @@ function renderIndex(group) {
 // `{ok: false, ...}` naming exactly what was wrong, or `{ok: true, concepts,
 // references, blockers, duplicates}` -- `concepts` already carries each
 // item's own rendered file text, ready to stage.
-function computeAssembly(partitionShards, shardContents) {
+function computeAssembly(partitionShards, shardContents, groupPackages) {
   // Defense in depth: `skills/okf-setup/SKILL.md` already requires every
   // shard to pass `partition`'s own validate mode before it is ever staged,
   // but nothing stops a caller from handing this operation a shard that
@@ -153,9 +152,16 @@ function computeAssembly(partitionShards, shardContents) {
     };
   });
 
-  const accepted = acceptedGroups.collect(partitionShards.flatMap((shard) => shard.brief.split_review));
-  if (!accepted.ok) return { ok: false, code: 'ASSEMBLY_GROUP_CONFLICT', detail: accepted.detail };
-  const indexes = accepted.groups
+  // #203 (#202): navigation comes from the accepted concept-group packages, not
+  // from whatever the shards happened to produce, and no substantive concept may
+  // sit at the direct bundle root. The exact-set proof against the accepted
+  // packages is the later conformance gate's (`publication.js`); what assembly
+  // owns is refusing to stage a tree that already contradicts them.
+  const rootConcept = rendered.find((item) => !item.concept.includes('/'));
+  if (rootConcept !== undefined) {
+    return { ok: false, code: 'ASSEMBLY_ROOT_CONCEPT', detail: { path: `${rootConcept.concept}.md`, source: rootConcept.path } };
+  }
+  const indexes = groupPackages.indexes
     .map((group) => ({ kind: 'index', path: group.index_entry.path, group, rendered: renderIndex(group) }));
 
   return { ok: true, concepts: rendered, indexes, references, blockers, duplicates };

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { runWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
+const { planWithGroups } = require('../test-support/groups');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 
@@ -11,7 +12,15 @@ const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 function repo(t, { active = true } = {}) {
   const root = temporaryRoot(t, 'okf-145-repo-');
   fs.mkdirSync(path.join(root, '.git'));
-  if (active) writeManifest(root, '.');
+  if (active) {
+    writeManifest(root, '.');
+    // #203: an accepted root package's default `index` disposition is
+    // `unchanged`, which claims `okf/index.md` already exists -- so every
+    // active fixture needs one, exactly like `test/issue-203.test.js`'s own
+    // `repo()`.
+    fs.mkdirSync(path.join(root, 'okf'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'okf', 'index.md'), '# Bundle\n');
+  }
   return root;
 }
 
@@ -49,13 +58,26 @@ function referenceFor(response, sourcePath) {
   return response.data.references.find((item) => item.path === sourcePath);
 }
 
+function planner(root, sources) {
+  return (payload) => planRequest(root, sources, payload);
+}
+
+// #203: nearly every test below just needs one or more sources placed into
+// their own accepted reader-purpose group before they can migrate -- this
+// wraps `planWithGroups` (test-support/groups.js) for that common shape and
+// returns only the final response, the only half of its result these type-
+// mapping and link-rewriting tests ever need.
+function planGrouped(root, sources, placement) {
+  return planWithGroups(run, planner(root, sources), { root, placement }).response;
+}
+
 // -------------------------------------------------- deterministic type mapping
 
 test('Decision: a conventional directory name is deterministic evidence, with no explicit type', (t) => {
   const root = repo(t);
   write(root, 'docs/adr/0001-use-queue.md', '# Use a queue\n\nNo frontmatter at all.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/adr/0001-use-queue.md': 'decisions' });
 
   assert.deepEqual(entryFor(response, 'docs/adr/0001-use-queue.md'), {
     path: 'docs/adr/0001-use-queue.md', disposition: 'migrate', reason: 'type_inferred',
@@ -67,7 +89,7 @@ test('Decision: a conventional ADR filename is deterministic evidence outside a 
   const root = repo(t);
   write(root, 'random/ADR-0007-cache.md', '# Cache invalidation\n\nNo frontmatter.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'random/ADR-0007-cache.md': 'decisions' });
 
   assert.deepEqual(entryFor(response, 'random/ADR-0007-cache.md'), {
     path: 'random/ADR-0007-cache.md', disposition: 'migrate', reason: 'type_inferred',
@@ -96,7 +118,7 @@ test('Decision: a structural ADR-template match (Status/Context/Decision/Consequ
     '',
   ].join('\n'));
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'notes/design-review.md': 'decisions' });
 
   assert.deepEqual(entryFor(response, 'notes/design-review.md'), {
     path: 'notes/design-review.md', disposition: 'migrate', reason: 'type_inferred',
@@ -108,7 +130,7 @@ test('Glossary: the domain-modeling CONTEXT.md filename convention is determinis
   const root = repo(t);
   write(root, 'billing/CONTEXT.md', '**Invoice**: a billable record.\n\n**Ledger**: the record of transactions.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'billing/CONTEXT.md': 'billing' });
 
   assert.deepEqual(entryFor(response, 'billing/CONTEXT.md'), {
     path: 'billing/CONTEXT.md', disposition: 'migrate', reason: 'type_inferred',
@@ -120,7 +142,7 @@ test('Glossary: two or more "**Term**: definition" lines is a structural-templat
   const root = repo(t);
   write(root, 'docs/terms.md', '# Terms\n\n**Widget**: a thing we sell.\n\n**Gadget**: another thing we sell.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/terms.md': 'docs' });
 
   assert.deepEqual(entryFor(response, 'docs/terms.md'), {
     path: 'docs/terms.md', disposition: 'migrate', reason: 'type_inferred',
@@ -132,7 +154,7 @@ test('Constraint: a conventional directory name is deterministic evidence', (t) 
   const root = repo(t);
   write(root, 'docs/constraints/rate-limit.md', '# Rate limit\n\nNo more than 10 requests/second.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/constraints/rate-limit.md': 'constraints' });
 
   assert.deepEqual(entryFor(response, 'docs/constraints/rate-limit.md'), {
     path: 'docs/constraints/rate-limit.md', disposition: 'migrate', reason: 'type_inferred',
@@ -144,7 +166,7 @@ test('Research: a conventional directory name is deterministic evidence', (t) =>
   const root = repo(t);
   write(root, 'docs/research/spike.md', '# Spike\n\nInvestigated caching strategies.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/research/spike.md': 'research' });
 
   assert.deepEqual(entryFor(response, 'docs/research/spike.md'), {
     path: 'docs/research/spike.md', disposition: 'migrate', reason: 'type_inferred',
@@ -156,7 +178,7 @@ test('Playbook: a conventional directory name is deterministic evidence', (t) =>
   const root = repo(t);
   write(root, 'ops/playbooks/deploy.md', '# Deploy\n\n1. Build.\n2. Ship.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'ops/playbooks/deploy.md': 'playbooks' });
 
   assert.deepEqual(entryFor(response, 'ops/playbooks/deploy.md'), {
     path: 'ops/playbooks/deploy.md', disposition: 'migrate', reason: 'type_inferred',
@@ -169,7 +191,7 @@ test('Release: a conventional directory name and a conventional semver filename 
   write(root, 'docs/releases/notes.md', '# Release notes\n\nBug fixes.\n');
   write(root, 'random/v2.0.0.md', '# v2.0.0\n\nBug fixes.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/releases/notes.md': 'releases', 'random/v2.0.0.md': 'releases' });
 
   assert.deepEqual(entryFor(response, 'docs/releases/notes.md'), {
     path: 'docs/releases/notes.md', disposition: 'migrate', reason: 'type_inferred',
@@ -185,7 +207,7 @@ test('Reference: a conventional directory name is deterministic evidence', (t) =
   const root = repo(t);
   write(root, 'docs/references/external-spec.md', '# External spec\n\nSee the linked resource.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/references/external-spec.md': 'references' });
 
   assert.deepEqual(entryFor(response, 'docs/references/external-spec.md'), {
     path: 'docs/references/external-spec.md', disposition: 'migrate', reason: 'type_inferred',
@@ -193,11 +215,16 @@ test('Reference: a conventional directory name is deterministic evidence', (t) =
   });
 });
 
-test('Attested Computation: an explicit "runtime" field is structural frontmatter evidence, and it has no canonical directory so the concept path stays the mechanical mirror', (t) => {
+// #203: Attested Computation has no canonical directory or accepted-group
+// rule of its own -- #202 never derives a group from a type, so this one
+// still needs an accepted placement like any other typed source. Placing it
+// into the nested group `docs/misc` (matching its own source directory)
+// reproduces the same concept path the pre-#203 mechanical mirror used to.
+test('Attested Computation: an explicit "runtime" field is structural frontmatter evidence, and its accepted group -- never a type-directory or a mirror of its source path -- decides its concept path', (t) => {
   const root = repo(t);
   write(root, 'docs/misc/pipeline.md', '---\nruntime:\n  executor: ci\n  attester: signed\n---\n# Pipeline result\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/misc/pipeline.md': 'docs/misc' });
 
   assert.deepEqual(entryFor(response, 'docs/misc/pipeline.md'), {
     path: 'docs/misc/pipeline.md', disposition: 'migrate', reason: 'type_inferred',
@@ -222,11 +249,11 @@ test('a source with no deterministic evidence at all is never guessed into a typ
 
 // ------------------------------------------------- explicit type always wins
 
-test('an explicit type is preserved verbatim, including a domain-specific one no core rule names, and keeps the mechanical mirror when its type has no canonical directory', (t) => {
+test('an explicit type is preserved verbatim, including a domain-specific one no core rule names, and still needs its own accepted group', (t) => {
   const root = repo(t);
   write(root, 'docs/misc/req.md', '---\ntype: Requirement\n---\n# Must support SSO\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/misc/req.md': 'docs/misc' });
 
   assert.deepEqual(entryFor(response, 'docs/misc/req.md'), {
     path: 'docs/misc/req.md', disposition: 'migrate', reason: 'type_preserved',
@@ -238,7 +265,7 @@ test('an explicit type wins even when the path also carries deterministic eviden
   const root = repo(t);
   write(root, 'docs/decisions/status.md', '---\ntype: Research\n---\n# Investigating the decision backlog\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/decisions/status.md': 'research' });
 
   assert.deepEqual(entryFor(response, 'docs/decisions/status.md'), {
     path: 'docs/decisions/status.md', disposition: 'migrate', reason: 'type_preserved',
@@ -263,7 +290,7 @@ test('explicit structured provenance is preserved verbatim in data.mapping', (t)
     '',
   ].join('\n'));
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/decisions/funding.md': 'decisions' });
 
   const mapped = mappingFor(response, 'docs/decisions/funding.md');
   assert.deepEqual(mapped.sources, [{ resource: 'https://example.test/policy', id: 'policy' }]);
@@ -273,7 +300,7 @@ test('absent provenance stays absent: no fabricated sources, generated, verified
   const root = repo(t);
   write(root, 'docs/decisions/no-provenance.md', '---\ntype: Decision\n---\n# No provenance\n\nBody text.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/decisions/no-provenance.md': 'decisions' });
 
   const mapped = mappingFor(response, 'docs/decisions/no-provenance.md');
   assert.equal(mapped.sources, null);
@@ -304,7 +331,9 @@ test('an unambiguous internal link is rewritten to the target concept path, and 
   ].join('\n'));
   write(root, 'docs/decisions/adr2.md', '---\ntype: Decision\n---\n# Second decision\n\nBody.\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, {
+    'docs/decisions/adr1.md': 'decisions', 'docs/decisions/adr2.md': 'decisions',
+  });
 
   assert.equal(entryFor(response, 'docs/decisions/adr1.md').concept, 'decisions/adr1');
   assert.equal(entryFor(response, 'docs/decisions/adr2.md').concept, 'decisions/adr2');
@@ -324,7 +353,7 @@ test('a link to a target outside this migration is re-expressed for the concept\
   const root = repo(t);
   write(root, 'docs/decisions/lonely.md', '---\ntype: Decision\n---\n# Lonely decision\n\nSee [elsewhere](../missing.md) and [the web](https://example.test/).\n');
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, { 'docs/decisions/lonely.md': 'decisions' });
 
   const mapped = mappingFor(response, 'docs/decisions/lonely.md');
   assert.ok(mapped.body.includes('[elsewhere](../../docs/missing.md)'), mapped.body);
@@ -355,7 +384,9 @@ test('an exact content duplicate among migrating sources is surfaced as a candid
   write(root, 'docs/decisions/first.md', identical);
   write(root, 'docs/decisions/second.md', identical);
   const sources = discoverSources(root);
-  const response = run(planRequest(root, sources));
+  const response = planGrouped(root, sources, {
+    'docs/decisions/first.md': 'decisions', 'docs/decisions/second.md': 'decisions',
+  });
 
   // Both still migrate, to two distinct concepts -- never merged into one.
   assert.equal(entryFor(response, 'docs/decisions/first.md').disposition, 'migrate');

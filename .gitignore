@@ -10,3 +10,5 @@ coverage/
 .okf-gh/
 
 .env
+# session state
+.okf-occurrences.json

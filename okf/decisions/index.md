@@ -35,6 +35,7 @@
 - [Define safe migration of existing knowledge into OKF](19-define-safe-migration-of-existing-knowledge-into-okf.md)
 - [Grilling: Is `.okf-active` needed, and what replaces project activation?](196-grilling-is-okf-active-needed-and-what-replaces-project-acti.md)
 - [Grilling: When must setup propose splitting a large migration source?](200-grilling-when-must-setup-propose-splitting-a-large-migration.md)
+- [Grilling: How must folder-local knowledge work during and after migration?](202-grilling-how-must-folder-local-knowledge-work-during-and-aft.md)
 - [Choose the OKF conformance baseline, compatibility, and extension policy](21-choose-the-okf-conformance-baseline-compatibility-and-extens.md)
 - [Define concept identity, cross-bundle routing, precedence, and workspace trust](22-define-concept-identity-cross-bundle-routing-precedence-and-.md)
 - [Design concept merge, split, redirect, and inbound-link semantics](24-design-concept-merge-split-redirect-and-inbound-link-semanti.md)

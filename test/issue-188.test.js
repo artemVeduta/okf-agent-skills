@@ -12,6 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { runWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
+const { planWithGroups } = require('../test-support/groups');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 
@@ -19,6 +20,11 @@ function repo(t) {
   const root = temporaryRoot(t, 'okf-188-repo-');
   fs.mkdirSync(path.join(root, '.git'));
   writeManifest(root, '.');
+  // #203: an accepted root package's default `index` disposition is
+  // `unchanged`, which claims `okf/index.md` already exists -- so every
+  // fixture needs one, exactly like `test/issue-203.test.js`'s own `repo()`.
+  fs.mkdirSync(path.join(root, 'okf'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'okf', 'index.md'), '# Bundle\n');
   return root;
 }
 
@@ -36,9 +42,17 @@ function discoverSources(root) {
   return run({ protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'discover', payload: { cwd: root } }).data.sources;
 }
 
-function planned(root) {
-  const sources = discoverSources(root);
-  return run({ protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'migration-plan', payload: { cwd: root, sources } });
+function planRequest(root, sources, payload = {}) {
+  return { protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'migration-plan', payload: { cwd: root, sources, ...payload } };
+}
+
+// #203: every source below needs its own accepted reader-purpose group before
+// it can migrate -- `placement` names it the same way `test-support/groups.js`
+// expects, `{ '<source path>': '<accepted group key>' }`. `sources`, when
+// supplied, overrides the discovered set (test 6 hand-builds extra entries).
+function planned(root, placement, sources) {
+  const request = (payload) => planRequest(root, sources || discoverSources(root), payload);
+  return planWithGroups(run, request, { root, placement }).response;
 }
 
 function mappingFor(response, sourcePath) {
@@ -60,7 +74,7 @@ test('a link to an unmigrated target is re-expressed from the concept\'s new (de
   ].join('\n'));
   write(root, 'eval/README.md', '# Eval\n');
 
-  const body = mappingFor(planned(root), 'docs/notes.md').body;
+  const body = mappingFor(planned(root, { 'docs/notes.md': 'research' }), 'docs/notes.md').body;
   assert.ok(body.includes('[the eval setup](../../eval/README.md)'), body);
 });
 
@@ -74,7 +88,7 @@ test('a link to an unmigrated target is re-expressed from the concept\'s new (sh
   ].join('\n'));
   write(root, 'eval/README.md', '# Eval\n');
 
-  const body = mappingFor(planned(root), 'docs/adr/sub/0001-foo.md').body;
+  const body = mappingFor(planned(root, { 'docs/adr/sub/0001-foo.md': 'decisions' }), 'docs/adr/sub/0001-foo.md').body;
   assert.ok(body.includes('[the eval setup](../../eval/README.md)'), body);
 });
 
@@ -86,7 +100,7 @@ test('a root-relative link target is resolved against the repository root, not t
   ].join('\n'));
   write(root, 'eval/README.md', '# Eval\n');
 
-  const body = mappingFor(planned(root), 'docs/research/notes.md').body;
+  const body = mappingFor(planned(root, { 'docs/research/notes.md': 'research' }), 'docs/research/notes.md').body;
   assert.ok(body.includes('[the eval setup](../../eval/README.md)'), body);
 });
 
@@ -98,7 +112,7 @@ test('a link to a migrated target still rewrites to that target\'s concept path,
   ].join('\n'));
   write(root, 'other.md', '---\ntype: Research\n---\n# Other\n\nBody.\n');
 
-  const response = planned(root);
+  const response = planned(root, { 'notes.md': 'research', 'other.md': 'research' });
   const body = mappingFor(response, 'notes.md').body;
   assert.ok(body.includes('[the comparison](other.md)'), body);
   assert.deepEqual(unresolvedLinkFindings(response), []);
@@ -111,7 +125,7 @@ test('a link whose target is not part of this migration at all is still re-expre
     'See [nothing here](missing/nowhere.md).', '',
   ].join('\n'));
 
-  const response = planned(root);
+  const response = planned(root, { 'notes.md': 'research' });
   const body = mappingFor(response, 'notes.md').body;
   assert.ok(body.includes('[nothing here](../../missing/nowhere.md)'), body);
   assert.deepEqual(unresolvedLinkFindings(response), [{
@@ -144,7 +158,7 @@ test('a link to a source this batch chose not to migrate is reported unresolved 
     { path: 'wiki.md', category: 'unsupported', format: 'obsidian', reason: 'obsidian_construct' },
     { path: 'untyped.md', category: 'markdown', format: 'markdown', reason: 'markdown' },
   ];
-  const response = run({ protocol: 'okf-wrapper/1', skill: 'okf-setup', operation: 'migration-plan', payload: { cwd: root, sources } });
+  const response = planned(root, { 'notes.md': 'research' }, sources);
 
   const classes = unresolvedLinkFindings(response).map((f) => f.detail).sort((a, b) => (a.path + a.resource).localeCompare(b.path + b.resource));
   assert.deepEqual(classes, [
@@ -161,6 +175,6 @@ test('a link inside a fenced code block is left untouched even when the concept 
   ].join('\n'));
   write(root, 'eval/README.md', '# Eval\n');
 
-  const body = mappingFor(planned(root), 'notes.md').body;
+  const body = mappingFor(planned(root, { 'notes.md': 'research' }), 'notes.md').body;
   assert.ok(body.includes('```\nSee [the eval setup](eval/README.md).\n```'), body);
 });

@@ -42,12 +42,23 @@ function plan(entries) {
   return { entries, executable: true };
 }
 
+// #203: `migration-validate` now also demands the accepted concept-group
+// packages exactly as `migration-plan` returned them. None of this file's own
+// fixtures stage a group index, so an empty accepted package set -- no
+// packages, no index rows -- is exactly the correct shape to carry: there is
+// nothing here for it to match against.
+const EMPTY_GROUP_PACKAGES = {
+  packages: [],
+  root: { purpose: 'Bundle root', index: { disposition: 'unchanged', title: 'Bundle' }, log: { disposition: 'none' }, children: [] },
+  indexes: [],
+};
+
 function request(root, payload = {}) {
   return {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'migration-validate',
-    payload: { cwd: root, ...payload },
+    payload: { cwd: root, group_packages: EMPTY_GROUP_PACKAGES, ...payload },
   };
 }
 

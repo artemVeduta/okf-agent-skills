@@ -97,12 +97,23 @@ function validationBody(root, item) {
   return text.split('\n').slice(closing + 1).join('\n');
 }
 
+// #203: `publish` now also demands the accepted concept-group packages
+// exactly as `migration-plan` returned them. None of this file's own
+// fixtures stage a group index, so an empty accepted package set -- no
+// packages, no index rows -- is exactly the correct shape to carry: there is
+// nothing here for it to match against.
+const EMPTY_GROUP_PACKAGES = {
+  packages: [],
+  root: { purpose: 'Bundle root', index: { disposition: 'unchanged', title: 'Bundle' }, log: { disposition: 'none' }, children: [] },
+  indexes: [],
+};
+
 function publishRequest(root, staged, payload = {}) {
   return {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'publish',
-    payload: { cwd: root, task_kind: 'feature work', staged, ...authority(root, staged), ...payload },
+    payload: { cwd: root, task_kind: 'feature work', staged, group_packages: EMPTY_GROUP_PACKAGES, ...authority(root, staged), ...payload },
   };
 }
 
@@ -226,6 +237,7 @@ test('migration-validate and okf-read validate report the identical structural f
       selected: ['docs/a.md'],
       plan: { entries: [{ path: 'docs/a.md', disposition: 'migrate', reason: 'type_preserved', concept: 'decisions/a', type: 'Decision' }], executable: true },
       semantic_review: { performed: true },
+      group_packages: EMPTY_GROUP_PACKAGES,
     },
   });
   const stagingFinding = migrationValidateResponse.findings.find((item) => item.code === 'TYPE_MISSING');
@@ -296,6 +308,7 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
       cwd: root,
       partition: { shards: [{ shard: 'x', sources: ['docs/a.md'], brief }], cross_shard_links: [] },
       shards: [{ shard: 'x', path: path.relative(root, shardFile) }],
+      group_packages: EMPTY_GROUP_PACKAGES,
     },
   });
   assert.equal(assembleResponse.result, 'ok', JSON.stringify(assembleResponse));
@@ -311,6 +324,7 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
       selected: ['docs/a.md'],
       plan: { entries: [{ path: 'docs/a.md', disposition: 'migrate', reason: 'type_preserved', concept: 'decisions/a', type: 'Decision' }], executable: true },
       semantic_review: { performed: true },
+      group_packages: EMPTY_GROUP_PACKAGES,
     },
   });
   assert.equal(migrationValidateResponse.result, 'ok');

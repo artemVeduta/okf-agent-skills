@@ -2,7 +2,6 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const discovery = require('./discovery');
-const acceptedGroups = require('./accepted-groups');
 const mappingRules = require('./mapping');
 const monorepo = require('./monorepo');
 const sections = require('./sections');
@@ -36,6 +35,7 @@ function buildReceipt(checked, artifacts, results, classification) {
       plan: artifactIdentity(artifacts.plan),
       mapping: artifactIdentity(artifacts.mapping),
       split_review: artifactIdentity(artifacts.splitReview),
+      group_packages: artifactIdentity(artifacts.groupPackages),
       semantic_review: artifactIdentity(artifacts.semanticReview),
     },
     candidate_conformance: {
@@ -324,7 +324,7 @@ function routeTargets(splitReview, bundlePath) {
   return targets.sort();
 }
 
-function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview, staged, semanticReview: review, services }) {
+function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview, groupPackages, staged, semanticReview: review, services }) {
   const coverage = planMappingCoverage(plan, mapping);
   if (!coverage.ok) return coverage;
   if (!safePath(gitRoot, stagingRoot, services)) {
@@ -343,12 +343,16 @@ function evaluate({ gitRoot, bundleRoot, stagingRoot, plan, mapping, splitReview
   }
   const currentPaths = listing.files.filter(discovery.isMarkdownFile)
     .map((file) => path.relative(stagingRoot, file).split(path.sep).join('/')).sort();
-  const accepted = acceptedGroups.collect(splitReview);
-  if (!accepted.ok) {
-    return { ok: false, finding: proposalFinding('PUBLISH_INDEX_CHANGED', accepted.detail) };
-  }
   const bundlePath = path.relative(gitRoot, bundleRoot).split(path.sep).join('/');
-  const expected = expectedCandidates(mapping, splitReview, accepted.groups, bundlePath);
+  // #203 (#202): the index half of the published set comes from the accepted
+  // concept-group packages' own index rows -- the same rows `migration-plan`
+  // proved the accepted tree against -- while the concept half still comes from
+  // the mapping and the accepted split review (`expectedCandidates` above).
+  const expected = expectedCandidates(mapping, splitReview, groupPackages.indexes, bundlePath);
+  const rootConcept = expected.find((item) => item.kind === 'concept' && !item.path.includes('/'));
+  if (rootConcept !== undefined) {
+    return { ok: false, finding: proposalFinding('PUBLISH_ROOT_CONCEPT', { path: rootConcept.path, source: rootConcept.source }) };
+  }
   const expectedPaths = expected.map((item) => item.path).sort();
   const stagedPaths = staged.map((item) => path.relative(stagingRoot, path.resolve(gitRoot, item.file)).split(path.sep).join('/'));
   const files = semanticReview.exactSet(expectedPaths, currentPaths);

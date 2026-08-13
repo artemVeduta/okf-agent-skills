@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { runWrapper, spawnWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
+const { planWithGroups } = require('../test-support/groups');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 
@@ -44,12 +45,15 @@ function discoverSources(root, payload = {}) {
 
 // Runs the real upstream pipeline (#142 -> #144/#145) so this file's own fixtures
 // exercise `partition` against exactly the shape `migration-plan` actually produces,
-// never a hand-rolled stand-in for it.
-function derivedPlan(root) {
+// never a hand-rolled stand-in for it. #203: every typed source now also needs an
+// accepted reader-purpose group before the plan is executable, so `placement`
+// (`{<source path>: <accepted group key>}`) names one for every migrating source
+// this fixture writes.
+function derivedPlan(root, placement) {
   const sources = discoverSources(root);
-  const planned = run(planRequest(root, sources));
-  assert.equal(planned.data.plan.executable, true, 'fixture must resolve to an executable plan with no open question');
-  return planned.data;
+  const { response } = planWithGroups(run, (payload) => planRequest(root, sources, payload), { root, placement });
+  assert.equal(response.data.plan.executable, true, 'fixture must resolve to an executable plan with no open question');
+  return response.data;
 }
 
 function partitionCompute(root, planData, options = {}) {
@@ -70,7 +74,9 @@ test('a small corpus stays in exactly one shard', (t) => {
   write(root, 'docs/payments/refunds.md', '---\ntype: Decision\n---\n# Refunds\n');
   write(root, 'docs/auth/sso.md', '---\ntype: Decision\n---\n# SSO\n');
   write(root, 'research/spike.md', '---\ntype: Research\n---\n# Spike\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, {
+    'docs/payments/refunds.md': 'payments', 'docs/auth/sso.md': 'auth', 'research/spike.md': 'research',
+  });
 
   const response = partitionCompute(root, planData);
   assert.equal(response.result, 'ok');
@@ -85,9 +91,10 @@ test('a small corpus stays in exactly one shard', (t) => {
 
 test('a corpus larger than the heuristic threshold fans out into more than one shard', (t) => {
   const root = repo(t);
-  for (let i = 0; i < 5; i++) write(root, `docs/payments/p${i}.md`, `---\ntype: Decision\n---\n# P${i}\n`);
-  for (let i = 0; i < 5; i++) write(root, `docs/auth/a${i}.md`, `---\ntype: Decision\n---\n# A${i}\n`);
-  const planData = derivedPlan(root);
+  const placement = {};
+  for (let i = 0; i < 5; i++) { write(root, `docs/payments/p${i}.md`, `---\ntype: Decision\n---\n# P${i}\n`); placement[`docs/payments/p${i}.md`] = 'payments'; }
+  for (let i = 0; i < 5; i++) { write(root, `docs/auth/a${i}.md`, `---\ntype: Decision\n---\n# A${i}\n`); placement[`docs/auth/a${i}.md`] = 'auth'; }
+  const planData = derivedPlan(root, placement);
 
   const response = partitionCompute(root, planData);
   assert.equal(response.result, 'ok');
@@ -100,9 +107,10 @@ test('a corpus larger than the heuristic threshold fans out into more than one s
 
 test('partitioning follows directory locality rather than plain file-count chunking', (t) => {
   const root = repo(t);
-  for (let i = 0; i < 4; i++) write(root, `docs/payments/p${i}.md`, `---\ntype: Decision\n---\n# P${i}\n`);
-  for (let i = 0; i < 4; i++) write(root, `docs/auth/a${i}.md`, `---\ntype: Decision\n---\n# A${i}\n`);
-  const planData = derivedPlan(root);
+  const placement = {};
+  for (let i = 0; i < 4; i++) { write(root, `docs/payments/p${i}.md`, `---\ntype: Decision\n---\n# P${i}\n`); placement[`docs/payments/p${i}.md`] = 'payments'; }
+  for (let i = 0; i < 4; i++) { write(root, `docs/auth/a${i}.md`, `---\ntype: Decision\n---\n# A${i}\n`); placement[`docs/auth/a${i}.md`] = 'auth'; }
+  const planData = derivedPlan(root, placement);
 
   // A threshold of 3 forces both directories to split, but never into a shard that
   // mixes the two localities together -- a blind file-count chunk sorted by path
@@ -123,7 +131,7 @@ test('a link between two sources forced into different shards is surfaced as a c
   const root = repo(t);
   write(root, 'docs/payments/a.md', '---\ntype: Decision\n---\n# A\n\nSee [the auth policy](../auth/b.md) for details.\n');
   write(root, 'docs/auth/b.md', '---\ntype: Decision\n---\n# B\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, { 'docs/payments/a.md': 'payments', 'docs/auth/b.md': 'auth' });
   // Sanity: #145 already rewrote the link inside the same migration-plan call.
   const mappedA = planData.mapping.find((item) => item.path === 'docs/payments/a.md');
   assert.match(mappedA.body, /b\.md/);
@@ -133,8 +141,8 @@ test('a link between two sources forced into different shards is surfaced as a c
   assert.equal(response.data.shards.length, 2);
   assert.equal(response.data.cross_shard_links.length, 1);
   const link = response.data.cross_shard_links[0];
-  assert.equal(link.from, 'decisions/a');
-  assert.equal(link.to, 'decisions/b');
+  assert.equal(link.from, 'payments/a');
+  assert.equal(link.to, 'auth/b');
   assert.notEqual(link.from_shard, link.to_shard);
 
   const warning = response.findings.find((item) => item.code === 'cross_shard_link');
@@ -145,14 +153,14 @@ test('a link between two sources forced into different shards is surfaced as a c
   // The narrow brief still lets the owning worker know the target concept exists,
   // without handing it any of that concept's own content.
   const fromShard = shardFor(response, link.from_shard);
-  assert.deepEqual(fromShard.brief.neighbors, [{ concept: 'decisions/b' }]);
+  assert.deepEqual(fromShard.brief.neighbors, [{ concept: 'auth/b' }]);
 });
 
 test('two sources that link to each other but land in the same shard need no cross-shard warning', (t) => {
   const root = repo(t);
   write(root, 'docs/payments/a.md', '---\ntype: Decision\n---\n# A\n\nSee [B](b.md).\n');
   write(root, 'docs/payments/b.md', '---\ntype: Decision\n---\n# B\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, { 'docs/payments/a.md': 'payments', 'docs/payments/b.md': 'payments' });
 
   const response = partitionCompute(root, planData);
   assert.equal(response.data.shards.length, 1);
@@ -166,7 +174,7 @@ test('a worker brief carries exactly the narrow context and nothing more', (t) =
   const root = repo(t);
   write(root, 'docs/payments/refunds.md', '---\ntype: Decision\n---\n# Refunds\n');
   write(root, 'notes/glossary.md', 'not evidence enough to be unsupported, just plain residue candidate');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, { 'docs/payments/refunds.md': 'payments', 'notes/glossary.md': 'notes' });
 
   const response = partitionCompute(root, planData, { project_mode: 'knowledge-only', bundle: 'docs-bundle' });
   const brief = response.data.shards[0].brief;
@@ -183,7 +191,7 @@ test('a worker brief carries exactly the narrow context and nothing more', (t) =
 test('partition refuses a non-executable plan, a bundle/project_mode outside the allowed values, and a tampered mapping/references array, without computing anything', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/a.md', '---\ntype: Decision\n---\n# A\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, { 'docs/decisions/a.md': 'library' });
 
   const notExecutable = { entries: [{ path: 'x.md', disposition: 'blocked_pending_decision', reason: 'type_not_inferable', concept: null, type: null }], executable: false };
   assert.equal(partitionCompute(root, { ...planData, plan: notExecutable }).result, 'blocked');
@@ -222,7 +230,7 @@ function wellFormedShard(brief) {
 test('a returned shard matching its own brief validates against the protocol', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/a.md', '---\ntype: Decision\n---\n# A\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, { 'docs/decisions/a.md': 'library' });
   const brief = partitionCompute(root, planData).data.shards[0].brief;
 
   const response = run(partitionRequest(root, { brief, shard: wellFormedShard(brief) }));
@@ -234,7 +242,7 @@ test('a returned shard matching its own brief validates against the protocol', (
 test('a worker may resolve an assigned source as a blocker instead of converting it', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/a.md', '---\ntype: Decision\n---\n# A\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, { 'docs/decisions/a.md': 'library' });
   const brief = partitionCompute(root, planData).data.shards[0].brief;
 
   const shard = wellFormedShard(brief);
@@ -247,7 +255,7 @@ test('a worker may resolve an assigned source as a blocker instead of converting
 test('a malformed shard is refused with a specific finding, never a bare failure', (t) => {
   const root = repo(t);
   write(root, 'docs/decisions/a.md', '---\ntype: Decision\n---\n# A\n');
-  const planData = derivedPlan(root);
+  const planData = derivedPlan(root, { 'docs/decisions/a.md': 'library' });
   const brief = partitionCompute(root, planData).data.shards[0].brief;
 
   const cases = [

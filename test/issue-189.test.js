@@ -106,6 +106,15 @@ test('publish survives a pre-publish precheck whose delegated validate answer ex
       },
       mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, source_identity: `sha256:${sourceDigest}`, body: '# A\n\nBody text.\n' }],
       split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', sections: [], outputs: [], proposal: null }],
+      // #203: `publish` now requires the accepted concept-group artifact
+      // `migration-plan` produced. This fixture stages only the one concept
+      // file, no index -- so an empty accepted package set with no derived
+      // index rows is exactly what a coherent proposal for it looks like.
+      group_packages: {
+        packages: [],
+        root: { purpose: 'Bundle root', index: { disposition: 'unchanged', title: 'Bundle' }, log: { disposition: 'none' }, children: [] },
+        indexes: [],
+      },
       semantic_review: {
         human_assessed: false,
         candidates: [{ path: 'decisions/a.md', identity: `sha256:${candidateDigest}` }],

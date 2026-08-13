@@ -48,11 +48,13 @@ function isPlaceholder(value) {
 // (skills/okf-setup/SKILL.md, #200/#201 task 1), and `split_sections`
 // (skills/okf-setup/SKILL.md, #200/#201 task 2), and `split_proposals`
 // (skills/okf-setup/SKILL.md, #200/#201 task 3), and `split_review`
-// (skills/okf-setup/SKILL.md, #200/#201 task 5); any other placeholder this
-// fixture can't fill is a doc/runtime mismatch, not something to hide.
+// (skills/okf-setup/SKILL.md, #200/#201 task 5), and `group_packages` and
+// `root_package` (skills/okf-setup/SKILL.md, #202/#203); any other placeholder
+// this fixture can't fill is a doc/runtime mismatch, not something to hide.
 const OPTIONAL_PLACEHOLDER_KEYS = new Set([
   'today', 'project_mode', 'manifest', 'workspace_id', 'mappings', 'answers', 'package_root',
   'split_requested', 'semantic_boundary_sources', 'split_sections', 'split_proposals', 'split_review',
+  'group_packages', 'root_package',
 ]);
 
 function fixtureRequest(example, fixture) {

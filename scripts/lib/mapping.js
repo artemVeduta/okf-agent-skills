@@ -94,43 +94,31 @@ function inferType(sourcePath, tree, body) {
   return null;
 }
 
-// ------------------------------------------------------------------ type-directory mapping
-
-// #130's own folder model, transcribed, not invented: the canonical directory each
-// producer type gets. A type absent from this table -- `Attested Computation`
-// (#130 names no canonical directory for it), a preserved domain-specific type, or
-// `Glossary` (handled separately below) -- keeps #144's mechanical mirror rather
-// than inventing a directory the data model never specified.
-const TYPE_DIRECTORIES = new Map([
-  ['Decision', 'decisions'],
-  ['Constraint', 'constraints'],
-  ['Research', 'research'],
-  ['Playbook', 'playbooks'],
-  ['Release', 'releases'],
-  ['Reference', 'references'],
-]);
+// ------------------------------------------------------------------ group placement
 
 function stripExtension(sourcePath) {
   const ext = path.posix.extname(sourcePath);
   return ext ? sourcePath.slice(0, -ext.length) : sourcePath;
 }
 
-// The canonical directory for `type` decides the destination directory; the
-// source's own directory is not mirrored (#145's job, replacing #144's mechanical
-// mirror). `Glossary` is the one documented exception: #130's folder model keeps
-// one `glossary.md` per hierarchy level rather than a directory of many, so a
-// Glossary target keeps the source's own directory and only renames the file
-// itself to `glossary` -- which also means two glossary-shaped sources in the same
-// directory collide exactly the way #144's existing target-collision question
-// already handles, never a silent merge.
-function conceptPathFor(sourcePath, type) {
-  if (type === 'Glossary') {
-    const dir = path.posix.dirname(sourcePath);
-    return dir === '.' ? 'glossary' : `${dir}/glossary`;
-  }
-  const dir = TYPE_DIRECTORIES.get(type);
-  if (!dir) return stripExtension(sourcePath);
-  return `${dir}/${path.posix.basename(stripExtension(sourcePath))}`;
+// #203 (#202): the accepted reader-purpose group decides the destination
+// directory, and nothing else does. The type-directory table and the source-path
+// fallback both used to place a concept here; both are gone, because #202 settled
+// that a concept type, a source directory, a file count, and a directory depth are
+// evidence a human may weigh but can never select a group on their own. `group` is
+// always an accepted group key (`migration.js` asks for one rather than inferring
+// it), so a substantive concept can no longer land at the bundle root at all.
+//
+// `Glossary` keeps its own filename rule: #202 gives a group at most one
+// `glossary.md`, so two glossary-shaped sources accepted into one group both map
+// to the same `<group>/glossary`. `migration.js`'s `placed()` only ever checks a
+// candidate path against the bundle already published on disk, never against a
+// sibling entry in the same plan, so both reach `migrate` undetected -- only
+// assembly's `CONCEPT_TARGET_COLLISION` (#147, see `test/issue-147.test.js`)
+// catches them, never a silent merge.
+function conceptPathFor(sourcePath, type, group) {
+  if (type === 'Glossary') return `${group}/glossary`;
+  return `${group}/${path.posix.basename(stripExtension(sourcePath))}`;
 }
 
 // ------------------------------------------------------------------------- provenance
@@ -148,8 +136,8 @@ function extractProvenance(tree) {
 // Retained raw/unsupported evidence keeps its whole original relative path and
 // extension under `references/` -- an archival mirror, not a concept identity, so
 // two files sharing a basename in different source directories never collide here
-// the way concept placement (which does flatten into a type directory) safely
-// asks about instead.
+// the way two concepts accepted into one group can -- a target collision
+// `placed()` asks about or assembly refuses, never a silent overwrite.
 function referencePathFor(sourcePath) {
   return `references/${sourcePath}`;
 }

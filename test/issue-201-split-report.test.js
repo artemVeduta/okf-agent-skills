@@ -4,15 +4,27 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { runWrapper, temporaryRoot, writeManifest } = require('../test-support/snapshot');
+const { packagesFor, planWithGroups } = require('../test-support/groups');
 
 const wrapper = path.join(__dirname, '..', 'scripts', 'okf-setup.js');
 const SOURCE = 'docs/guide.md';
 const UNSPLIT_SOURCE = 'docs/decision.md';
+// #203: every substantive concept belongs to an accepted reader-purpose group.
+// Every fixture below places its reviewed outputs in this one accepted group,
+// and its unsplit Decision source in the `decisions` group.
+const GROUP = 'operators';
+const DECISION_GROUP = 'decisions';
 
 function run(operation, root, payload) {
   return runWrapper(wrapper, {
     protocol: 'okf-wrapper/1', skill: 'okf-setup', operation, payload: { cwd: root, ...payload },
   });
+}
+
+// `planWithGroups` invokes its runner with one full request value, so it gets
+// its own value-shaped runner rather than the three-argument one above.
+function runValue(value) {
+  return runWrapper(wrapper, value);
 }
 
 function repo(t, headings, withUnreviewed = false, bundle = 'okf') {
@@ -32,8 +44,8 @@ function repo(t, headings, withUnreviewed = false, bundle = 'okf') {
   return root;
 }
 
-function output(name, title, group = null) {
-  const concept = group ? `${group}/${name}` : name;
+function output(name, title, group = GROUP) {
+  const concept = `${group}/${name}`;
   return {
     output: name,
     concept_id: concept,
@@ -41,16 +53,52 @@ function output(name, title, group = null) {
     type: 'Playbook',
     title,
     heading_outline: [{ level: 1, text: title }],
-    reader_purpose_group: group === null ? null : {
+    reader_purpose_group: {
       key: group,
-      purpose: 'Use these operator guides.',
-      index_entry: { path: `${group}/index.md`, title: 'Operator guides' },
-      child_entry: { concept_id: concept, path: `${concept}.md`, title, order: 1 },
+      purpose: `Use the ${group} guides.`,
+      index_entry: { path: `${group}/index.md`, title: group },
+      child_entry: { concept_id: concept, path: `${concept}.md`, title, order: 0 },
     },
     provenance_assignments: [],
     link_routes: [],
     anchor_routes: [],
   };
+}
+
+function planRequest(root, extra) {
+  return {
+    protocol: 'okf-wrapper/1',
+    skill: 'okf-setup',
+    operation: 'migration-plan',
+    payload: { cwd: root, ...extra },
+  };
+}
+
+function placementAnswers(placement) {
+  return Object.fromEntries(
+    Object.entries(placement).map(([source, group]) => [source, { reader_purpose_group: group }]),
+  );
+}
+
+// `planWithGroups` derives index children from plan-entry concepts, which for a
+// reviewed source is its one source-level concept rather than its accepted
+// outputs. The accepted rows are therefore rebuilt from the real concept set --
+// every accepted proposal output plus every unsplit entry concept -- and the
+// plan is run once more, so the accepted package rows this plan carries are
+// exactly the ones the conformance gate proves against later.
+function acceptedPlan(root, bundle, sources, placement, payload = {}) {
+  const { response } = planWithGroups(runValue, (extra) => planRequest(root, extra), {
+    root, bundle, placement, payload,
+  });
+  const concepts = response.data.split_review.flatMap((item) => (
+    item.proposal === null
+      ? [response.data.plan.entries.find((entry) => entry.path === item.path).concept]
+      : item.proposal.outputs.map((candidate) => candidate.concept_id)
+  ));
+  const accepted = packagesFor(root, bundle, placement, concepts, {});
+  const final = runValue(planRequest(root, { ...accepted, ...payload, answers: placementAnswers(placement) }));
+  assert.equal(final.result, 'ok', JSON.stringify(final));
+  return final.data;
 }
 
 function plan(root, outputs, result, keepReason = null, withUnreviewed = false, bundle = 'okf') {
@@ -66,7 +114,10 @@ function plan(root, outputs, result, keepReason = null, withUnreviewed = false, 
       output: outputs[index].output,
     });
   }
-  const response = run('migration-plan', root, {
+  outputs.forEach((item, index) => { item.reader_purpose_group.child_entry.order = index + 1; });
+  const placement = { [SOURCE]: GROUP };
+  if (withUnreviewed) placement[UNSPLIT_SOURCE] = DECISION_GROUP;
+  const data = acceptedPlan(root, bundle, sources, placement, {
     bundle,
     sources,
     split_requested: [SOURCE],
@@ -82,8 +133,8 @@ function plan(root, outputs, result, keepReason = null, withUnreviewed = false, 
       whole_source_link_routes: [],
     }],
   });
-  assert.equal(response.data.split_review.find((item) => item.path === SOURCE).proposal.status, 'accepted', JSON.stringify(response));
-  return response.data;
+  assert.equal(data.split_review.find((item) => item.path === SOURCE).proposal.status, 'accepted', JSON.stringify(data));
+  return data;
 }
 
 function assemble(root, accepted, bundle = 'okf') {
@@ -120,6 +171,7 @@ function assemble(root, accepted, bundle = 'okf') {
     bundle,
     partition: { shards: partitioned.data.shards, cross_shard_links: partitioned.data.cross_shard_links },
     shards: [{ shard: shard.shard, path: shardFile }],
+    group_packages: accepted.group_packages,
   });
   assert.equal(response.result, 'ok', JSON.stringify(response));
   return response.data.staged;
@@ -163,6 +215,7 @@ function fixture(t, outputs, result = 'split', keepReason = null, withUnreviewed
     plan: accepted.plan,
     split_review: accepted.split_review,
     semantic_review: semanticInput(root, accepted, bundle),
+    group_packages: accepted.group_packages,
   });
   assert.equal(validated.data.publishable, true, JSON.stringify(validated));
   return { root, bundle, accepted, staged, validated: validated.data };
@@ -177,6 +230,7 @@ function publish(value) {
     mapping: value.accepted.mapping,
     split_review: value.accepted.split_review,
     semantic_review: value.validated.semantic_review,
+    group_packages: value.accepted.group_packages,
   });
 }
 
@@ -188,6 +242,7 @@ function report(value, publication) {
       plan: value.accepted.plan,
       mapping: value.accepted.mapping,
       split_review: value.accepted.split_review,
+      group_packages: value.accepted.group_packages,
       validation: {
         structural_coverage: value.validated.structural_coverage,
         agent_semantic_review: value.validated.agent_semantic_review,
@@ -200,7 +255,7 @@ function report(value, publication) {
 }
 
 test('one reviewed source with three published outputs counts three concepts and not its navigation index', (t) => {
-  const outputs = [output('install', 'Install', 'operators'), output('operate', 'Operate'), output('repair', 'Repair')];
+  const outputs = [output('install', 'Install'), output('operate', 'Operate'), output('repair', 'Repair')];
   const value = fixture(t, outputs);
   const publication = publish(value);
   const response = report(value, publication);
@@ -209,7 +264,7 @@ test('one reviewed source with three published outputs counts three concepts and
   assert.deepEqual(publication.data.candidate_conformance, {
     passed: true,
     concepts: outputs.map((item) => ({ source: SOURCE, concept: item.concept_id, path: item.path, type: item.type })),
-    navigation_indexes: [{ path: 'operators/index.md' }],
+    navigation_indexes: [{ path: 'index.md' }, { path: 'operators/index.md' }],
   });
   assert.equal(response.result, 'ok', JSON.stringify(response));
   assert.equal(response.data.summary.sources_total, 1);
@@ -226,7 +281,7 @@ test('one reviewed source with three published outputs counts three concepts and
     passed: true,
     sections: value.validated.semantic_review.sources[0].sections,
   });
-  assert.deepEqual(response.data.navigation_writes.published, ['operators/index.md']);
+  assert.deepEqual(response.data.navigation_writes.published, ['index.md', 'operators/index.md']);
   assert.deepEqual(response.data.semantic_fidelity, { assessed: false });
 });
 
@@ -239,24 +294,25 @@ test('non-alphabetical accepted output order stays canonical through report', (t
   assert.equal(publication.result, 'ok', JSON.stringify(publication));
   assert.deepEqual(value.accepted.split_review[0].outputs.map((item) => item.output), ['zeta', 'alpha']);
   assert.deepEqual(value.staged.filter((item) => item.kind !== 'index').map((item) => item.output), ['zeta', 'alpha']);
-  assert.deepEqual(publication.data.candidate_conformance.concepts.map((item) => item.concept), ['zeta', 'alpha']);
+  assert.deepEqual(publication.data.candidate_conformance.concepts.map((item) => item.concept), outputs.map((item) => item.concept_id));
   assert.equal(response.result, 'ok', JSON.stringify(response));
   assert.deepEqual(response.data.reviewed_sources[0].planned_outputs.map((item) => item.output), ['zeta', 'alpha']);
-  assert.deepEqual(response.data.writes.published, ['zeta', 'alpha']);
+  assert.deepEqual(response.data.writes.published, outputs.map((item) => item.concept_id));
 });
 
 test('an unsplit migration completes validation, publication, and report with one concept', (t) => {
   const root = repo(t, [], true);
   const sources = run('discover', root, {}).data.sources.filter((item) => item.path === UNSPLIT_SOURCE);
-  const accepted = run('migration-plan', root, { sources }).data;
+  const accepted = acceptedPlan(root, 'okf', sources, { [UNSPLIT_SOURCE]: DECISION_GROUP }, { bundle: 'okf', sources });
   const staged = assemble(root, accepted);
   const validation = run('migration-validate', root, {
     selected: [UNSPLIT_SOURCE], plan: accepted.plan, split_review: accepted.split_review,
     semantic_review: { performed: false },
+    group_packages: accepted.group_packages,
   });
   assert.equal(validation.data.agent_semantic_review.passed, true, JSON.stringify(validation));
   assert.deepEqual(validation.data.semantic_review.sources, []);
-  assert.deepEqual(validation.data.semantic_review.candidates.map((item) => item.path), ['decisions/decision.md']);
+  assert.deepEqual(validation.data.semantic_review.candidates.map((item) => item.path), ['decisions/decision.md', 'decisions/index.md', 'index.md']);
   const value = { root, bundle: 'okf', accepted, staged, validated: validation.data };
   const publication = publish(value);
   const response = report(value, publication);
@@ -286,7 +342,8 @@ test('a keep-as-one report retains its accepted result and reason', (t) => {
 test('partial publication reports actual, failed, and not-attempted outputs without counting the latter two', (t) => {
   const outputs = [output('install', 'Install'), output('operate', 'Operate'), output('repair', 'Repair')];
   const value = fixture(t, outputs);
-  fs.writeFileSync(path.join(value.root, 'okf', 'operate.md'), '---\ntype: Playbook\n---\n# Existing\n');
+  fs.mkdirSync(path.join(value.root, 'okf', 'operators'), { recursive: true });
+  fs.writeFileSync(path.join(value.root, 'okf', 'operators', 'operate.md'), '---\ntype: Playbook\n---\n# Existing\n');
   const publication = publish(value);
   const response = report(value, publication);
 
@@ -295,13 +352,51 @@ test('partial publication reports actual, failed, and not-attempted outputs with
   assert.equal(response.data.status, 'partial');
   assert.equal(response.data.summary.concepts_created, 1);
   assert.deepEqual(response.data.reviewed_sources[0].actual_outputs, [outputs[0]]);
-  assert.deepEqual(response.data.reviewed_sources[0].failed_writes, [{ concept: 'operate', status: 'failed' }]);
-  assert.deepEqual(response.data.reviewed_sources[0].skipped_writes, [{ concept: 'repair', status: 'not-attempted' }]);
+  assert.deepEqual(response.data.reviewed_sources[0].failed_writes, [{ concept: 'operators/operate', status: 'failed' }]);
+  assert.deepEqual(response.data.reviewed_sources[0].skipped_writes, [{ concept: 'operators/repair', status: 'not-attempted' }]);
   assert.deepEqual(response.data.writes, {
-    published: ['install'],
-    failed: [{ concept: 'operate', status: 'failed' }],
-    skipped: [{ concept: 'repair', status: 'not-attempted' }],
+    published: ['operators/install'],
+    failed: [{ concept: 'operators/operate', status: 'failed' }],
+    skipped: [{ concept: 'operators/repair', status: 'not-attempted' }],
   });
+});
+
+test('a partial publication marks every touched group as needing repair with per-effect rows', (t) => {
+  const outputs = [output('install', 'Install'), output('operate', 'Operate'), output('repair', 'Repair')];
+  const value = fixture(t, outputs, undefined, null, true);
+  fs.mkdirSync(path.join(value.root, 'okf', 'operators'), { recursive: true });
+  fs.writeFileSync(path.join(value.root, 'okf', 'operators', 'operate.md'), '---\ntype: Playbook\n---\n# Existing\n');
+  const publication = publish(value);
+  const response = report(value, publication);
+
+  assert.equal(publication.data.status, 'partial');
+  assert.equal(response.result, 'ok', JSON.stringify(response));
+  assert.deepEqual(response.data.group_packages, [
+    {
+      group: 'decisions',
+      purpose: 'Reader purpose for decisions',
+      index: { disposition: 'created', target: 'decisions/index.md', result: 'not-attempted' },
+      glossary: { disposition: 'none', target: null, result: 'not-planned' },
+      guidance: { disposition: 'none', target: null, result: 'not-planned' },
+      log: { disposition: 'none', target: null, result: 'not-planned' },
+      concepts: { applied: ['decisions/decision'], failed: [], not_attempted: [] },
+      needs_repair: true,
+    },
+    {
+      group: 'operators',
+      purpose: 'Reader purpose for operators',
+      index: { disposition: 'created', target: 'operators/index.md', result: 'not-attempted' },
+      glossary: { disposition: 'none', target: null, result: 'not-planned' },
+      guidance: { disposition: 'none', target: null, result: 'not-planned' },
+      log: { disposition: 'none', target: null, result: 'not-planned' },
+      concepts: {
+        applied: ['operators/install'],
+        failed: [{ concept: 'operators/operate', status: 'failed' }],
+        not_attempted: [{ concept: 'operators/repair', status: 'not-attempted' }],
+      },
+      needs_repair: true,
+    },
+  ]);
 });
 
 test('malformed or inconsistent reporting artifacts block with an exact finding', (t) => {
@@ -335,7 +430,8 @@ test('malformed or inconsistent reporting artifacts block with an exact finding'
 test('a coherent failed-to-clean JSON edit cannot fabricate actual publication', (t) => {
   const outputs = [output('install', 'Install'), output('operate', 'Operate'), output('repair', 'Repair')];
   const value = fixture(t, outputs);
-  fs.writeFileSync(path.join(value.root, 'okf', 'operate.md'), '---\ntype: Playbook\n---\n# Existing\n');
+  fs.mkdirSync(path.join(value.root, 'okf', 'operators'), { recursive: true });
+  fs.writeFileSync(path.join(value.root, 'okf', 'operators', 'operate.md'), '---\ntype: Playbook\n---\n# Existing\n');
   const publication = publish(value);
   const changed = structuredClone(publication);
   changed.data.results = changed.data.results.map((item) => ({ ...item, status: 'clean', findings: [] }));

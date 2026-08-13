@@ -2399,7 +2399,16 @@ post-operation validation bound to the approved plan passes
 - One selected source document MUST map to one output concept by default (#19).
 - Migration MUST NOT automatically extract glossary entries, split documents, or invent concepts (#19).
 - An explicit mapping or a separate restructuring operation MUST be used for glossary extraction, splitting, or other such transformations (#19).
-- Output identity MUST be the deterministic normalized form of the selected source's relative path (#19).
+- Output identity MUST be the accepted reader-purpose group joined with the selected source's own base name, without `.md` (#202, #203; supersedes the source-relative-path form from #19 and the type-directory form from #145).
+- Every substantive concept MUST belong to exactly one approved concept group, and the direct bundle root MUST carry only the required `index.md` and an optional `log.md` (#202, #203; supersedes root-concept permission in #160 and #163 and root `glossary.md` placement in #162).
+- A concept type, a source directory, a file count, and a directory depth MUST NOT select a concept group; an unassigned source MUST ask which accepted group it belongs to (#202, #203).
+- An accepted concept-group package MUST carry the group's exact reader purpose and a disposition for its `index.md`, its `glossary.md`, its local guidance concept, and its `log.md`, including an explicit no-change and an explicit no-local-terms result (#202, #203).
+- Setup MUST NOT create an empty group glossary, empty local guidance, or other folder-template scaffolding (#202, #203).
+- A term with one shared meaning MUST have exactly one canonical owning group glossary, and a consuming group MUST link to that owner rather than copy the definition; two separate meanings MUST each state their own explicit scope, and a general `shared/` glossary MUST NOT be created as a fallback (#202, #203).
+- Every group index and the root index MUST be derived from the same accepted rows the conformance gate is proved against, and MUST list that group's own direct concepts and direct child groups (#202, #203).
+- Staged and published candidates MUST exactly match the accepted group-package set and MUST contain no root concept (#202, #203).
+- Reader purpose, semantic group fit, term ownership, and term meaning MUST remain human-reviewed facts and MUST NOT be reported as deterministic claims (#202, #203).
+- On partial publication the report MUST name every planned, applied, failed, and skipped concept and group-package effect, and MUST mark each affected group as needing repair, with no retry, rollback, checkpoint, resume, or atomicity claim (#202, #203).
 - Migration MUST NOT invent UUID continuity, silently rename, auto-merge, or overwrite concepts (#19).
 - An existing target-path collision MUST block the plan (#19).
 - A Concept ID MUST remain the bundle-relative file path without `.md`; moving or renaming a concept MUST change its identity (#22).
