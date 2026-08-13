@@ -61,10 +61,31 @@ Every wrapper call ends in exactly one of three conditions:
 
 It does not own the derived-maintenance effects that an ordinary `sync` triggers along the way. Regenerating a directly affected index and appending a directly affected log entry belong to `okf-write` and inherit the parent operation's outcome. Repairing a directly affected mechanical link also belongs to `okf-write`, but it is not a v0.1.0 operation and returns `UNSUPPORTED_INPUT`.
 
+## Assisted durable capture
+
+Through all normal work, `okf-lifecycle` observes durable-change candidates for `Decision`, `Glossary`, `Constraint`, `Research`, `Playbook`, and the open domain-specific concept types. It does not interrupt the work for each candidate.
+
+At a natural checkpoint, or before the final response, it presents **one** compact proposal for the useful durable changes. It asks immediately only when missing meaning blocks the current work.
+
+It skips a temporary fact, a detail the code already gives, a duplicate, and a weak guess. A declined item is not proposed again in the same task, unless new evidence changes that item.
+
+When the user states a durable decision or a global decision, the skill recommends capture. It proposes the smallest valid concept or the smallest valid update.
+
+When required meaning is missing, the skill names the missing fact. It then offers a concrete recommendation or a compact draft. This is an **assisted user decision**: help is never acceptance.
+
+No mutation is automatic. Acceptance uses the existing owner flow, and each accepted item becomes one ordinary `okf-write` call.
+
+For each proposal, the skill resolves the effective `settings.max_words_per_file` from `.okf-workspace.json` over the built-in default. When a proposed new or revised substantive concept is more than that target, the proposal carries an exact semantic split, or an explicit keep-as-one decision. The target is a soft target. It never warns on a read, and it is never a validation gate.
+
 ## Procedure
 
 1. Read the requested operation. `init`, `migrate`, and `compact` are not v0.1.0 operations: if the operation is not `sync`, stop and return the runtime's unknown-operation result. Done when that result is the only thing emitted for the request; not done if any payload has been built or any concept touched for a non-`sync` name.
 2. Classify the trigger as incremental (ordinary work, agent-selected) or explicit reconciliation (requested by name). Both trigger classes send `invocation: "explicit"`. Done when the trigger class is fixed before any payload is built; not done if the class is still undecided or was inferred after the scope was chosen.
 3. Build the wrapper request for the scope that trigger class authorizes: narrow for incremental synchronization, wider only for explicit reconciliation. Done when the request matches the shape above and its scope matches the trigger class from step 2; not done if the scope is wider than the trigger authorizes.
 4. Run the `okf-lifecycle` wrapper and name the exit condition the call ended in. Done when the response is reported as a valid response (refusal included), invalid wrapper input, or an internal failure; not done while a refusal is being reported as a crash or a crash as a refusal.
-5. Report within the ceiling. A clean result is done when reported as one line: the operation and result, nothing else; not done if the full response is shown. A refusal, an internal failure, or a `failed/incomplete` result is done only with the full response, naming the gate code and next action; not done if trimmed to one line, softened, or reported as a crash. Show the full response for any result if the caller asks.
+5. Collect durable-change candidates while the work runs, for the observed concept types. Done when each candidate is held for the one proposal, and when only meaning that blocks the current work is asked for immediately; not done if the work stops for a candidate that does not block it.
+6. Filter the held candidates. Done when each temporary fact, code-recoverable detail, duplicate, weak guess, and item the user already declined in this task is dropped, and when a declined item returns only with new evidence; not done if a dropped item enters the proposal.
+7. Resolve the effective `settings.max_words_per_file` from `.okf-workspace.json` over the built-in default, and size each proposed substantive concept against it. Done when every proposed concept over the target carries an exact semantic split or an explicit keep-as-one decision; not done if the target blocks a read, blocks a write, or is reported as a validation gate.
+8. Present one compact proposal at a natural checkpoint or before the final response, and name every missing fact with a concrete recommendation or a compact draft. Done when the proposal is one presentation and the help is marked as an assisted user decision; not done if the help is counted as acceptance, or if a mutation runs before the owner accepts.
+9. Write each accepted item as one ordinary `okf-write` call. Done when each accepted item is one separate call; not done if items are batched, or if an item is written without acceptance.
+10. Report within the ceiling. A clean result is done when reported as one line: the operation and result, nothing else; not done if the full response is shown. A refusal, an internal failure, or a `failed/incomplete` result is done only with the full response, naming the gate code and next action; not done if trimmed to one line, softened, or reported as a crash. Show the full response for any result if the caller asks.
