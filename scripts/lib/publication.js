@@ -256,7 +256,7 @@ function checkConcept(expected, staged, checked, gitRoot, bundleRoot) {
   }
   return { ok: true, checked: {
     ...checked, kind: 'concept', path: expected.path, target: expected.path,
-    concept: expected.concept, sources: staged.sources, tree: parsed.tree, body: parsed.body, facts,
+    source: expected.source, concept: expected.concept, sources: staged.sources, tree: parsed.tree, body: parsed.body, facts,
   } };
 }
 

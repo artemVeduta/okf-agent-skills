@@ -543,6 +543,213 @@ function validPackageResult(item) {
   return validSemanticReview(item.semantic_review);
 }
 
+function exactFields(value, fields) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === fields.length
+    && Object.keys(value).every((field) => fields.includes(field));
+}
+
+function reportArtifactRefusal(request, code, artifact, reason) {
+  return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, [
+    suiteFinding(code, { artifact, reason }),
+  ]);
+}
+
+function validReportFlag(value, field) {
+  return exactFields(value, [field]) && typeof value[field] === 'boolean';
+}
+
+function validateReportPublication(value) {
+  if (!exactFields(value, ['status', 'published', 'failed', 'skipped', 'results', 'candidate_conformance'])
+    || !['complete', 'partial'].includes(value.status)
+    || !Array.isArray(value.published) || value.published.some((item) => typeof item !== 'string' || item === '')
+    || !Array.isArray(value.failed) || !Array.isArray(value.skipped) || !Array.isArray(value.results)
+    || !exactFields(value.candidate_conformance, ['passed', 'concepts', 'navigation_indexes'])
+    || value.candidate_conformance.passed !== true
+    || !Array.isArray(value.candidate_conformance.concepts)
+    || !Array.isArray(value.candidate_conformance.navigation_indexes)) {
+    return { ok: false, code: 'REPORT_ARTIFACT_MALFORMED', artifact: 'publication', reason: 'shape' };
+  }
+  const concepts = value.candidate_conformance.concepts;
+  const indexes = value.candidate_conformance.navigation_indexes;
+  if (concepts.some((item) => !exactFields(item, ['source', 'concept', 'path'])
+      || monorepo.normalizeRelative(item.source) !== item.source
+      || monorepo.normalizeRelative(item.concept) !== item.concept
+      || item.path !== `${item.concept}.md`)
+    || indexes.some((item) => !exactFields(item, ['path']) || monorepo.normalizeRelative(item.path) !== item.path)
+    || value.failed.some((item) => !exactFields(item, ['concept', 'status'])
+      || typeof item.concept !== 'string' || item.concept === '' || typeof item.status !== 'string' || item.status === ''
+      || item.status === 'clean' || item.status === 'not-attempted')
+    || value.skipped.some((item) => !exactFields(item, ['concept', 'status'])
+      || typeof item.concept !== 'string' || item.concept === '' || item.status !== 'not-attempted')
+    || value.results.some((item) => !exactFields(item, ['concept', 'status', 'findings'])
+      || typeof item.concept !== 'string' || item.concept === '' || typeof item.status !== 'string' || item.status === ''
+      || !Array.isArray(item.findings))) {
+    return { ok: false, code: 'REPORT_ARTIFACT_MALFORMED', artifact: 'publication', reason: 'row_shape' };
+  }
+
+  const candidateIds = [...concepts.map((item) => item.concept), ...indexes.map((item) => item.path)];
+  const resultIds = value.results.map((item) => item.concept);
+  const candidateSet = canonicalReview.exactSet(candidateIds, resultIds);
+  const clean = value.results.filter((item) => item.status === 'clean').map((item) => item.concept);
+  const failed = value.results.filter((item) => item.status !== 'clean' && item.status !== 'not-attempted')
+    .map((item) => ({ concept: item.concept, status: item.status }));
+  const skipped = value.results.filter((item) => item.status === 'not-attempted')
+    .map((item) => ({ concept: item.concept, status: item.status }));
+  const expectedStatus = failed.length === 0 ? 'complete' : 'partial';
+  if (canonicalReview.differs(candidateSet) || !isDeepStrictEqual(value.published, clean)
+    || !isDeepStrictEqual(value.failed, failed) || !isDeepStrictEqual(value.skipped, skipped)
+    || value.status !== expectedStatus) {
+    return { ok: false, code: 'REPORT_ARTIFACT_MISMATCH', artifact: 'publication', reason: 'results' };
+  }
+  return { ok: true, concepts, indexes };
+}
+
+function executeMigrationReport(request, migrationReport) {
+  const splitReviewFields = [
+    'path', 'word_count', 'review_required', 'review_reason', 'source_identity', 'line_count',
+    'sections', 'outputs', 'accounting_status', 'proposal',
+  ];
+  if (!exactFields(migrationReport, ['settings', 'split_review', 'validation', 'publication'])
+    || !exactFields(migrationReport.settings, ['max_words_per_file'])
+    || !Number.isInteger(migrationReport.settings.max_words_per_file)
+    || migrationReport.settings.max_words_per_file < 1
+    || !Array.isArray(migrationReport.split_review)) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'migration', 'shape');
+  }
+  const splitReview = partition.validateSplitReviews(
+    migrationReport.split_review.map((item) => ({ path: item && item.path })), migrationReport.split_review,
+  );
+  if (!splitReview.ok) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'split_review', splitReview.code);
+  }
+  const reviewedShape = migrationReport.split_review.every((item) => {
+    if (!exactFields(item, splitReviewFields)
+      || !Number.isInteger(item.word_count) || item.word_count < 0
+      || typeof item.review_required !== 'boolean'
+      || !/^sha256:[0-9a-f]{64}$/.test(item.source_identity)) return false;
+    if (item.proposal === null) {
+      return item.word_count <= migrationReport.settings.max_words_per_file
+        && item.review_required === false && item.review_reason === null
+        && item.line_count === 0 && item.sections.length === 0 && item.outputs.length === 0;
+    }
+    const aboveTarget = item.word_count > migrationReport.settings.max_words_per_file;
+    return aboveTarget
+      ? item.review_required === true && item.review_reason === 'above_target'
+      : item.review_required === false && ['user_requested', 'semantic_boundaries'].includes(item.review_reason);
+  });
+  if (!reviewedShape) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'split_review', 'report_fields');
+  }
+
+  const checked = migrationReport.validation;
+  if (!exactFields(checked, ['structural_coverage', 'agent_semantic_review', 'semantic_fidelity', 'semantic_review'])
+    || !validReportFlag(checked.structural_coverage, 'passed')
+    || !validReportFlag(checked.agent_semantic_review, 'passed')
+    || !validReportFlag(checked.semantic_fidelity, 'assessed')
+    || !publication.validCanonicalReview(checked.semantic_review)) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'validation', 'shape');
+  }
+  const semantic = canonicalReview.canonicalCoverage(checked.semantic_review, migrationReport.split_review);
+  if (!semantic.ok && semantic.detail.reason !== 'verdict') {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'validation', 'semantic_review');
+  }
+  const semanticPassed = semantic.ok;
+  if (checked.agent_semantic_review.passed !== semanticPassed
+    || checked.semantic_fidelity.assessed !== checked.semantic_review.human_assessed) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'validation', 'flags');
+  }
+  if (!checked.structural_coverage.passed || !checked.agent_semantic_review.passed) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'validation', 'publication_gate');
+  }
+
+  const publicationResult = validateReportPublication(migrationReport.publication);
+  if (!publicationResult.ok) {
+    return reportArtifactRefusal(
+      request, publicationResult.code, publicationResult.artifact, publicationResult.reason,
+    );
+  }
+  const accepted = acceptedGroups.collect(migrationReport.split_review);
+  if (!accepted.ok) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MALFORMED', 'split_review', 'groups');
+  }
+  const expectedIndexes = accepted.groups.map((group) => ({ path: group.index_entry.path }));
+  const planned = migrationReport.split_review.filter((item) => item.proposal !== null)
+    .flatMap((review) => review.proposal.outputs.map((output) => ({
+      source: review.path, concept: output.concept_id, path: output.path,
+    })));
+  const plannedSet = canonicalReview.exactSet(
+    planned.map((item) => `${item.source}\0${item.concept}\0${item.path}`),
+    publicationResult.concepts.filter((item) => planned.some((output) => output.source === item.source))
+      .map((item) => `${item.source}\0${item.concept}\0${item.path}`),
+  );
+  const indexSet = canonicalReview.exactSet(
+    expectedIndexes.map((item) => item.path), publicationResult.indexes.map((item) => item.path),
+  );
+  if (canonicalReview.differs(plannedSet) || canonicalReview.differs(indexSet)) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'candidate_conformance', 'accepted_plan');
+  }
+  const candidatePaths = canonicalReview.exactSet(
+    publicationResult.concepts.map((item) => item.path).concat(publicationResult.indexes.map((item) => item.path)),
+    checked.semantic_review.candidates.map((item) => item.path),
+  );
+  if (canonicalReview.differs(candidatePaths)) {
+    return reportArtifactRefusal(request, 'REPORT_ARTIFACT_MISMATCH', 'candidate_conformance', 'semantic_candidates');
+  }
+
+  const published = new Set(migrationReport.publication.published);
+  const reviewedSources = migrationReport.split_review.filter((item) => item.proposal !== null).map((review) => {
+    const semanticSource = checked.semantic_review.sources.find((item) => item.path === review.path);
+    const outputIds = new Set(review.proposal.outputs.map((item) => item.concept_id));
+    return {
+      path: review.path,
+      max_words_per_file: migrationReport.settings.max_words_per_file,
+      word_count: review.word_count,
+      review_reason: review.review_reason,
+      accepted_result: review.proposal.result,
+      reason: review.proposal.keep_as_one_reason,
+      sections: review.sections,
+      planned_outputs: review.proposal.outputs,
+      actual_outputs: review.proposal.outputs.filter((item) => published.has(item.concept_id)),
+      conformance_result: { passed: migrationReport.publication.candidate_conformance.passed },
+      semantic_review_result: { passed: semanticPassed, sections: semanticSource.sections },
+      failed_writes: migrationReport.publication.failed.filter((item) => outputIds.has(item.concept)),
+      skipped_writes: migrationReport.publication.skipped.filter((item) => outputIds.has(item.concept)),
+    };
+  });
+  const conceptIds = new Set(publicationResult.concepts.map((item) => item.concept));
+  const indexIds = new Set(publicationResult.indexes.map((item) => item.path));
+  const actualConcepts = migrationReport.publication.published.filter((item) => conceptIds.has(item));
+  const sourceCount = new Set(publicationResult.concepts.map((item) => item.source)).size;
+  const findings = checked.semantic_fidelity.assessed ? [] : [
+    reportFinding('semantic_fidelity_not_assessed', 'warning', { scope: 'bundle' }),
+  ];
+  return respond(request, 'ok', {
+    status: migrationReport.publication.status,
+    summary: {
+      sources_total: sourceCount,
+      concepts_created: actualConcepts.length,
+      concepts_planned: publicationResult.concepts.length,
+      writes_failed: migrationReport.publication.failed.filter((item) => conceptIds.has(item.concept)).length,
+      writes_skipped: migrationReport.publication.skipped.filter((item) => conceptIds.has(item.concept)).length,
+    },
+    reviewed_sources: reviewedSources,
+    writes: {
+      published: actualConcepts,
+      failed: migrationReport.publication.failed.filter((item) => conceptIds.has(item.concept)),
+      skipped: migrationReport.publication.skipped.filter((item) => conceptIds.has(item.concept)),
+    },
+    navigation_writes: {
+      published: migrationReport.publication.published.filter((item) => indexIds.has(item)),
+      failed: migrationReport.publication.failed.filter((item) => indexIds.has(item.concept)),
+      skipped: migrationReport.publication.skipped.filter((item) => indexIds.has(item.concept)),
+    },
+    structural_coverage: checked.structural_coverage,
+    agent_semantic_review: checked.agent_semantic_review,
+    semantic_fidelity: checked.semantic_fidelity,
+  }, findings);
+}
+
 // `payload.sources` (single-project mode, open points 1-6 directly) or
 // `payload.packages` (multi-package mode, composed from `aggregate`'s own
 // per-package `status`/`reason`/`warnings` plus each succeeded package's own
@@ -555,7 +762,12 @@ function executeReport(request, services) {
 
   const hasSources = Object.hasOwn(payload, 'sources');
   const hasPackages = Object.hasOwn(payload, 'packages');
-  if (hasSources === hasPackages) return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  const hasMigration = Object.hasOwn(payload, 'migration');
+  if ([hasSources, hasPackages, hasMigration].filter(Boolean).length !== 1) {
+    return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
+  }
+
+  if (hasMigration) return executeMigrationReport(request, payload.migration);
 
   if (hasSources) {
     if (!Array.isArray(payload.sources) || !payload.sources.every(validSourceItem)) {
@@ -1761,6 +1973,13 @@ function executePublish(request, services) {
 
   return respond(request, 'ok', {
     status: failed.length === 0 ? 'complete' : 'partial',
+    candidate_conformance: {
+      passed: true,
+      concepts: checked.checked.filter((item) => item.kind === 'concept')
+        .map((item) => ({ source: item.source, concept: item.concept, path: item.path })),
+      navigation_indexes: checked.checked.filter((item) => item.kind === 'index')
+        .map((item) => ({ path: item.path })),
+    },
     published,
     failed: failed.map((item) => ({ concept: item.concept, status: item.status })),
     skipped,

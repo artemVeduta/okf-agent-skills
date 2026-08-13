@@ -447,7 +447,7 @@ The response is `result: "ok"` with `data.status`, `data.publishable`, `data.mis
 
 Immediately before write 1, after the delegated target-bundle read, `publish` reruns all three Task 6 checks against current bytes: every source identity, complete candidate-set equality, and canonical semantic-review freshness. `human_assessed` remains separate and cannot replace the agent review. Precheck codes include `PUBLISH_PLAN_MAPPING_MISMATCH`, `PUBLISH_CANDIDATE_SET_MISMATCH`, `PUBLISH_CANDIDATE_CHANGED`, `PUBLISH_CANDIDATE_SCAN_INCOMPLETE`, `PUBLISH_CANDIDATE_READ_FAILED`, `PUBLISH_SOURCE_CHANGED`, `PUBLISH_SEMANTIC_REVIEW_STALE`, `PUBLISH_ROUTE_MISMATCH`, `PUBLISH_PROVENANCE_MISMATCH`, `PUBLISH_INDEX_MISSING`, `PUBLISH_INDEX_CHANGED`, and `PUBLISH_STAGING_SYMLINK`. A precheck failure writes zero bundle files and a candidate/proposal mismatch requires one new complete proposal.
 
-The response is `result: "ok"` with `data.status` (`complete` or `partial`), `data.published`, `data.failed`, `data.skipped`, and `data.results`. A failure after one or more successful writes is partial publication exactly as observed. Setup makes no atomicity, rollback, checkpoint, resume, or recovery claim.
+The response is `result: "ok"` with `data.status` (`complete` or `partial`), `data.candidate_conformance`, `data.published`, `data.failed`, `data.skipped`, and `data.results`. `data.candidate_conformance` is the checked Task 6 candidate result: `{ "passed": true, "concepts": [{ "source", "concept", "path" }], "navigation_indexes": [{ "path" }] }`. Concepts and navigation-only indexes stay separate. A failure after one or more successful writes is partial publication exactly as observed.
 
 `publish` runs no admission and no write gate of its own — like `assemble`/`migration-validate`, it never touches the bundle directly; every actual mutation happens one level down, inside the delegated `create` call that runs its own admission and write gate with full authority. The only precondition `publish` itself has is a Git repository to resolve `cwd` against (otherwise `not-configured`).
 
@@ -472,7 +472,25 @@ The response is `result: "ok"` with `data.status` (`complete` or `partial`), `da
 }
 ```
 
-`report` is read-only: it never reads the bundle and never writes anything, in either directory or file form. It is pure classification over the migration's own signals, the same grain as `plan`/`aggregate`: the caller — the `/setup` procedure itself, once its own migration work or every dispatched package sub-agent has finished — supplies what happened, and `report` only totals and classifies it. Exactly one of two payload shapes is accepted; naming both, or naming neither, is `UNSUPPORTED_INPUT` before anything is computed.
+`report` is read-only: it never reads the bundle and never writes anything, in either directory or file form. It is pure classification over the migration's own signals, the same grain as `plan`/`aggregate`: the caller — the `/setup` procedure itself, once its own migration work or every dispatched package sub-agent has finished — supplies what happened, and `report` only totals and classifies it. Exactly one of three payload shapes is accepted: legacy `sources`, multi-package `packages`, or Task 7 `migration`. Naming more than one, or naming none, is `UNSUPPORTED_INPUT` before anything is computed.
+
+**Task 7 migration mode** — `payload.migration` has these exact fields:
+
+- `settings`: exact accepted `migration-plan` `data.settings`, with effective `max_words_per_file`.
+- `split_review`: exact final accepted `migration-plan` `data.split_review`, unmodified.
+- `validation`: `{ "structural_coverage", "agent_semantic_review", "semantic_fidelity", "semantic_review" }` from the same valid `migration-validate` response. `semantic_review` is its canonical checked result, not the submitted review input.
+- `publication`: exact successful Task 6 `publish` `data`, including `candidate_conformance`, `published`, `failed`, `skipped`, and `results`.
+
+The runtime strictly validates every boundary and every cross-artifact identity. It checks the accepted split-review shape, effective setting, source report fields, canonical semantic source and section coverage, agent-review flag, separate human-assessed flag, candidate-conformance concepts and navigation indexes, accepted planned outputs, and exact publication result partition. It does not infer a success from an absent failure. A malformed artifact returns `REPORT_ARTIFACT_MALFORMED`; a well-formed but inconsistent artifact returns `REPORT_ARTIFACT_MISMATCH`. Both have `origin: "suite"`, `severity: "error"`, `blocks: true`, and detail `{ "artifact", "reason" }`.
+
+The Task 7 response is `result: "ok"` with:
+
+- `data.status`: exact Task 6 publication status.
+- `data.summary`: `sources_total`, `concepts_created`, `concepts_planned`, `writes_failed`, and `writes_skipped`. `concepts_created` counts successful substantive concept outputs. One source published as three outputs counts three. A navigation-only group index is reported separately and does not increase this count. Failed and not-attempted writes do not increase it.
+- `data.reviewed_sources`: one row per accepted reviewed source. Each row has `path`, effective `max_words_per_file`, `word_count`, `review_reason`, `accepted_result`, `reason`, every accepted `sections` disposition, every `planned_outputs` row, successful `actual_outputs`, `conformance_result`, `semantic_review_result` with every section verdict, `failed_writes`, and `skipped_writes`.
+- `data.writes`: successful, failed, and not-attempted substantive concept writes.
+- `data.navigation_writes`: successful, failed, and not-attempted navigation-only index writes.
+- `data.structural_coverage`, `data.agent_semantic_review`, and `data.semantic_fidelity`: separate exact validation flags. Human `semantic_fidelity.assessed` never replaces or changes the agent semantic result.
 
 **Single-project mode** — `payload.sources` (required, an array; open points 2 and 3):
 
@@ -579,14 +597,14 @@ Every wrapper call ends in exactly one of three conditions:
     - Call `repair` with `targets: ["manifest"]` and `payload.manifest: <aggregate's data.manifest>` to persist it. This is the one and only manifest write for the whole monorepo run; no worker sub-agent ever writes it, and it is never written before every worker has returned. Done when a repeat `inspect` reports `manifest` as `ok`.
 14. **Treat a crashed prior setup as an ordinary starting state.** There is no checkpoint, resume state, or recovery journal to consult. Start again from current state and rerun discovery, planning, partition, assembly, semantic review, and the step 11 precheck. Report any concepts already on disk as ordinary write refusals; do not claim recovery.
 15. **Report within the ceiling.** An `applied` or `no-op` result is done when reported as one line: the operation and result, nothing else; not done if the full response is shown. A `blocked` or `failed/incomplete` result is done only with the full response, naming the gate code and next action; not done if trimmed to one line, softened, or reported as a crash. A monorepo run's final report is step 13's `data.status` and per-package detail, never collapsed to a single pass/fail line while any package failed.
-16. **Once migration work has actually happened, call `report` and render its response as Markdown for the user (#136).** Task 7 split-aware aggregation is not implemented here. Build only the existing `payload.sources` or `payload.packages` contract from exact observed outcomes, and set `semantic_review.performed: true` only when a human assessed fidelity. Never invent an outcome or human review flag.
+16. **Once migration work has actually happened, call `report` and render its response as Markdown for the user (#136, #201 Task 7).** For the Task 3–6 flow, send `payload.migration.settings` and `split_review` from the accepted step 7 response, `validation` from step 10, and complete `publication` from step 11. Do not rebuild, narrow, or repair these artifacts. Never infer a published output from a planned output or from an absent failure. For old non-Task-7 callers, use the existing `payload.sources` or `payload.packages` form.
     Render the response as Markdown, in this shape, and show it in the chat transcript only — never write it into the bundle (it would itself need to conform to the OKF model) and never write it to a separate file (open point 5):
     - A heading naming `data.status` (`Migration complete` or `Migration partial`).
-    - A **Summary** section listing `data.summary`'s five counts.
-    - A **Concepts created** section listing `data.concepts`' source → concept pairs, noting any without `sources_declared` as missing provenance.
-    - A **Skipped** section listing `data.skipped`'s source/reason pairs, when non-empty.
-    - An **Uncertain** section listing `data.ambiguous`'s source/reason pairs as open questions still needing a decision, when non-empty — this is the "what is uncertain" signal, never smoothed into the skipped list.
-    - A **Residue** section listing `data.residue`'s source/reason pairs, when non-empty.
-    - A **Link integrity** section reporting `data.links`'s counts and listing `data.links.broken_detail`, when any link is broken.
-    - A closing **Semantic fidelity** line: when `data.semantic_fidelity.assessed` is `false`, state plainly that semantic fidelity was NOT assessed and structural checks do not establish it; only when it is `true` does this line say a human reviewed it. Never omit this line, and never let a clean `data.status: "complete"` stand in for it.
+    - A **Summary** section listing all Task 7 `data.summary` counts. State that concepts are actual successful substantive outputs, not source files or navigation indexes.
+    - A **Reviewed sources** section with one subsection per `data.reviewed_sources` row. Show the effective target, source word count, review reason, accepted split or keep-as-one result and reason, every section disposition, every planned output, every actual output, conformance result, agent semantic result and every section verdict, every failed write, and every not-attempted write.
+    - A **Writes** section that lists `data.writes.published`, `failed`, and `skipped` separately. A failed or not-attempted concept never appears as actual output.
+    - A **Navigation writes** section that lists `data.navigation_writes` separately and does not describe an index as a created concept.
+    - A **Validation** section that reports structural coverage and agent semantic review as separate values.
+    - For the legacy source/package forms, keep the **Skipped**, **Uncertain**, **Residue**, and **Link integrity** sections from their response fields.
+    - A closing **Semantic fidelity** line: when `data.semantic_fidelity.assessed` is `false`, state plainly that human semantic fidelity was NOT assessed; only when it is `true` does this line say a human reviewed it. Never omit this line, never let a clean status stand in for it, and never merge it with the agent semantic-review result.
     - In multi-package mode, repeat the per-package detail under `data.packages`, plus the failed-package list from any `"failed"` entries, before the combined totals above.
