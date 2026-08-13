@@ -42,7 +42,10 @@ function partitionCompute(root, planData, options = {}) {
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'partition',
-    payload: { cwd: root, plan: planData.plan, mapping: planData.mapping, references: planData.references, ...options },
+    payload: {
+      cwd: root, plan: planData.plan, mapping: planData.mapping, references: planData.references,
+      split_review: planData.split_review, ...options,
+    },
   });
 }
 
@@ -379,7 +382,7 @@ test('assemble reports not-configured outside a Git repository and is silent on 
     protocol: 'okf-wrapper/1',
     skill: 'okf-setup',
     operation: 'assemble',
-    payload: { cwd: outside, partition: { shards: [{ shard: 'x', sources: ['x.md'], brief: { shard: 'x', mapping: [], references: [], sources: ['x.md'] } }] }, shards: [{ shard: 'x', path: 'x.json' }] },
+    payload: { cwd: outside, partition: { shards: [{ shard: 'x', sources: ['x.md'], brief: { shard: 'x', mapping: [], references: [], split_review: [], sources: ['x.md'] } }] }, shards: [{ shard: 'x', path: 'x.json' }] },
   };
   assert.equal(run(emptyRequest).result, 'not-configured');
 

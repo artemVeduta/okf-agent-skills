@@ -194,7 +194,7 @@ function referencesByPath(references) {
 // cross-shard links its own sources make into a concept some other shard owns.
 // `plan.executable` must already be `true` -- this module partitions a fully
 // determined plan, it never resolves an open question itself.
-function computePartition(plan, mapping, references, options = {}) {
+function computePartition(plan, mapping, references, splitReview, options = {}) {
   const maxSize = options.maxSourcesPerShard || DEFAULT_MAX_SOURCES_PER_SHARD;
   const mapped = mappingByPath(mapping);
   const referenced = referencesByPath(references);
@@ -237,10 +237,11 @@ function computePartition(plan, mapping, references, options = {}) {
     const shardMapping = shard.items.filter((item) => item.kind === 'concept').map((item) => mapped.get(item.path));
     const shardReferences = shard.items.filter((item) => item.kind === 'residue').map((item) => referenced.get(item.path));
     const neighbors = [...neighborsByShard.get(shard.id)].sort().map((concept) => ({ concept }));
+    const reviews = splitReview.filter((item) => sources.includes(item.path));
     return {
       shard: shard.id,
       sources,
-      brief: buildBrief(shard.id, sources, shardMapping, shardReferences, neighbors, options),
+      brief: buildBrief(shard.id, sources, shardMapping, shardReferences, neighbors, reviews, options),
     };
   });
 
@@ -254,7 +255,7 @@ function computePartition(plan, mapping, references, options = {}) {
 // evidence, the target namespace it writes into, and the minimal cross-shard
 // neighbor index needed to keep an outbound link semantically correct. No sibling
 // shard's sources, no corpus, no authoring prose duplicated from the contract.
-function buildBrief(shardId, sources, mapping, references, neighbors, options) {
+function buildBrief(shardId, sources, mapping, references, neighbors, splitReview, options) {
   return {
     shard: shardId,
     cwd: options.cwd,
@@ -264,6 +265,7 @@ function buildBrief(shardId, sources, mapping, references, neighbors, options) {
     sources,
     mapping,
     references,
+    split_review: splitReview,
     neighbors,
   };
 }
@@ -271,6 +273,9 @@ function buildBrief(shardId, sources, mapping, references, neighbors, options) {
 // ---------------------------------------------------------------- shard protocol
 
 const SHARD_FIELDS = new Set(['shard', 'concepts', 'references', 'warnings', 'blockers']);
+const CONCEPT_FIELDS = new Set(['path', 'concept', 'type', 'body']);
+const SPLIT_CONCEPT_FIELDS = new Set(['path', 'output', 'concept', 'type', 'sections', 'body']);
+const SECTION_FIELDS = new Set(['line_start', 'line_end']);
 
 function invalid(code, detail) {
   return { ok: false, code, detail };
@@ -282,6 +287,45 @@ function isPlainObject(value) {
 
 function nonEmptyString(value) {
   return typeof value === 'string' && value !== '';
+}
+
+const rangeKey = (item) => `${item.line_start}:${item.line_end}`;
+
+function splitOutputFinding(brief, item, approved) {
+  if (!approved) return invalid('SHARD_SPLIT_OUTPUT_ADDED', { path: item.path, output: item.output });
+  for (const [field, actual] of [['concept_id', item.concept], ['type', item.type]]) {
+    if (actual !== approved[field]) {
+      return invalid('SHARD_SPLIT_OUTPUT_CHANGED', {
+        path: item.path, output: item.output, field, expected: approved[field], actual,
+      });
+    }
+  }
+  const expectedSections = brief.outputs.find((output) => output.output === item.output).sections;
+  const actualSections = item.sections;
+  const actualRanges = new Set(actualSections.map(rangeKey));
+  const acceptedOwners = new Map(brief.outputs.flatMap((output) => output.sections.map((section) => [rangeKey(section), output.output])));
+  for (let index = 0; index < actualSections.length; index++) {
+    const section = actualSections[index];
+    const key = rangeKey(section);
+    const owner = acceptedOwners.get(key);
+    if (owner !== undefined && owner !== item.output) {
+      return invalid('SHARD_SPLIT_SECTION_MOVED', {
+        path: item.path, line_start: section.line_start, line_end: section.line_end,
+        expected_output: owner, actual_output: item.output,
+      });
+    }
+    if (!acceptedOwners.has(key)) {
+      return invalid('SHARD_SPLIT_SECTION_ADDED', {
+        path: item.path, output: item.output, line_start: section.line_start, line_end: section.line_end,
+      });
+    }
+    if (actualRanges.size !== actualSections.length) {
+      return invalid('SHARD_SPLIT_SECTION_ADDED', {
+        path: item.path, output: item.output, line_start: section.line_start, line_end: section.line_end,
+      });
+    }
+  }
+  return null;
 }
 
 // Validates a worker's returned shard against the exact protocol this module's own
@@ -300,9 +344,12 @@ function validateShard(brief, shard) {
   const assignedMapping = new Map(brief.mapping.map((item) => [item.path, item]));
   const assignedReferences = new Map(brief.references.map((item) => [item.path, item]));
   const assignedSources = new Set(brief.sources);
+  const splitByPath = new Map(brief.split_review.filter((item) => item.proposal !== null).map((item) => [item.path, item]));
 
   if (!Array.isArray(shard.concepts)) return invalid('SHARD_MALFORMED', { field: 'concepts' });
   const concepts = new Set();
+  const splitConcepts = new Map();
+  const splitOutputOrder = new Map();
   for (const item of shard.concepts) {
     if (!isPlainObject(item) || !nonEmptyString(item.path) || !nonEmptyString(item.concept) ||
       !nonEmptyString(item.type) || typeof item.body !== 'string') {
@@ -310,11 +357,30 @@ function validateShard(brief, shard) {
     }
     const approved = assignedMapping.get(item.path);
     if (!approved) return invalid('SHARD_SOURCE_NOT_ASSIGNED', { path: item.path });
-    if (item.concept !== approved.concept || item.type !== approved.type) {
+    const split = splitByPath.get(item.path);
+    const allowedFields = split ? SPLIT_CONCEPT_FIELDS : CONCEPT_FIELDS;
+    if (Object.keys(item).some((field) => !allowedFields.has(field))) {
+      return invalid('SHARD_UNKNOWN_FIELD', { field: Object.keys(item).find((field) => !allowedFields.has(field)) });
+    }
+    if (split) {
+      if (!nonEmptyString(item.output) || !Array.isArray(item.sections)
+        || item.sections.some((section) => !isPlainObject(section) || !Number.isInteger(section.line_start)
+          || !Number.isInteger(section.line_end) || Object.keys(section).some((field) => !SECTION_FIELDS.has(field)))) {
+        return invalid('SHARD_MALFORMED', { field: 'concepts', path: item.path });
+      }
+      const outputFinding = splitOutputFinding(split, item, split.proposal.outputs.find((output) => output.output === item.output));
+      if (outputFinding) return outputFinding;
+    } else if (item.concept !== approved.concept || item.type !== approved.type) {
       return invalid('SHARD_CONCEPT_MISMATCH', { path: item.path, expected: approved.concept, actual: item.concept });
     }
-    if (concepts.has(item.path)) return invalid('SHARD_DUPLICATE_ENTRY', { path: item.path });
-    concepts.add(item.path);
+    const identity = split ? `${item.path}\0${item.output}` : item.path;
+    if (concepts.has(identity)) return invalid('SHARD_DUPLICATE_ENTRY', { path: item.path });
+    concepts.add(identity);
+    if (split) {
+      splitConcepts.set(identity, item);
+      if (!splitOutputOrder.has(item.path)) splitOutputOrder.set(item.path, []);
+      splitOutputOrder.get(item.path).push(item.output);
+    }
   }
 
   if (!Array.isArray(shard.references)) return invalid('SHARD_MALFORMED', { field: 'references' });
@@ -343,11 +409,56 @@ function validateShard(brief, shard) {
       return invalid('SHARD_MALFORMED', { field: 'blockers', path: item && item.path });
     }
     if (!assignedSources.has(item.path)) return invalid('SHARD_SOURCE_NOT_ASSIGNED', { path: item.path });
+    const split = splitByPath.get(item.path);
+    if (split) {
+      return invalid('SHARD_SPLIT_OUTPUT_DROPPED', { path: item.path, output: split.proposal.outputs[0].output });
+    }
     blocked.add(item.path);
   }
 
   for (const sourcePath of assignedMapping.keys()) {
-    if (!concepts.has(sourcePath) && !blocked.has(sourcePath)) return invalid('SHARD_INCOMPLETE', { path: sourcePath });
+    if (blocked.has(sourcePath)) continue;
+    const split = splitByPath.get(sourcePath);
+    if (!split) {
+      if (!concepts.has(sourcePath)) return invalid('SHARD_INCOMPLETE', { path: sourcePath });
+      continue;
+    }
+    for (const output of split.proposal.outputs) {
+      const identity = `${sourcePath}\0${output.output}`;
+      if (!concepts.has(identity)) {
+        return invalid('SHARD_SPLIT_OUTPUT_DROPPED', { path: sourcePath, output: output.output });
+      }
+      const actualRanges = new Set(splitConcepts.get(identity).sections.map(rangeKey));
+      const expectedSections = split.outputs.find((item) => item.output === output.output).sections;
+      for (const section of expectedSections) {
+        if (!actualRanges.has(rangeKey(section))) {
+          return invalid('SHARD_SPLIT_SECTION_DROPPED', {
+            path: sourcePath, output: output.output, line_start: section.line_start, line_end: section.line_end,
+          });
+        }
+      }
+      const actualSections = splitConcepts.get(identity).sections;
+      for (let index = 0; index < expectedSections.length; index++) {
+        if (rangeKey(actualSections[index]) !== rangeKey(expectedSections[index])) {
+          return invalid('SHARD_SPLIT_SECTION_REORDERED', {
+            path: sourcePath, output: output.output,
+            line_start: actualSections[index].line_start, line_end: actualSections[index].line_end,
+            expected_order: expectedSections.findIndex((item) => rangeKey(item) === rangeKey(actualSections[index])) + 1,
+            actual_order: index + 1,
+          });
+        }
+      }
+    }
+    const expectedOutputs = split.proposal.outputs.map((item) => item.output);
+    const actualOutputs = splitOutputOrder.get(sourcePath);
+    for (let index = 0; index < expectedOutputs.length; index++) {
+      if (actualOutputs[index] !== expectedOutputs[index]) {
+        return invalid('SHARD_SPLIT_OUTPUT_REORDERED', {
+          path: sourcePath, output: actualOutputs[index],
+          expected_order: expectedOutputs.indexOf(actualOutputs[index]) + 1, actual_order: index + 1,
+        });
+      }
+    }
   }
   for (const sourcePath of assignedReferences.keys()) {
     if (!refs.has(sourcePath) && !blocked.has(sourcePath)) return invalid('SHARD_INCOMPLETE', { path: sourcePath });

@@ -1001,10 +1001,35 @@ function validPartitionReferenceItem(item) {
 // exactly the invariant `migration-plan` itself always produces, checked here
 // rather than trusted blindly, since nothing stops a caller from tampering with or
 // hand-assembling the three pieces separately.
-function partitionInputConsistent(plan, mapping, references) {
+function validAcceptedSplitReview(review) {
+  if (!review || typeof review !== 'object' || Array.isArray(review) || typeof review.path !== 'string' || review.path === '') return false;
+  if (review.proposal === null) return review.accounting_status === 'not_required';
+  const proposal = review.proposal;
+  if (review.accounting_status !== 'complete' || !proposal || proposal.status !== 'accepted' || proposal.accepted !== true
+    || !Array.isArray(review.sections) || !Array.isArray(review.outputs) || !Array.isArray(proposal.outputs)) return false;
+  const outputKeys = review.outputs.map((item) => item.output);
+  const proposedKeys = proposal.outputs.map((item) => item && item.output);
+  if (new Set(outputKeys).size !== outputKeys.length || new Set(proposedKeys).size !== proposedKeys.length
+    || proposal.outputs.length !== outputKeys.length
+    || proposal.outputs.some((item) => !item || !outputKeys.includes(item.output) || typeof item.concept_id !== 'string'
+      || item.concept_id === '' || item.path !== `${item.concept_id}.md` || typeof item.type !== 'string' || item.type === ''
+      || typeof item.title !== 'string' || item.title === '')) return false;
+  const assigned = review.sections.filter((item) => item.disposition === 'assigned');
+  const expected = review.outputs.flatMap((output) => {
+    if (!output || typeof output.output !== 'string' || output.output === '' || typeof output.order_explicit !== 'boolean'
+      || !Array.isArray(output.sections)) return [null];
+    return output.sections.map((section, index) => ({ ...section, output: output.output, order: index + 1 }));
+  });
+  if (expected.includes(null) || assigned.length !== expected.length) return false;
+  return assigned.every((section) => expected.some((item) => item.line_start === section.line_start
+    && item.line_end === section.line_end && item.output === section.output && item.order === section.output_order));
+}
+
+function partitionInputConsistent(plan, mapping, references, splitReview) {
   const migrating = plan.entries.filter((entry) => entry.disposition === 'migrate');
   const residue = plan.entries.filter((entry) => entry.disposition === 'residue');
-  if (mapping.length !== migrating.length || references.length !== residue.length) return false;
+  if (mapping.length !== migrating.length || references.length !== residue.length || splitReview.length !== migrating.length
+    || !splitReview.every(validAcceptedSplitReview) || new Set(splitReview.map((item) => item.path)).size !== splitReview.length) return false;
   const migratingByPath = new Map(migrating.map((entry) => [entry.path, entry]));
   const residueByPath = new Map(residue.map((entry) => [entry.path, entry]));
   for (const item of mapping) {
@@ -1014,6 +1039,7 @@ function partitionInputConsistent(plan, mapping, references) {
   for (const item of references) {
     if (!residueByPath.has(item.path)) return false;
   }
+  for (const item of splitReview) if (!migratingByPath.has(item.path)) return false;
   return true;
 }
 
@@ -1030,7 +1056,8 @@ function executePartitionCompute(request) {
   if (!Array.isArray(payload.references) || !payload.references.every(validPartitionReferenceItem)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
-  if (!partitionInputConsistent(payload.plan, payload.mapping, payload.references)) {
+  if (!Array.isArray(payload.split_review)
+    || !partitionInputConsistent(payload.plan, payload.mapping, payload.references, payload.split_review)) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
   const bundleName = payload.bundle === undefined ? 'okf' : payload.bundle;
@@ -1044,7 +1071,7 @@ function executePartitionCompute(request) {
     return respond(request, 'blocked', { code: 'UNSUPPORTED_INPUT' }, []);
   }
 
-  const outcome = partition.computePartition(payload.plan, payload.mapping, payload.references, {
+  const outcome = partition.computePartition(payload.plan, payload.mapping, payload.references, payload.split_review, {
     cwd: path.resolve(payload.cwd),
     bundle: bundleName,
     projectMode: payload.project_mode,
@@ -1101,6 +1128,7 @@ function validAssemblyPartitionShard(item) {
   if (!brief || typeof brief !== 'object' || Array.isArray(brief) || brief.shard !== item.shard) return false;
   if (!Array.isArray(brief.mapping) || !brief.mapping.every(validPartitionMappingItem)) return false;
   if (!Array.isArray(brief.references) || !brief.references.every(validPartitionReferenceItem)) return false;
+  if (!Array.isArray(brief.split_review) || !brief.split_review.every(validAcceptedSplitReview)) return false;
   if (!Array.isArray(brief.sources) || brief.sources.some((s) => typeof s !== 'string' || s === '')) return false;
   return true;
 }

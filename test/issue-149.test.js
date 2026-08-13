@@ -227,6 +227,7 @@ test('assemble and migration-validate still need no admitted bundle at all: stag
     sources: ['docs/a.md'],
     mapping: [{ path: 'docs/a.md', concept: 'decisions/a', type: 'Decision', sources: null, body: '# A\n' }],
     references: [],
+    split_review: [{ path: 'docs/a.md', accounting_status: 'not_required', proposal: null }],
     neighbors: [],
   };
   const shard = {

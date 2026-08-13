@@ -85,17 +85,19 @@ function computeAssembly(partitionShards, shardContents) {
   const concepts = [];
   const references = [];
   const blockers = [];
-  const claimed = new Map(); // source path -> the one shard allowed to claim it
+  const claimed = new Map(); // source path -> the one shard and result kind allowed to claim it
 
   for (const shard of partitionShards) {
     const content = shardContents.get(shard.shard);
-    for (const [list, items] of [[concepts, content.concepts], [references, content.references], [blockers, content.blockers]]) {
+    for (const [kind, list, items] of [['concept', concepts, content.concepts], ['reference', references, content.references], ['blocker', blockers, content.blockers]]) {
       for (const item of items) {
         const owner = claimed.get(item.path);
-        if (owner !== undefined) {
-          return { ok: false, shard: shard.shard, code: 'ASSEMBLY_SOURCE_DUPLICATE', detail: { path: item.path, shards: [owner, shard.shard] } };
+        const split = kind === 'concept' && owner && owner.kind === 'concept' && owner.shard === shard.shard
+          && shard.brief.split_review.some((review) => review.path === item.path && review.proposal !== null);
+        if (owner !== undefined && !split) {
+          return { ok: false, shard: shard.shard, code: 'ASSEMBLY_SOURCE_DUPLICATE', detail: { path: item.path, shards: [owner.shard, shard.shard] } };
         }
-        claimed.set(item.path, shard.shard);
+        claimed.set(item.path, { shard: shard.shard, kind });
         list.push({ ...item, shard: shard.shard });
       }
     }
